@@ -73,13 +73,27 @@ fun rememberBookImage(source: String): Bitmap? {
                         break
                     }
                     if (bytes != null && bytes.isNotEmpty()) {
-                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        val opt = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opt)
+                        var sample = 1
+                        while (opt.outWidth / sample > 1200 || opt.outHeight / sample > 1600) {
+                            sample *= 2
+                        }
+                        val decodeOpt = BitmapFactory.Options().apply { inSampleSize = sample }
+                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOpt)
                     } else null
                 } else {
                     val cleanPath = source.removePrefix("file://")
                     val file = File(cleanPath)
                     if (file.exists() && file.length() > 0) {
-                        BitmapFactory.decodeFile(file.absolutePath)
+                        val opt = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        BitmapFactory.decodeFile(file.absolutePath, opt)
+                        var sample = 1
+                        while (opt.outWidth / sample > 1200 || opt.outHeight / sample > 1600) {
+                            sample *= 2
+                        }
+                        val decodeOpt = BitmapFactory.Options().apply { inSampleSize = sample }
+                        BitmapFactory.decodeFile(file.absolutePath, decodeOpt)
                     } else null
                 }
                 if (decoded != null) {
@@ -88,8 +102,8 @@ fun rememberBookImage(source: String): Bitmap? {
                         bitmap = decoded
                     }
                 }
-            } catch (_: Exception) {
-                // Ignore load error
+            } catch (_: Throwable) {
+                // Ignore load error safely (prevent OOM crashes)
             }
         }
     }

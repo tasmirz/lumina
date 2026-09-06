@@ -13,7 +13,7 @@ object EpubParser {
 
     /**
      * Parses an EPUB InputStream into a Book domain model.
-     * Robustly extracts OPF metadata (title, author, cover, spine order) and unpacks covers & inline images.
+     * Robustly extracts OPF metadata, Table of Contents (EPUB 2 NCX & EPUB 3 Nav), covers, and inline images.
      */
     fun parseEpub(inputStream: InputStream, filename: String, context: Context? = null): Book {
         val bookId = "custom-${System.currentTimeMillis()}"
@@ -37,7 +37,11 @@ object EpubParser {
         }
 
         fun findEntryKey(targetPath: String): String? {
-            val clean = try { URLDecoder.decode(targetPath.split("#")[0].split("?")[0].removePrefix("/"), "UTF-8") } catch (_: Exception) { targetPath.removePrefix("/") }
+            val clean = try {
+                URLDecoder.decode(targetPath.split("#")[0].split("?")[0].removePrefix("/"), "UTF-8")
+            } catch (_: Exception) {
+                targetPath.split("#")[0].split("?")[0].removePrefix("/")
+            }
             val filenameOnly = clean.substringAfterLast('/')
 
             // 1. Exact match
@@ -46,6 +50,18 @@ object EpubParser {
             entries.keys.firstOrNull { it.endsWith("/$clean", ignoreCase = true) }?.let { return it }
             // 3. Filename match
             entries.keys.firstOrNull { it.substringAfterLast('/').equals(filenameOnly, ignoreCase = true) }?.let { return it }
+            return null
+        }
+
+        fun resolveZipEntry(baseDir: String, href: String): String? {
+            val cleanHref = href.split("#")[0].split("?")[0].trim().removePrefix("/")
+            // 1. Check direct entry key
+            findEntryKey(cleanHref)?.let { return it }
+            // 2. Resolved relative path
+            val resolved = resolveZipPath(baseDir, cleanHref)
+            findEntryKey(resolved)?.let { return it }
+            // 3. Filename fallback
+            findEntryKey(cleanHref.substringAfterLast('/'))?.let { return it }
             return null
         }
 
@@ -116,115 +132,184 @@ object EpubParser {
             }
         }
 
-        // 5. Extract Cover Image with Comprehensive Fallbacks
+        // 5. Extract Cover Image with Comprehensive Multi-Tier Detection
         var coverUrl = "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=400&q=80"
-        var coverHref = ""
+        var coverEntryKey: String? = null
 
-        // Tier 1: Check OPF <meta name="cover" content="id">
+        // Tier 1: OPF <meta name="cover" content="id">
         if (coverIdFromMeta.isNotBlank() && manifestItems.containsKey(coverIdFromMeta)) {
             val metaItem = manifestItems[coverIdFromMeta]
             if (metaItem != null) {
                 if (metaItem.mediaType.startsWith("image/")) {
-                    coverHref = metaItem.href
+                    coverEntryKey = resolveZipEntry(opfDir, metaItem.href)
                 } else {
                     // Meta cover points to an XHTML cover page (e.g. cover.xhtml)
-                    val fullCoverPagePath = resolveZipPath(opfDir, metaItem.href)
-                    val coverPageKey = findEntryKey(fullCoverPagePath)
+                    val coverPageKey = resolveZipEntry(opfDir, metaItem.href)
                     if (coverPageKey != null) {
                         val html = String(entries[coverPageKey] ?: ByteArray(0), Charsets.UTF_8)
-                        val imgMatch = "<(?:img|image)\\s+[^>]*(?:src|href|xlink:href)=[\"']([^\"']+)[\"']".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)).find(html)
+                        val pageDir = if (coverPageKey.contains("/")) coverPageKey.substringBeforeLast('/') else ""
+                        val imgMatch = "<(?:img|image)\\s+[^>]*(?:xlink:href|src|href)=[\"']([^\"']+)[\"']".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)).find(html)
                         if (imgMatch != null) {
-                            val pageDir = if (coverPageKey.contains("/")) coverPageKey.substringBeforeLast('/') else ""
-                            coverHref = resolveZipPath(pageDir, imgMatch.groupValues[1])
+                            coverEntryKey = resolveZipEntry(pageDir, imgMatch.groupValues[1])
                         }
                     }
                 }
             }
         }
 
-        // Tier 2: Check manifest item with properties="cover-image" (EPUB 3)
-        if (coverHref.isBlank()) {
-            coverHref = manifestItems.values.firstOrNull {
+        // Tier 2: Manifest item with properties="cover-image" (EPUB 3)
+        if (coverEntryKey == null) {
+            val ep3Item = manifestItems.values.firstOrNull {
                 it.properties.contains("cover-image", ignoreCase = true) && it.mediaType.startsWith("image/")
-            }?.href ?: ""
+            }
+            if (ep3Item != null) {
+                coverEntryKey = resolveZipEntry(opfDir, ep3Item.href)
+            }
         }
 
-        // Tier 3: Check manifest item with id containing "cover" and image media-type
-        if (coverHref.isBlank()) {
-            coverHref = manifestItems.values.firstOrNull {
-                (it.id.equals("cover-image", ignoreCase = true) || it.id.equals("cover", ignoreCase = true) || it.id.contains("cover", ignoreCase = true)) &&
+        // Tier 3: OPF <guide><reference type="cover" ...>
+        if (coverEntryKey == null && opfContent.isNotBlank()) {
+            val guideMatch = "<reference[^>]+type=[\"']cover[\"'][^>]+href=[\"']([^\"']+)[\"']".toRegex(RegexOption.IGNORE_CASE).find(opfContent)
+            if (guideMatch != null) {
+                val gHref = guideMatch.groupValues[1]
+                val gKey = resolveZipEntry(opfDir, gHref)
+                if (gKey != null) {
+                    if (gKey.endsWith(".xhtml", true) || gKey.endsWith(".html", true) || gKey.endsWith(".htm", true)) {
+                        val html = String(entries[gKey] ?: ByteArray(0), Charsets.UTF_8)
+                        val pageDir = if (gKey.contains("/")) gKey.substringBeforeLast('/') else ""
+                        val imgMatch = "<(?:img|image)\\s+[^>]*(?:xlink:href|src|href)=[\"']([^\"']+)[\"']".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)).find(html)
+                        if (imgMatch != null) {
+                            coverEntryKey = resolveZipEntry(pageDir, imgMatch.groupValues[1])
+                        }
+                    } else {
+                        coverEntryKey = gKey
+                    }
+                }
+            }
+        }
+
+        // Tier 4: Manifest item with id or href containing "cover" and image type
+        if (coverEntryKey == null) {
+            val item = manifestItems.values.firstOrNull {
+                (it.id.contains("cover", ignoreCase = true) || it.href.contains("cover", ignoreCase = true)) &&
                 it.mediaType.startsWith("image/")
-            }?.href ?: ""
+            }
+            if (item != null) {
+                coverEntryKey = resolveZipEntry(opfDir, item.href)
+            }
         }
 
-        // Tier 4: Check manifest item with href containing "cover" and image media-type
-        if (coverHref.isBlank()) {
-            coverHref = manifestItems.values.firstOrNull {
-                it.href.contains("cover", ignoreCase = true) && it.mediaType.startsWith("image/")
-            }?.href ?: ""
-        }
-
-        // Tier 5: Check first spine item XHTML page for an illustration
-        if (coverHref.isBlank()) {
+        // Tier 5: First spine XHTML page image
+        if (coverEntryKey == null) {
             val firstSpineItem = manifestItems.values.firstOrNull {
                 (it.href.contains("cover", ignoreCase = true) || it.href.contains("title", ignoreCase = true)) &&
                 (it.mediaType.contains("html") || it.href.endsWith(".xhtml") || it.href.endsWith(".html"))
             }
             if (firstSpineItem != null) {
-                val fullSpinePage = resolveZipPath(opfDir, firstSpineItem.href)
-                val pageKey = findEntryKey(fullSpinePage)
+                val pageKey = resolveZipEntry(opfDir, firstSpineItem.href)
                 if (pageKey != null) {
                     val html = String(entries[pageKey] ?: ByteArray(0), Charsets.UTF_8)
-                    val imgMatch = "<(?:img|image)\\s+[^>]*(?:src|href|xlink:href)=[\"']([^\"']+)[\"']".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)).find(html)
+                    val pageDir = if (pageKey.contains("/")) pageKey.substringBeforeLast('/') else ""
+                    val imgMatch = "<(?:img|image)\\s+[^>]*(?:xlink:href|src|href)=[\"']([^\"']+)[\"']".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)).find(html)
                     if (imgMatch != null) {
-                        val pageDir = if (pageKey.contains("/")) pageKey.substringBeforeLast('/') else ""
-                        coverHref = resolveZipPath(pageDir, imgMatch.groupValues[1])
+                        coverEntryKey = resolveZipEntry(pageDir, imgMatch.groupValues[1])
                     }
                 }
             }
         }
 
-        // Tier 6: Check raw zip entries for any image file with "cover" in name
-        if (coverHref.isBlank()) {
-            val coverEntry = entries.keys.firstOrNull { key ->
+        // Tier 6: Zip entry with "cover" in name
+        if (coverEntryKey == null) {
+            coverEntryKey = entries.keys.firstOrNull { key ->
                 val lower = key.lowercase()
                 lower.contains("cover") && (lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") || lower.endsWith(".webp"))
             }
-            if (coverEntry != null) {
-                coverHref = coverEntry
+        }
+
+        // Tier 7: Zip entry with "title", "front", or "jacket"
+        if (coverEntryKey == null) {
+            coverEntryKey = entries.keys.firstOrNull { key ->
+                val lower = key.lowercase()
+                (lower.contains("title") || lower.contains("front") || lower.contains("jacket")) &&
+                (lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") || lower.endsWith(".webp"))
             }
         }
 
-        // Tier 7: Pick very first image in manifest or zip
-        if (coverHref.isBlank()) {
-            coverHref = manifestItems.values.firstOrNull { it.mediaType.startsWith("image/") }?.href
+        // Tier 8: First image found in manifest or zip
+        if (coverEntryKey == null) {
+            coverEntryKey = manifestItems.values.firstOrNull { it.mediaType.startsWith("image/") }?.let { resolveZipEntry(opfDir, it.href) }
                 ?: entries.keys.firstOrNull { key ->
                     val lower = key.lowercase()
                     lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") || lower.endsWith(".webp")
-                } ?: ""
+                }
         }
 
         // Extract and persist cover image to app storage
-        if (coverHref.isNotBlank() && context != null) {
-            val fullCoverPath = resolveZipPath(opfDir, coverHref)
-            val coverKey = findEntryKey(fullCoverPath)
-            if (coverKey != null) {
-                val coverBytes = entries[coverKey]
-                if (coverBytes != null && coverBytes.isNotEmpty()) {
-                    try {
-                        val coversDir = File(context.filesDir, "covers").apply { mkdirs() }
-                        val ext = if (coverKey.endsWith(".png", ignoreCase = true)) "png" else "jpg"
-                        val coverFile = File(coversDir, "${bookId}_cover.$ext")
-                        FileOutputStream(coverFile).use { it.write(coverBytes) }
-                        coverUrl = coverFile.absolutePath
-                    } catch (e: Exception) {
-                        e.printStackTrace()
+        if (coverEntryKey != null && context != null) {
+            val coverBytes = entries[coverEntryKey]
+            if (coverBytes != null && coverBytes.isNotEmpty()) {
+                try {
+                    val coversDir = File(context.filesDir, "covers").apply { mkdirs() }
+                    val ext = if (coverEntryKey.endsWith(".png", ignoreCase = true)) "png" else "jpg"
+                    val coverFile = File(coversDir, "${bookId}_cover.$ext")
+                    FileOutputStream(coverFile).use { it.write(coverBytes) }
+                    coverUrl = coverFile.absolutePath
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
+
+        // 6. Table of Contents (TOC) Extraction: EPUB 2 (NCX) & EPUB 3 (Nav)
+        data class TocEntry(val title: String, val fullHref: String, val filePath: String, val anchor: String = "")
+        val tocList = mutableListOf<TocEntry>()
+
+        // 6A. Parse EPUB 2 NCX (toc.ncx)
+        val ncxManifestItem = manifestItems.values.firstOrNull {
+            it.mediaType.contains("ncx", ignoreCase = true) || it.id.equals("ncx", ignoreCase = true) || it.href.endsWith(".ncx", ignoreCase = true)
+        }
+        val ncxKey = ncxManifestItem?.let { resolveZipEntry(opfDir, it.href) } ?: entries.keys.firstOrNull { it.endsWith(".ncx", ignoreCase = true) }
+        if (ncxKey != null) {
+            val ncxXml = String(entries[ncxKey] ?: ByteArray(0), Charsets.UTF_8)
+            val ncxDir = if (ncxKey.contains("/")) ncxKey.substringBeforeLast('/') else ""
+            val navPointRegex = "<navPoint[^>]*>.*?<navLabel>\\s*<text>([^<]+)</text>\\s*</navLabel>\\s*<content\\s+src=[\"']([^\"']+)[\"']".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+            navPointRegex.findAll(ncxXml).forEach { match ->
+                val rawTitle = decodeHtmlEntities(match.groupValues[1].trim())
+                val rawSrc = match.groupValues[2].trim()
+                val cleanSrc = try { URLDecoder.decode(rawSrc, "UTF-8") } catch (_: Exception) { rawSrc }
+                val targetFile = cleanSrc.substringBefore('#')
+                val anchor = cleanSrc.substringAfter('#', "")
+                val resolvedTarget = resolveZipPath(ncxDir, targetFile)
+                if (rawTitle.isNotBlank()) {
+                    tocList.add(TocEntry(rawTitle, cleanSrc, resolvedTarget, anchor))
+                }
+            }
+        }
+
+        // 6B. Parse EPUB 3 nav.xhtml if NCX had no entries
+        if (tocList.isEmpty()) {
+            val navItem = manifestItems.values.firstOrNull { it.properties.contains("nav", ignoreCase = true) }
+                ?: manifestItems.values.firstOrNull { it.href.endsWith("nav.xhtml", ignoreCase = true) || it.href.endsWith("toc.xhtml", ignoreCase = true) }
+            val navKey = navItem?.let { resolveZipEntry(opfDir, it.href) } ?: entries.keys.firstOrNull { it.endsWith("nav.xhtml", ignoreCase = true) || it.endsWith("toc.xhtml", ignoreCase = true) }
+            if (navKey != null) {
+                val navHtml = String(entries[navKey] ?: ByteArray(0), Charsets.UTF_8)
+                val navDir = if (navKey.contains("/")) navKey.substringBeforeLast('/') else ""
+                val aRegex = "<a\\s+[^>]*href=[\"']([^\"']+)[\"'][^>]*>([^<]+)</a>".toRegex(RegexOption.IGNORE_CASE)
+                aRegex.findAll(navHtml).forEach { match ->
+                    val rawSrc = match.groupValues[1].trim()
+                    val rawTitle = decodeHtmlEntities(match.groupValues[2].trim())
+                    val cleanSrc = try { URLDecoder.decode(rawSrc, "UTF-8") } catch (_: Exception) { rawSrc }
+                    val targetFile = cleanSrc.substringBefore('#')
+                    val anchor = cleanSrc.substringAfter('#', "")
+                    val resolvedTarget = resolveZipPath(navDir, targetFile)
+                    if (rawTitle.isNotBlank()) {
+                        tocList.add(TocEntry(rawTitle, cleanSrc, resolvedTarget, anchor))
                     }
                 }
             }
         }
 
-        // 6. Spine parsing: Ordered sequence of chapters
+        // 7. Spine parsing: Ordered sequence of chapters
         val spineHrefs = mutableListOf<String>()
         if (opfContent.isNotBlank()) {
             val itemrefRegex = "<itemref\\s+[^>]*idref=[\"']([^\"']+)[\"']".toRegex(RegexOption.IGNORE_CASE)
@@ -247,21 +332,32 @@ object EpubParser {
             }.sorted()
         }
 
-        // 7. Extract Content & Inline Images per Chapter
+        // 8. Extract Content & Inline Images per Chapter
         val imagesDir = if (context != null) File(context.filesDir, "books/$bookId/images").apply { mkdirs() } else null
         val extractedChapters = mutableListOf<Chapter>()
 
         chapterPaths.forEachIndexed { chapIdx, fullPath ->
-            val entryKey = findEntryKey(fullPath)
+            val entryKey = resolveZipEntry(opfDir, fullPath)
             if (entryKey != null) {
                 val rawHtml = String(entries[entryKey] ?: ByteArray(0), Charsets.UTF_8)
                 val currentFileDir = if (entryKey.contains("/")) entryKey.substringBeforeLast('/') else ""
 
-                // Extract Chapter Title
-                var chapterTitle = ""
-                val h1Match = "<h[1-3][^>]*>([^<]+)</h[1-3]>".toRegex(RegexOption.IGNORE_CASE).find(rawHtml)
-                if (h1Match != null) {
-                    chapterTitle = decodeHtmlEntities(h1Match.groupValues[1].trim())
+                // Match official Chapter Title from TOC
+                val matchedToc = tocList.firstOrNull { toc ->
+                    val tocKey = resolveZipEntry("", toc.filePath) ?: findEntryKey(toc.filePath)
+                    tocKey != null && tocKey.equals(entryKey, ignoreCase = true)
+                } ?: tocList.firstOrNull {
+                    it.filePath.substringAfterLast('/').equals(entryKey.substringAfterLast('/'), ignoreCase = true)
+                }
+
+                var chapterTitle = matchedToc?.title ?: ""
+
+                // If not in TOC, check HTML headings
+                if (chapterTitle.isBlank()) {
+                    val h1Match = "<h[1-3][^>]*>([^<]+)</h[1-3]>".toRegex(RegexOption.IGNORE_CASE).find(rawHtml)
+                    if (h1Match != null) {
+                        chapterTitle = decodeHtmlEntities(h1Match.groupValues[1].trim())
+                    }
                 }
                 if (chapterTitle.isBlank()) {
                     val titleTagMatch = "<title[^>]*>([^<]+)</title>".toRegex(RegexOption.IGNORE_CASE).find(rawHtml)
@@ -279,11 +375,10 @@ object EpubParser {
                 // Process inline images: replace <img ...> and <image ...> with [IMG:path]
                 var processedHtml = rawHtml
                 if (imagesDir != null) {
-                    val imgRegex = "<(?:img|image)\\s+[^>]*(?:src|href|xlink:href)=[\"']([^\"']+)[\"'][^>]*>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+                    val imgRegex = "<(?:img|image)\\s+[^>]*(?:xlink:href|src|href)=[\"']([^\"']+)[\"'][^>]*>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
                     processedHtml = imgRegex.replace(rawHtml) { m ->
                         val imgSrc = m.groupValues[1]
-                        val fullImgPath = resolveZipPath(currentFileDir, imgSrc)
-                        val imgEntryKey = findEntryKey(fullImgPath)
+                        val imgEntryKey = resolveZipEntry(currentFileDir, imgSrc)
                         if (imgEntryKey != null) {
                             val imgBytes = entries[imgEntryKey]
                             if (imgBytes != null && imgBytes.isNotEmpty()) {
@@ -293,7 +388,7 @@ object EpubParser {
                                     if (!localImgFile.exists()) {
                                         FileOutputStream(localImgFile).use { it.write(imgBytes) }
                                     }
-                                    "\n\n[IMG:${localImgFile.absolutePath}]\n\n"
+                                    "\n\n__IMG_TOKEN_START__${localImgFile.absolutePath}__IMG_TOKEN_END__\n\n"
                                 } catch (_: Exception) {
                                     ""
                                 }
@@ -302,10 +397,10 @@ object EpubParser {
                     }
                 }
 
-                // Convert HTML to clean readable paragraphs
+                // Convert HTML to clean readable paragraphs with isolated images
                 val paras = cleanHtmlToParagraphs(processedHtml)
                 if (paras.isNotEmpty()) {
-                    val wordCount = paras.joinToString(" ").split("\\s+".toRegex()).size
+                    val wordCount = paras.filterNot { it.startsWith("[IMG:") }.joinToString(" ").split("\\s+".toRegex()).size
                     val readTimeMins = maxOf(wordCount / 200, 1)
 
                     extractedChapters.add(
@@ -364,29 +459,48 @@ object EpubParser {
 
     private fun cleanHtmlToParagraphs(html: String): List<String> {
         val text = html
-            .replace("(?i)<script.*?>.*?</script>".toRegex(), "")
-            .replace("(?i)<style.*?>.*?</style>".toRegex(), "")
+            .replace("(?i)<script.*?>.*?</script>".toRegex(RegexOption.DOT_MATCHES_ALL), "")
+            .replace("(?i)<style.*?>.*?</style>".toRegex(RegexOption.DOT_MATCHES_ALL), "")
             .replace("<br\\s*/?>".toRegex(RegexOption.IGNORE_CASE), "\n")
             .replace("(?i)</(p|div|h[1-6]|section|article|blockquote|li|tr)>".toRegex(), "\n\n")
             .replace("<[^>]+>".toRegex(), "")
 
-        val rawBlocks = text.split("\n\n")
+        val tokenRegex = "__IMG_TOKEN_START__(.*?)__IMG_TOKEN_END__".toRegex()
+        val textWithImgs = tokenRegex.replace(text) { m -> "\n\n[IMG:${m.groupValues[1]}]\n\n" }
+
+        val rawBlocks = textWithImgs.split("\n\n")
         val result = mutableListOf<String>()
+
+        val imgExtractRegex = "\\[IMG:([^\\]]+)\\]".toRegex()
 
         for (raw in rawBlocks) {
             val trimmed = raw.trim()
-            if (trimmed.startsWith("[IMG:") && trimmed.endsWith("]")) {
-                result.add(trimmed)
-                continue
-            }
-            // CRITICAL: Replace internal raw newlines and excessive whitespace with a single space
-            // This prevents broken, jagged lines in the reading canvas!
-            val normalized = decodeHtmlEntities(trimmed)
-                .replace("\\s+".toRegex(), " ")
-                .trim()
+            if (trimmed.isBlank()) continue
 
-            if (normalized.isNotBlank() && normalized.length > 2) {
-                result.add(normalized)
+            if (trimmed.contains("[IMG:")) {
+                var lastIdx = 0
+                imgExtractRegex.findAll(trimmed).forEach { match ->
+                    val before = trimmed.substring(lastIdx, match.range.first).trim()
+                    if (before.isNotBlank()) {
+                        val norm = decodeHtmlEntities(before).replace("\\s+".toRegex(), " ").trim()
+                        if (norm.length > 1) result.add(norm)
+                    }
+                    result.add("[IMG:${match.groupValues[1]}]")
+                    lastIdx = match.range.last + 1
+                }
+                val after = trimmed.substring(lastIdx).trim()
+                if (after.isNotBlank()) {
+                    val norm = decodeHtmlEntities(after).replace("\\s+".toRegex(), " ").trim()
+                    if (norm.length > 1) result.add(norm)
+                }
+            } else {
+                val normalized = decodeHtmlEntities(trimmed)
+                    .replace("\\s+".toRegex(), " ")
+                    .trim()
+
+                if (normalized.isNotBlank() && normalized.length > 1) {
+                    result.add(normalized)
+                }
             }
         }
         return result

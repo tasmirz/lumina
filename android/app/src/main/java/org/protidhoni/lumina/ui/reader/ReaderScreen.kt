@@ -3,11 +3,19 @@ package org.protidhoni.lumina.ui.reader
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.widget.Toast
+import androidx.activity.BackEventCompat
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -26,12 +34,17 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBackIos
+import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FormatQuote
-import androidx.compose.material.icons.filled.Fullscreen
-import androidx.compose.material.icons.filled.FullscreenExit
+import androidx.compose.material.icons.filled.Headphones
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -40,7 +53,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -65,9 +77,11 @@ import org.protidhoni.lumina.model.Bookmark
 import org.protidhoni.lumina.model.HighlightColor
 import org.protidhoni.lumina.model.ReadingMode
 import org.protidhoni.lumina.model.TypefaceMode
+import org.protidhoni.lumina.ui.components.TableOfContentsSheet
 import org.protidhoni.lumina.ui.components.rememberBookImage
 import org.protidhoni.lumina.util.CitationHelper
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 @Composable
 fun ReaderScreen(
@@ -97,7 +111,84 @@ fun ReaderScreen(
     var selectedText by remember { mutableStateOf("") }
     var selectedChapterTitle by rememberSaveable { mutableStateOf("") }
     var showSelectionMenu by remember { mutableStateOf(false) }
+    var showTocSheet by rememberSaveable { mutableStateOf(false) }
     var activeChapterTitle by rememberSaveable { mutableStateOf(book.chapters.firstOrNull()?.title ?: "Chapter 1") }
+
+    // TTS Reader states
+    var isTtsExpanded by rememberSaveable { mutableStateOf(false) }
+    var isTtsDroppedOff by rememberSaveable { mutableStateOf(false) }
+    var isTtsSpeaking by remember { mutableStateOf(false) }
+    var speakingChapterIdx by rememberSaveable { mutableIntStateOf(book.currentChapter) }
+    var speakingParaIdx by rememberSaveable { mutableIntStateOf(0) }
+
+    // TextToSpeech Engine
+    val ttsRef = remember { mutableStateOf<TextToSpeech?>(null) }
+    val isTtsInitialized = remember { mutableStateOf(false) }
+
+    val speakNextPara = rememberUpdatedState {
+        val tts = ttsRef.value
+        if (tts != null && isTtsInitialized.value) {
+            val chapter = book.chapters.getOrNull(speakingChapterIdx)
+            if (chapter != null && speakingParaIdx < chapter.paragraphs.size) {
+                val p = chapter.paragraphs[speakingParaIdx]
+                if (p.startsWith("[IMG:") && p.endsWith("]")) {
+                    speakingParaIdx++
+                    if (speakingParaIdx < chapter.paragraphs.size) {
+                        tts.speak(chapter.paragraphs[speakingParaIdx], TextToSpeech.QUEUE_FLUSH, null, "lumina_tts_$speakingParaIdx")
+                        isTtsSpeaking = true
+                    } else {
+                        isTtsSpeaking = false
+                    }
+                } else {
+                    tts.speak(p, TextToSpeech.QUEUE_FLUSH, null, "lumina_tts_$speakingParaIdx")
+                    isTtsSpeaking = true
+                }
+            } else {
+                isTtsSpeaking = false
+            }
+        }
+    }
+
+    DisposableEffect(context) {
+        val tts = TextToSpeech(context) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                ttsRef.value?.language = Locale.getDefault()
+                isTtsInitialized.value = true
+            }
+        }
+        tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            override fun onStart(utteranceId: String?) {
+                isTtsSpeaking = true
+            }
+
+            override fun onDone(utteranceId: String?) {
+                coroutineScope.launch {
+                    val chapter = book.chapters.getOrNull(speakingChapterIdx)
+                    if (chapter != null && speakingParaIdx + 1 < chapter.paragraphs.size) {
+                        speakingParaIdx++
+                        speakNextPara.value()
+                    } else if (speakingChapterIdx + 1 < book.chapters.size) {
+                        speakingChapterIdx++
+                        speakingParaIdx = 0
+                        speakNextPara.value()
+                    } else {
+                        isTtsSpeaking = false
+                    }
+                }
+            }
+
+            @Deprecated("Deprecated in Java")
+            override fun onError(utteranceId: String?) {
+                isTtsSpeaking = false
+            }
+        })
+        ttsRef.value = tts
+
+        onDispose {
+            tts.stop()
+            tts.shutdown()
+        }
+    }
 
     // Only two fonts across entire app: Serif for reading/titles, SansSerif for UI
     val fontFamily = when (typeface) {
@@ -112,12 +203,13 @@ fun ReaderScreen(
         onControlsVisibilityChange(isUiVisible)
     }
 
-    // Hardware & Gesture Back Button Handling:
-    // If in fullscreen, exit fullscreen first. Otherwise, go back to Library.
+    // Hardware & Gesture Back Button Handling
     BackHandler(enabled = true) {
         if (isFullscreen) {
             onToggleFullscreen()
         } else {
+            ttsRef.value?.stop()
+            isTtsSpeaking = false
             onBackToLibrary()
         }
     }
@@ -151,6 +243,39 @@ fun ReaderScreen(
         backgroundColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.35f)
     )
 
+    // Prepared pages for Paged Mode
+    val pages = remember(book, fontSize) {
+        val list = mutableListOf<Pair<String, String>>()
+        book.chapters.forEach { chap ->
+            list.add(Pair(chap.title, "TITLE:::${chap.title}:::${chap.subtitle}"))
+            val chunkSize = if (fontSize >= 22) 1 else 2
+            var i = 0
+            while (i < chap.paragraphs.size) {
+                val p = chap.paragraphs[i]
+                if (p.startsWith("[IMG:") && p.endsWith("]")) {
+                    list.add(Pair(chap.title, p))
+                    i++
+                } else {
+                    val textBatch = mutableListOf<String>()
+                    while (i < chap.paragraphs.size && textBatch.size < chunkSize && !(chap.paragraphs[i].startsWith("[IMG:") && chap.paragraphs[i].endsWith("]"))) {
+                        textBatch.add(chap.paragraphs[i])
+                        i++
+                    }
+                    if (textBatch.isNotEmpty()) {
+                        list.add(Pair(chap.title, textBatch.joinToString("\n\n")))
+                    }
+                }
+            }
+        }
+        list
+    }
+
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = book.scrollPos)
+    val pagerState = rememberPagerState(
+        initialPage = book.currentPage.coerceIn(0, maxOf(pages.size - 1, 0)),
+        pageCount = { pages.size }
+    )
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -161,7 +286,6 @@ fun ReaderScreen(
             SelectionContainer {
                 if (readingMode == ReadingMode.SCROLL) {
                     // Continuous Vertical Scroll Mode across all chapters
-                    val listState = rememberLazyListState(initialFirstVisibleItemIndex = book.scrollPos)
                     val totalParas = remember(book) { maxOf(book.chapters.sumOf { it.paragraphs.size }, 1) }
 
                     LaunchedEffect(listState.firstVisibleItemIndex) {
@@ -177,6 +301,7 @@ fun ReaderScreen(
                             accum += count
                         }
                         activeChapterTitle = book.chapters.getOrNull(currentChap)?.title ?: "Chapter 1"
+                        speakingChapterIdx = currentChap
                         onPositionChange(currentChap, 0, listState.firstVisibleItemIndex, overallProgress)
                     }
 
@@ -184,7 +309,7 @@ fun ReaderScreen(
                         state = listState,
                         contentPadding = PaddingValues(
                             top = if (isUiVisible) 76.dp else 24.dp,
-                            bottom = if (isUiVisible) 90.dp else 40.dp,
+                            bottom = if (isUiVisible) 80.dp else 36.dp,
                             start = 22.dp,
                             end = 22.dp
                         ),
@@ -253,36 +378,56 @@ fun ReaderScreen(
                                 val matchingBookmark = bookmarks.firstOrNull {
                                     it.quote.trim() == para.trim() || para.contains(it.quote.trim())
                                 }
-                                val highlightBg = when (matchingBookmark?.color) {
-                                    HighlightColor.GOLD -> Color(0x3DF59E0B)
-                                    HighlightColor.ROSE -> Color(0x3DF43F5E)
-                                    HighlightColor.SAGE -> Color(0x3D10B981)
-                                    null -> if (selectedText == para && showSelectionMenu) Color(0x26D4AF37) else Color.Transparent
+                                val isBeingSpoken = isTtsSpeaking && speakingChapterIdx == chapIdx && speakingParaIdx == pIdx
+                                val highlightBg = when {
+                                    isBeingSpoken -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.22f)
+                                    matchingBookmark?.color == HighlightColor.GOLD -> Color(0x3DF59E0B)
+                                    matchingBookmark?.color == HighlightColor.ROSE -> Color(0x3DF43F5E)
+                                    matchingBookmark?.color == HighlightColor.SAGE -> Color(0x3D10B981)
+                                    selectedText == para && showSelectionMenu -> Color(0x26D4AF37)
+                                    else -> Color.Transparent
                                 }
 
                                 if (para.startsWith("[IMG:") && para.endsWith("]")) {
-                                    // Inline illustration
+                                    // Inline illustration with safe image loading and placeholder
                                     val imgPath = para.removePrefix("[IMG:").removeSuffix("]")
                                     val bitmap = rememberBookImage(imgPath)
-                                    if (bitmap != null) {
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(vertical = 14.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 14.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        if (bitmap != null) {
                                             Image(
                                                 bitmap = bitmap.asImageBitmap(),
                                                 contentDescription = "Illustration",
                                                 contentScale = ContentScale.Fit,
                                                 modifier = Modifier
-                                                    .fillMaxWidth(0.92f)
+                                                    .fillMaxWidth(0.94f)
                                                     .clip(RoundedCornerShape(8.dp))
                                             )
+                                        } else {
+                                            Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                                modifier = Modifier
+                                                    .fillMaxWidth(0.92f)
+                                                    .height(160.dp)
+                                            ) {
+                                                Box(contentAlignment = Alignment.Center) {
+                                                    Text(
+                                                        text = "Illustration",
+                                                        fontFamily = FontFamily.SansSerif,
+                                                        fontSize = 12.sp,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
                                 } else {
-                                    // Text Paragraph
+                                    // Text Paragraph — JUSTIFIED TEXT ALIGNMENT
                                     Column(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -299,7 +444,9 @@ fun ReaderScreen(
                                                     onDoubleTap = {
                                                         selectedText = para
                                                         selectedChapterTitle = chapter.title
-                                                        showSelectionMenu = true
+                                                        speakingChapterIdx = chapIdx
+                                                        speakingParaIdx = pIdx
+                                                        speakNextPara.value()
                                                     },
                                                     onTap = {
                                                         if (showSelectionMenu) {
@@ -339,7 +486,7 @@ fun ReaderScreen(
                                             Text(
                                                 text = annotatedString,
                                                 lineHeight = (fontSize * lineHeightMultiplier).sp,
-                                                textAlign = TextAlign.Start,
+                                                textAlign = TextAlign.Justify,
                                                 modifier = Modifier.fillMaxWidth()
                                             )
                                         } else {
@@ -348,7 +495,7 @@ fun ReaderScreen(
                                                 fontFamily = fontFamily,
                                                 fontSize = fontSize.sp,
                                                 lineHeight = (fontSize * lineHeightMultiplier).sp,
-                                                textAlign = TextAlign.Start,
+                                                textAlign = TextAlign.Justify,
                                                 color = MaterialTheme.colorScheme.onBackground,
                                                 modifier = Modifier.fillMaxWidth()
                                             )
@@ -360,37 +507,6 @@ fun ReaderScreen(
                     }
                 } else {
                     // Paged Mode
-                    val pages = remember(book, fontSize) {
-                        val list = mutableListOf<Pair<String, String>>()
-                        book.chapters.forEach { chap ->
-                            list.add(Pair(chap.title, "TITLE:::${chap.title}:::${chap.subtitle}"))
-                            val chunkSize = if (fontSize >= 22) 1 else 2
-                            var i = 0
-                            while (i < chap.paragraphs.size) {
-                                val p = chap.paragraphs[i]
-                                if (p.startsWith("[IMG:") && p.endsWith("]")) {
-                                    list.add(Pair(chap.title, p))
-                                    i++
-                                } else {
-                                    val textBatch = mutableListOf<String>()
-                                    while (i < chap.paragraphs.size && textBatch.size < chunkSize && !(chap.paragraphs[i].startsWith("[IMG:") && chap.paragraphs[i].endsWith("]"))) {
-                                        textBatch.add(chap.paragraphs[i])
-                                        i++
-                                    }
-                                    if (textBatch.isNotEmpty()) {
-                                        list.add(Pair(chap.title, textBatch.joinToString("\n\n")))
-                                    }
-                                }
-                            }
-                        }
-                        list
-                    }
-
-                    val pagerState = rememberPagerState(
-                        initialPage = book.currentPage.coerceIn(0, maxOf(pages.size - 1, 0)),
-                        pageCount = { pages.size }
-                    )
-
                     LaunchedEffect(pagerState.currentPage) {
                         val progress = if (pages.isNotEmpty()) {
                             (((pagerState.currentPage + 1).toFloat() / pages.size) * 100).toInt().coerceIn(0, 100)
@@ -398,6 +514,7 @@ fun ReaderScreen(
                         val currentPageChapTitle = pages.getOrNull(pagerState.currentPage)?.first ?: "Chapter 1"
                         activeChapterTitle = currentPageChapTitle
                         val chapIdx = book.chapters.indexOfFirst { it.title == currentPageChapTitle }.coerceAtLeast(0)
+                        speakingChapterIdx = chapIdx
                         onPositionChange(chapIdx, pagerState.currentPage, 0, progress)
                     }
 
@@ -408,7 +525,7 @@ fun ReaderScreen(
                                 .fillMaxSize()
                                 .padding(
                                     top = if (isUiVisible) 80.dp else 24.dp,
-                                    bottom = if (isUiVisible) 80.dp else 24.dp,
+                                    bottom = if (isUiVisible) 76.dp else 24.dp,
                                     start = 22.dp,
                                     end = 22.dp
                                 )
@@ -470,6 +587,23 @@ fun ReaderScreen(
                                                 .fillMaxWidth(0.94f)
                                                 .clip(RoundedCornerShape(8.dp))
                                         )
+                                    } else {
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                            modifier = Modifier
+                                                .fillMaxWidth(0.92f)
+                                                .height(200.dp)
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Text(
+                                                    text = "Illustration",
+                                                    fontFamily = FontFamily.SansSerif,
+                                                    fontSize = 12.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             } else {
@@ -499,7 +633,7 @@ fun ReaderScreen(
                                                 onDoubleTap = {
                                                     selectedText = content
                                                     selectedChapterTitle = chapTitle
-                                                    showSelectionMenu = true
+                                                    speakNextPara.value()
                                                 },
                                                 onTap = {
                                                     showControls = !showControls
@@ -513,7 +647,7 @@ fun ReaderScreen(
                                         fontFamily = fontFamily,
                                         fontSize = fontSize.sp,
                                         lineHeight = (fontSize * lineHeightMultiplier).sp,
-                                        textAlign = TextAlign.Start,
+                                        textAlign = TextAlign.Justify,
                                         color = MaterialTheme.colorScheme.onBackground,
                                         modifier = Modifier.fillMaxWidth()
                                     )
@@ -553,8 +687,7 @@ fun ReaderScreen(
             }
         }
 
-        // TOP HEADER BAR: Matches Reference Screenshot Exactly
-        // Left: '<' (ArrowBackIos), Center: Title (Serif, Medium) & Chapter (SansSerif, Normal), Right: [ Scroll | Paged ] segmented pill
+        // TOP HEADER BAR: Back chevron, Center Title/Chapter (tap for TOC), TOC button, Mode Toggler
         AnimatedVisibility(
             visible = isUiVisible,
             enter = slideInVertically { -it },
@@ -577,7 +710,11 @@ fun ReaderScreen(
                     ) {
                         // Left: Back arrow (< chevron)
                         IconButton(
-                            onClick = onBackToLibrary,
+                            onClick = {
+                                ttsRef.value?.stop()
+                                isTtsSpeaking = false
+                                onBackToLibrary()
+                            },
                             modifier = Modifier
                                 .align(Alignment.CenterStart)
                                 .padding(start = 6.dp)
@@ -591,11 +728,13 @@ fun ReaderScreen(
                             )
                         }
 
-                        // Center: Stacked Title (line 1) & Chapter (line 2) - Exactly horizontally centered on screen
+                        // Center: Stacked Title & Chapter — Clickable to open Table of Contents (TOC)
                         Column(
                             modifier = Modifier
                                 .align(Alignment.Center)
-                                .fillMaxWidth(0.56f),
+                                .fillMaxWidth(0.50f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { showTocSheet = true },
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Center
                         ) {
@@ -622,39 +761,74 @@ fun ReaderScreen(
                             )
                         }
 
-                        // Right: Mode Toggler (Scroll <-> Paged)
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                            border = BorderStroke(0.6.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                        // Right: TOC icon button & Mode Toggler (Scroll <-> Paged)
+                        Row(
                             modifier = Modifier
                                 .align(Alignment.CenterEnd)
-                                .padding(end = 12.dp)
-                                .height(32.dp)
-                                .clip(RoundedCornerShape(16.dp))
-                                .clickable {
-                                    val nextMode = if (readingMode == ReadingMode.SCROLL) ReadingMode.PAGED else ReadingMode.SCROLL
-                                    onModeChange(nextMode)
-                                }
+                                .padding(end = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                            // TTS Summon icon (visible when dropped off or to quickly open TTS)
+                            IconButton(
+                                onClick = {
+                                    isTtsDroppedOff = false
+                                    isTtsExpanded = true
+                                },
+                                modifier = Modifier.size(34.dp)
                             ) {
                                 Icon(
-                                    imageVector = if (readingMode == ReadingMode.SCROLL) Icons.Filled.SwapVert else Icons.AutoMirrored.Filled.MenuBook,
-                                    contentDescription = "Toggle Reading Mode",
-                                    modifier = Modifier.size(14.dp),
+                                    Icons.Filled.Headphones,
+                                    contentDescription = "Read Aloud (TTS)",
+                                    modifier = Modifier.size(18.dp),
+                                    tint = if (isTtsSpeaking) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+
+                            // Table of Contents Button
+                            IconButton(
+                                onClick = { showTocSheet = true },
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.FormatListBulleted,
+                                    contentDescription = "Table of Contents",
+                                    modifier = Modifier.size(18.dp),
                                     tint = MaterialTheme.colorScheme.onSurface
                                 )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = if (readingMode == ReadingMode.SCROLL) "Scroll" else "Paged",
-                                    fontFamily = FontFamily.SansSerif,
-                                    fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
+                            }
+
+                            // Mode Toggler Pill
+                            Surface(
+                                shape = RoundedCornerShape(16.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                border = BorderStroke(0.6.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                                modifier = Modifier
+                                    .height(32.dp)
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .clickable {
+                                        val nextMode = if (readingMode == ReadingMode.SCROLL) ReadingMode.PAGED else ReadingMode.SCROLL
+                                        onModeChange(nextMode)
+                                    }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = if (readingMode == ReadingMode.SCROLL) Icons.Filled.SwapVert else Icons.AutoMirrored.Filled.MenuBook,
+                                        contentDescription = "Toggle Reading Mode",
+                                        modifier = Modifier.size(14.dp),
+                                        tint = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = if (readingMode == ReadingMode.SCROLL) "Scroll" else "Paged",
+                                        fontFamily = FontFamily.SansSerif,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
                             }
                         }
                     }
@@ -675,7 +849,7 @@ fun ReaderScreen(
             exit = slideOutVertically { it },
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = if (isUiVisible) 76.dp else 16.dp, start = 16.dp, end = 16.dp)
+                .padding(bottom = if (isUiVisible) 56.dp else 16.dp, start = 16.dp, end = 16.dp)
         ) {
             Card(
                 shape = RoundedCornerShape(24.dp),
@@ -780,7 +954,156 @@ fun ReaderScreen(
             }
         }
 
-        // BOTTOM PROGRESS DOCK: Clean Progress Bar & Reading Stats (Clickable to toggle Nav Bar)
+        // TTS READER FLOATING BUTTON / CONTROLS (CAN BE DROPPED OFF)
+        AnimatedVisibility(
+            visible = !isTtsDroppedOff,
+            enter = fadeIn() + scaleIn(),
+            exit = fadeOut() + scaleOut(),
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(
+                    end = 18.dp,
+                    bottom = if (isUiVisible) 42.dp else 24.dp
+                )
+        ) {
+            if (!isTtsExpanded) {
+                // Sleek Collapsed Floating Action Button (FAB)
+                FloatingActionButton(
+                    onClick = {
+                        isTtsExpanded = true
+                        if (!isTtsSpeaking) {
+                            speakNextPara.value()
+                        }
+                    },
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    contentColor = MaterialTheme.colorScheme.secondary,
+                    shape = CircleShape,
+                    modifier = Modifier
+                        .size(46.dp)
+                        .shadow(6.dp, CircleShape)
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), CircleShape)
+                ) {
+                    Icon(
+                        imageVector = if (isTtsSpeaking) Icons.Filled.Pause else Icons.Filled.Headphones,
+                        contentDescription = "Text to Speech Reader",
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            } else {
+                // Expanded Interactive Floating Player Pill
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+                    shadowElevation = 8.dp,
+                    modifier = Modifier.padding(4.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        // Previous paragraph
+                        IconButton(
+                            onClick = {
+                                ttsRef.value?.stop()
+                                if (speakingParaIdx > 0) speakingParaIdx--
+                                speakNextPara.value()
+                            },
+                            modifier = Modifier.size(30.dp)
+                        ) {
+                            Icon(Icons.Filled.SkipPrevious, contentDescription = "Previous Paragraph", modifier = Modifier.size(17.dp))
+                        }
+
+                        // Play / Pause
+                        IconButton(
+                            onClick = {
+                                if (isTtsSpeaking) {
+                                    ttsRef.value?.stop()
+                                    isTtsSpeaking = false
+                                } else {
+                                    speakNextPara.value()
+                                }
+                            },
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f))
+                        ) {
+                            Icon(
+                                imageVector = if (isTtsSpeaking) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                                contentDescription = if (isTtsSpeaking) "Pause" else "Play",
+                                tint = MaterialTheme.colorScheme.secondary,
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
+
+                        // Stop
+                        IconButton(
+                            onClick = {
+                                ttsRef.value?.stop()
+                                isTtsSpeaking = false
+                                speakingParaIdx = 0
+                            },
+                            modifier = Modifier.size(30.dp)
+                        ) {
+                            Icon(Icons.Filled.Stop, contentDescription = "Stop", modifier = Modifier.size(17.dp))
+                        }
+
+                        // Next paragraph
+                        IconButton(
+                            onClick = {
+                                ttsRef.value?.stop()
+                                val ch = book.chapters.getOrNull(speakingChapterIdx)
+                                if (ch != null && speakingParaIdx + 1 < ch.paragraphs.size) {
+                                    speakingParaIdx++
+                                }
+                                speakNextPara.value()
+                            },
+                            modifier = Modifier.size(30.dp)
+                        ) {
+                            Icon(Icons.Filled.SkipNext, contentDescription = "Next Paragraph", modifier = Modifier.size(17.dp))
+                        }
+
+                        // Status pill
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            modifier = Modifier.padding(horizontal = 2.dp)
+                        ) {
+                            Text(
+                                text = if (isTtsSpeaking) "¶${speakingParaIdx + 1}" else "TTS",
+                                fontFamily = FontFamily.SansSerif,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                            )
+                        }
+
+                        // Drop Off / Dismiss button ('✕')
+                        IconButton(
+                            onClick = {
+                                ttsRef.value?.stop()
+                                isTtsSpeaking = false
+                                isTtsDroppedOff = true
+                                Toast.makeText(context, "TTS reader dropped off", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Drop Off TTS Reader",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(15.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // BOTTOM PROGRESS DOCK: Texts removed from bottom of menu as requested! Only sleek progress line remains.
         AnimatedVisibility(
             visible = isUiVisible,
             enter = slideInVertically { it },
@@ -802,10 +1125,10 @@ fun ReaderScreen(
                         thickness = 0.5.dp,
                         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
                     )
-                    Column(
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 8.dp)
+                            .padding(horizontal = 20.dp, vertical = 10.dp)
                     ) {
                         LinearProgressIndicator(
                             progress = { (book.progress / 100f).coerceIn(0f, 1f) },
@@ -816,30 +1139,39 @@ fun ReaderScreen(
                             color = MaterialTheme.colorScheme.secondary,
                             trackColor = MaterialTheme.colorScheme.surfaceVariant
                         )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "${book.progress}% completed",
-                                fontFamily = FontFamily.SansSerif,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Normal,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Text(
-                                text = book.readTimeLeft,
-                                fontFamily = FontFamily.SansSerif,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Normal,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
                     }
                 }
             }
+        }
+
+        // Table of Contents Sheet
+        if (showTocSheet) {
+            TableOfContentsSheet(
+                chapters = book.chapters,
+                bookTitle = book.title,
+                currentChapterIndex = book.chapters.indexOfFirst { it.title == activeChapterTitle }.coerceAtLeast(0),
+                onSelectChapter = { idx ->
+                    activeChapterTitle = book.chapters.getOrNull(idx)?.title ?: "Chapter ${idx + 1}"
+                    speakingChapterIdx = idx
+                    speakingParaIdx = 0
+                    if (readingMode == ReadingMode.SCROLL) {
+                        var targetIdx = 0
+                        for (c in 0 until idx) {
+                            targetIdx += (book.chapters[c].paragraphs.size + 1)
+                        }
+                        coroutineScope.launch {
+                            listState.animateScrollToItem(targetIdx)
+                        }
+                    } else {
+                        val targetPage = pages.indexOfFirst { it.first == activeChapterTitle }.coerceAtLeast(0)
+                        coroutineScope.launch {
+                            pagerState.animateScrollToPage(targetPage)
+                        }
+                    }
+                    showTocSheet = false
+                },
+                onDismiss = { showTocSheet = false }
+            )
         }
     }
 }
