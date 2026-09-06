@@ -13,12 +13,18 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -277,8 +283,15 @@ fun AppearanceSheet(
     onTypefaceChange: (TypefaceMode) -> Unit,
     themeMode: ThemeMode,
     onThemeChange: (ThemeMode) -> Unit,
+    showAssistant: Boolean = true,
+    onToggleAssistant: (Boolean) -> Unit = {},
+    geminiApiKey: String = "",
+    onGeminiApiKeyChange: (String) -> Unit = {},
     onDismiss: () -> Unit
 ) {
+    var apiKeyText by androidx.compose.runtime.remember(geminiApiKey) { androidx.compose.runtime.mutableStateOf(geminiApiKey) }
+    var isApiKeyVisible by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = MaterialTheme.colorScheme.surface,
@@ -391,6 +404,69 @@ fun AppearanceSheet(
                     )
                 }
             }
+
+            Spacer(modifier = Modifier.height(20.dp))
+            HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Floating AI Assistant Section
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Floating AI Assistant Orb",
+                        fontFamily = FontFamily.SansSerif,
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "Movable voice & action orb with radial wheel",
+                        fontFamily = FontFamily.SansSerif,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = showAssistant,
+                    onCheckedChange = onToggleAssistant
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Google Gemini API Key Input
+            Text(
+                text = "Gemini API Key (Optional)",
+                fontFamily = FontFamily.SansSerif,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Normal,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            OutlinedTextField(
+                value = apiKeyText,
+                onValueChange = {
+                    apiKeyText = it
+                    onGeminiApiKeyChange(it)
+                },
+                placeholder = { Text("Paste your Google Gemini API key", fontSize = 12.sp) },
+                singleLine = true,
+                visualTransformation = if (isApiKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                trailingIcon = {
+                    IconButton(onClick = { isApiKeyVisible = !isApiKeyVisible }) {
+                        Icon(
+                            imageVector = if (isApiKeyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                            contentDescription = "Toggle visibility",
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
         }
     }
 }
@@ -538,3 +614,165 @@ fun TableOfContentsSheet(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun BookContextMenuSheet(
+    book: org.protidhoni.lumina.model.Book,
+    onShare: () -> Unit,
+    onViewDetails: () -> Unit,
+    onResetProgress: () -> Unit,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 36.dp)
+        ) {
+            // Book Header Preview
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                BookCoverImage(
+                    source = book.coverUrl,
+                    titleFallback = book.title,
+                    authorFallback = book.author,
+                    modifier = Modifier
+                        .size(width = 48.dp, height = 68.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                )
+
+                Spacer(modifier = Modifier.width(16.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = book.title,
+                        fontFamily = FontFamily.Serif,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 2
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = book.author,
+                        fontFamily = FontFamily.SansSerif,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "${book.progress}% completed • ${book.readTimeLeft}",
+                        fontFamily = FontFamily.SansSerif,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.secondary
+                    )
+                }
+
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Default.Close, contentDescription = "Close")
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+            HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Action: Share Book
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onShare(); onDismiss() },
+                color = Color.Transparent
+            ) {
+                Row(
+                    modifier = Modifier.padding(vertical = 12.dp, horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Share Book Details",
+                        fontFamily = FontFamily.SansSerif,
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+
+            // Action: View Details & Stats
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onViewDetails(); onDismiss() },
+                color = Color.Transparent
+            ) {
+                Row(
+                    modifier = Modifier.padding(vertical = 12.dp, horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Book Details & Chapter Index",
+                        fontFamily = FontFamily.SansSerif,
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+
+            // Action: Reset Reading Progress
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onResetProgress(); onDismiss() },
+                color = Color.Transparent
+            ) {
+                Row(
+                    modifier = Modifier.padding(vertical = 12.dp, horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Reset Reading Progress to 0%",
+                        fontFamily = FontFamily.SansSerif,
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+            HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // Action: Delete Book
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onDelete(); onDismiss() },
+                color = Color.Transparent
+            ) {
+                Row(
+                    modifier = Modifier.padding(vertical = 12.dp, horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Delete Book from Library",
+                        fontFamily = FontFamily.SansSerif,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+        }
+    }
+}

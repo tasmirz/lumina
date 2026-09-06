@@ -53,6 +53,12 @@ class BookRepository(private val context: Context) {
     private val _lineHeightMultiplier = MutableStateFlow(prefs.getFloat("line_height", 1.68f))
     val lineHeightMultiplier: StateFlow<Float> = _lineHeightMultiplier.asStateFlow()
 
+    private val _showFloatingAssistant = MutableStateFlow(prefs.getBoolean("show_floating_assistant", true))
+    val showFloatingAssistant: StateFlow<Boolean> = _showFloatingAssistant.asStateFlow()
+
+    private val _geminiApiKey = MutableStateFlow(prefs.getString("gemini_api_key", "") ?: "")
+    val geminiApiKey: StateFlow<String> = _geminiApiKey.asStateFlow()
+
     fun getActiveBook(): Book {
         val id = _activeBookId.value
         return _books.value.find { it.id == id } ?: _books.value.first()
@@ -115,6 +121,16 @@ class BookRepository(private val context: Context) {
     fun setLineHeight(multiplier: Float) {
         _lineHeightMultiplier.value = multiplier
         prefs.edit().putFloat("line_height", multiplier).apply()
+    }
+
+    fun setShowFloatingAssistant(show: Boolean) {
+        _showFloatingAssistant.value = show
+        prefs.edit().putBoolean("show_floating_assistant", show).apply()
+    }
+
+    fun setGeminiApiKey(key: String) {
+        _geminiApiKey.value = key
+        prefs.edit().putString("gemini_api_key", key).apply()
     }
 
     fun setLastTab(tab: String) {

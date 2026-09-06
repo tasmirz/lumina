@@ -61,6 +61,8 @@ class MainActivity : ComponentActivity() {
             val fontSize by bookRepository.fontSize.collectAsStateWithLifecycle()
             val typeface by bookRepository.typefaceMode.collectAsStateWithLifecycle()
             val lineHeight by bookRepository.lineHeightMultiplier.collectAsStateWithLifecycle()
+            val showFloatingAssistant by bookRepository.showFloatingAssistant.collectAsStateWithLifecycle()
+            val geminiApiKey by bookRepository.geminiApiKey.collectAsStateWithLifecycle()
 
             var currentTab by rememberSaveable {
                 mutableStateOf(
@@ -184,6 +186,9 @@ class MainActivity : ComponentActivity() {
                                     onDeleteBook = { bookId ->
                                         bookRepository.removeBook(bookId)
                                     },
+                                    onResetProgress = { bookId ->
+                                        bookRepository.updateReadingPosition(bookId, 0, 0, 0, 0)
+                                    },
                                     onAddEpubClick = {
                                         showAddBookSheet = true
                                     }
@@ -217,7 +222,11 @@ class MainActivity : ComponentActivity() {
                                         coroutineScope.launch {
                                             activeWordDefinition = DictionaryService.lookup(word)
                                         }
-                                    }
+                                    },
+                                    onOpenAppearance = { showAppearanceSheet = true },
+                                    showFloatingAssistant = showFloatingAssistant,
+                                    onToggleFloatingAssistant = { bookRepository.setShowFloatingAssistant(it) },
+                                    geminiApiKey = geminiApiKey
                                 )
                             }
                         }
@@ -256,6 +265,10 @@ class MainActivity : ComponentActivity() {
                                 onTypefaceChange = { bookRepository.setTypefaceMode(it) },
                                 themeMode = themeMode,
                                 onThemeChange = { bookRepository.setThemeMode(it) },
+                                showAssistant = showFloatingAssistant,
+                                onToggleAssistant = { bookRepository.setShowFloatingAssistant(it) },
+                                geminiApiKey = geminiApiKey,
+                                onGeminiApiKeyChange = { bookRepository.setGeminiApiKey(it) },
                                 onDismiss = { showAppearanceSheet = false }
                             )
                         }

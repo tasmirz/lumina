@@ -1,8 +1,11 @@
 package org.protidhoni.lumina.ui.library
 
+import android.content.Intent
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -21,24 +24,30 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.protidhoni.lumina.model.Book
+import org.protidhoni.lumina.ui.components.BookContextMenuSheet
 import org.protidhoni.lumina.ui.components.BookCoverImage
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun LibraryScreen(
     books: List<Book>,
     activeBook: Book,
     onBookSelect: (String) -> Unit,
     onDeleteBook: (String) -> Unit = {},
+    onResetProgress: (String) -> Unit = {},
     onAddEpubClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     var bookToDelete by remember { mutableStateOf<Book?>(null) }
+    var bookForContextMenu by remember { mutableStateOf<Book?>(null) }
 
     Column(
         modifier = modifier
@@ -224,48 +233,47 @@ fun LibraryScreen(
             // Book Cards in Grid
             items(books, key = { it.id }) { book ->
                 Card(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .combinedClickable(
+                            onClick = { onBookSelect(book.id) },
+                            onLongClick = { bookForContextMenu = book }
+                        ),
                     shape = RoundedCornerShape(14.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
                 ) {
                     Column(modifier = Modifier.padding(10.dp)) {
-                        // Clickable area for opening the book
-                        Column(
+                        BookCoverImage(
+                            source = book.coverUrl,
+                            titleFallback = book.title,
+                            authorFallback = book.author,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { onBookSelect(book.id) }
-                        ) {
-                            BookCoverImage(
-                                source = book.coverUrl,
-                                titleFallback = book.title,
-                                authorFallback = book.author,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(140.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                            )
+                                .height(140.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                        )
 
-                            Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
-                            Text(
-                                text = book.title,
-                                fontFamily = FontFamily.Serif,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Medium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = book.author,
-                                fontFamily = FontFamily.SansSerif,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Normal,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
+                        Text(
+                            text = book.title,
+                            fontFamily = FontFamily.Serif,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = book.author,
+                            fontFamily = FontFamily.SansSerif,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Normal,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
 
                         Spacer(modifier = Modifier.height(6.dp))
 
@@ -279,30 +287,26 @@ fun LibraryScreen(
                             trackColor = MaterialTheme.colorScheme.surfaceVariant
                         )
 
-                        Spacer(modifier = Modifier.height(4.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "${book.progress}% • ${book.lastRead}",
+                                text = "${book.progress}% • ${book.readTimeLeft}",
                                 fontFamily = FontFamily.SansSerif,
-                                fontSize = 9.sp,
+                                fontSize = 10.sp,
                                 fontWeight = FontWeight.Normal,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            IconButton(
-                                onClick = { bookToDelete = book },
-                                modifier = Modifier.size(28.dp)
-                            ) {
-                                Icon(
-                                    Icons.Outlined.DeleteOutline,
-                                    contentDescription = "Remove Book",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
+                            Text(
+                                text = book.lastRead,
+                                fontFamily = FontFamily.SansSerif,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Normal,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            )
                         }
                     }
                 }
@@ -362,6 +366,32 @@ fun LibraryScreen(
                 }
             }
         }
+    }
+
+    // Long-press Context Menu Sheet
+    if (bookForContextMenu != null) {
+        val targetBook = bookForContextMenu!!
+        BookContextMenuSheet(
+            book = targetBook,
+            onShare = {
+                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_SUBJECT, targetBook.title)
+                    putExtra(Intent.EXTRA_TEXT, "Reading \"${targetBook.title}\" by ${targetBook.author} on Lumina Reader.")
+                }
+                context.startActivity(Intent.createChooser(shareIntent, "Share Book"))
+            },
+            onViewDetails = {
+                onBookSelect(targetBook.id)
+            },
+            onResetProgress = {
+                onResetProgress(targetBook.id)
+            },
+            onDelete = {
+                bookToDelete = targetBook
+            },
+            onDismiss = { bookForContextMenu = null }
+        )
     }
 
     // Confirmation dialog for removing book

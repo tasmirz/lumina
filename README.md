@@ -12,13 +12,18 @@ Lumina is designed for readers who value aesthetics, distraction-free typography
   - **Continuous Scroll Mode**: Smooth vertical scroll across all chapters with dynamic header/footer auto-hide.
   - **Paged Mode**: Horizontal swipe pagination with touch navigation zones and page transitions.
 
-- **🎧 Text-to-Speech (TTS) Floating Reader**:
-  - Native Android TTS engine with auto-advancing paragraph narration.
-  - Interactive, draggable/collapsible floating player pill with Play, Pause, Stop, and Skip Previous/Next controls.
-  - Active spoken paragraph highlighting.
-  - Dismissible ("drop-off") floating action button that can be re-summoned from the top bar at any time.
+- **🔮 Floating AI & Voice Assistant Orb**:
+  - **Draggable & Dismissible**: Freely movable anywhere on screen with automatic screen-edge clamping and drag-to-trash drop zone at the bottom to dismiss. Can be re-enabled anytime from Reading Settings.
+  - **Radial Action Wheel (Single Tap)**: 4 instant quick actions (Play/Pause TTS, Add Note/Bookmark, Open TOC, Reading Theme/Settings).
+  - **Voice Assistant (Long Press)**: Pulsing voice animation powered by Android SpeechRecognizer. Supports voice navigation ("go to chapter 3", "next chapter"), TTS control, notes, and Gemini 2.5 Flash Q&A.
+  - **Spoiler-Proof Contextual AI**: Uses book context up to your current reading position only—guaranteed no spoilers beyond where you are.
 
-- **🎨 Typography & Aesthetics**:
+- **🎧 Natural Text-to-Speech (TTS)**:
+  - Enhanced neural voice selection with calibrated calm pacing (0.95x) for human-like reading cadence.
+  - Active spoken paragraph highlighting and smooth auto-advance.
+
+- **🎨 Typography & Precision Text Selection**:
+  - **Granular Selection**: Drag handles for word-level and line-level selection without whole-paragraph touch interception.
   - **Justified Text Formatting**: Books format with clean, justified margins replicating physical book layouts.
   - **Drop Caps**: Elegant opening paragraph typography for every section.
   - **Curated Typefaces**: Focused two-font architecture (Editorial Serif for prose, Modern Sans for UI controls).
@@ -36,6 +41,7 @@ Lumina is designed for readers who value aesthetics, distraction-free typography
 - **🌐 Curated Public Catalogs & EPUB Import**:
   - Direct EPUB import from device storage.
   - Search and download classic public-domain literature from **Standard Ebooks**, **Project Gutenberg**, **Internet Archive**, and **Open Library**.
+  - **Clean Gallery & Long-Press Context Menu**: Clutter-free cards without accidental delete buttons. Long-press any book card to open a full context sheet (Share EPUB, Book Details & Reading Stats, Reset Progress to 0%, or Delete with confirmation).
 
 - **✍️ Highlights, Citations & Dictionary**:
   - Multi-color quote highlighting (Gold, Rose, Sage).
