@@ -1,0 +1,2038 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"/>
+  <title>Lumina — Minimalist Mobile EPUB Reader</title>
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Playfair+Display:ital,wght@0,600;0,700;1,400&family=Source+Serif+4:ital,opsz,wght@0,8..60,300;0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+
+  <!-- JSZip & ePub.js for EPUB parsing -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/epubjs/dist/epub.min.js"></script>
+
+  <style>
+    :root {
+      /* Theme: Parchment / Warm Paper (Default) */
+      --bg-color: #fef9f3;
+      --bg-surface: #f4eee6;
+      --bg-surface-translucent: rgba(254, 249, 243, 0.92);
+      --bg-sheet: #fef9f3;
+      --text-main: #1d1b18;
+      --text-secondary: #57524b;
+      --text-muted: #8c857b;
+      --accent-color: #8c6b1f;
+      --accent-soft: rgba(140, 107, 31, 0.12);
+      --border-color: rgba(60, 50, 40, 0.1);
+      --border-strong: rgba(60, 50, 40, 0.22);
+      --shadow-sm: 0 4px 18px rgba(35, 25, 15, 0.05);
+      --shadow-modal: 0 20px 50px rgba(25, 20, 15, 0.18);
+      
+      /* Highlight Colors */
+      --hl-gold: rgba(212, 175, 55, 0.32);
+      --hl-rose: rgba(229, 183, 183, 0.45);
+      --hl-sage: rgba(178, 194, 178, 0.45);
+      --hl-border-gold: #c29d28;
+      --hl-border-rose: #d68f8f;
+      --hl-border-sage: #8da38d;
+
+      /* Typography defaults */
+      --font-family-reading: 'Source Serif 4', Georgia, serif;
+      --font-family-ui: 'Hanken Grotesk', -apple-system, sans-serif;
+      --font-size: 18px;
+      --line-height: 1.68;
+      --reading-max-width: 680px;
+      --text-align: justify;
+    }
+
+    [data-theme="white"] {
+      --bg-color: #ffffff;
+      --bg-surface: #f3f3f5;
+      --bg-surface-translucent: rgba(255, 255, 255, 0.94);
+      --bg-sheet: #ffffff;
+      --text-main: #141416;
+      --text-secondary: #4b4b50;
+      --text-muted: #82828a;
+      --accent-color: #171717;
+      --accent-soft: rgba(0, 0, 0, 0.07);
+      --border-color: rgba(0, 0, 0, 0.08);
+      --border-strong: rgba(0, 0, 0, 0.2);
+      --shadow-sm: 0 4px 18px rgba(0, 0, 0, 0.05);
+      --shadow-modal: 0 20px 50px rgba(0, 0, 0, 0.16);
+      --hl-gold: rgba(235, 205, 100, 0.4);
+      --hl-rose: rgba(245, 190, 190, 0.5);
+      --hl-sage: rgba(190, 215, 190, 0.5);
+    }
+
+    [data-theme="dark"] {
+      --bg-color: #141415;
+      --bg-surface: #1e1e22;
+      --bg-surface-translucent: rgba(20, 20, 21, 0.92);
+      --bg-sheet: #1a1a1c;
+      --text-main: #eae7e1;
+      --text-secondary: #a7a298;
+      --text-muted: #6e6960;
+      --accent-color: #deb862;
+      --accent-soft: rgba(222, 184, 98, 0.16);
+      --border-color: rgba(255, 255, 255, 0.09);
+      --border-strong: rgba(255, 255, 255, 0.22);
+      --shadow-sm: 0 4px 20px rgba(0, 0, 0, 0.5);
+      --shadow-modal: 0 20px 50px rgba(0, 0, 0, 0.8);
+      --hl-gold: rgba(212, 175, 55, 0.28);
+      --hl-rose: rgba(229, 183, 183, 0.28);
+      --hl-sage: rgba(178, 194, 178, 0.28);
+      --hl-border-gold: #deb862;
+      --hl-border-rose: #e5a4a4;
+      --hl-border-sage: #9eb89e;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body {
+      background-color: #e5e0d8;
+      color: var(--text-main);
+      font-family: var(--font-family-ui);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      overflow: hidden;
+      margin: 0;
+    }
+
+    /* Mobile Device Outer Frame Container */
+    #mobile-device-shell {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      max-width: 440px;
+      max-height: 920px;
+      background: var(--bg-color);
+      box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.35), 0 0 0 10px #1c1a17, 0 0 0 12px #3c3833;
+      border-radius: 44px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      transition: background-color 0.3s ease;
+    }
+
+    /* Top Phone Notch / Dynamic Island */
+    .phone-notch {
+      position: absolute;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 110px;
+      height: 26px;
+      background: #000000;
+      border-radius: 20px;
+      z-index: 1000;
+      pointer-events: none;
+    }
+
+    /* Mobile Status Bar */
+    .mobile-status-bar {
+      height: 42px;
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 24px 0 24px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-main);
+      z-index: 999;
+      pointer-events: none;
+    }
+
+    /* View Screens Container */
+    .app-screen {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s ease, transform 0.25s ease;
+      transform: scale(0.98);
+      background: var(--bg-color);
+      overflow: hidden;
+    }
+
+    .app-screen.active-screen {
+      opacity: 1;
+      pointer-events: auto;
+      transform: scale(1);
+      z-index: 10;
+    }
+
+    /* ====================================================
+       SCREEN 1: LIBRARY VIEW
+       ==================================================== */
+    .library-header {
+      padding: 50px 20px 16px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border-color);
+      background: var(--bg-surface-translucent);
+      backdrop-filter: blur(20px);
+    }
+
+    .library-title {
+      font-family: 'Playfair Display', serif;
+      font-size: 26px;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    .library-subtitle {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .library-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+      padding-bottom: 90px;
+    }
+
+    /* Continue Reading Card */
+    .continue-reading-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      border-radius: 18px;
+      padding: 18px;
+      display: flex;
+      gap: 16px;
+      margin-bottom: 24px;
+      cursor: pointer;
+      position: relative;
+      box-shadow: var(--shadow-sm);
+      transition: transform 0.18s ease, border-color 0.18s ease;
+    }
+
+    .continue-reading-card:hover {
+      transform: translateY(-2px);
+      border-color: var(--border-strong);
+    }
+
+    .book-cover-thumb {
+      width: 74px;
+      height: 104px;
+      border-radius: 8px;
+      background-size: cover;
+      background-position: center;
+      flex-shrink: 0;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.18);
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      padding: 8px;
+      color: white;
+      font-size: 10px;
+      font-weight: 700;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .book-cover-thumb::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to top, rgba(0,0,0,0.7), transparent 60%);
+    }
+
+    .continue-info {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    .continue-badge {
+      display: inline-block;
+      align-self: flex-start;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--accent-color);
+      margin-bottom: 4px;
+    }
+
+    .book-title-text {
+      font-family: 'Source Serif 4', serif;
+      font-size: 17px;
+      font-weight: 600;
+      line-height: 1.3;
+      margin-bottom: 4px;
+      color: var(--text-main);
+    }
+
+    .book-author-text {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+    }
+
+    .mini-progress-bar {
+      width: 100%;
+      height: 5px;
+      background: var(--border-color);
+      border-radius: 999px;
+      overflow: hidden;
+      margin-bottom: 6px;
+    }
+
+    .mini-progress-fill {
+      height: 100%;
+      background: var(--accent-color);
+      border-radius: 999px;
+      width: 42%;
+    }
+
+    .mini-progress-stats {
+      font-size: 11px;
+      color: var(--text-secondary);
+      display: flex;
+      justify-content: space-between;
+    }
+
+    /* Grid of Books in Library */
+    .section-headline {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--text-secondary);
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .books-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .book-grid-item {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 12px;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      transition: transform 0.18s ease, border-color 0.18s ease;
+    }
+
+    .book-grid-item:hover {
+      transform: translateY(-2px);
+      border-color: var(--border-strong);
+    }
+
+    .grid-cover {
+      width: 100%;
+      height: 140px;
+      border-radius: 10px;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: flex-end;
+      padding: 10px;
+      color: white;
+      font-weight: 600;
+      font-size: 12px;
+      position: relative;
+      overflow: hidden;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+    }
+
+    .grid-cover::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to top, rgba(0,0,0,0.8), transparent 70%);
+    }
+
+    .grid-cover span {
+      position: relative;
+      z-index: 2;
+    }
+
+    .grid-book-title {
+      font-family: 'Source Serif 4', serif;
+      font-size: 14px;
+      font-weight: 600;
+      line-height: 1.25;
+      color: var(--text-main);
+      margin-bottom: 2px;
+    }
+
+    .grid-book-author {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+    }
+
+    /* Add book card */
+    .add-book-card {
+      border: 2px dashed var(--border-strong);
+      background: transparent;
+      border-radius: 16px;
+      height: 220px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      cursor: pointer;
+      color: var(--text-secondary);
+      transition: all 0.2s ease;
+    }
+
+    .add-book-card:hover {
+      background: var(--bg-surface);
+      color: var(--text-main);
+      border-color: var(--text-main);
+    }
+
+    /* ====================================================
+       SCREEN 2: READER CANVAS
+       ==================================================== */
+    .reader-screen {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-color);
+    }
+
+    /* Floating Mobile Top Header */
+    .mobile-reader-header {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 84px;
+      padding: 40px 16px 10px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--bg-surface-translucent);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border-color);
+      z-index: 50;
+      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .mobile-reader-header.hidden-bar {
+      transform: translateY(-100%);
+    }
+
+    .header-book-info {
+      text-align: center;
+      max-width: 180px;
+      cursor: pointer;
+    }
+
+    .header-book-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-main);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .header-book-chap {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    /* Floating Pill Mode Switcher */
+    .pill-mode-switch {
+      display: flex;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      border-radius: 999px;
+      padding: 2px;
+      font-size: 11px;
+    }
+
+    .pill-mode-btn {
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: none;
+      background: transparent;
+      color: var(--text-secondary);
+      font-size: 11px;
+      cursor: pointer;
+    }
+
+    .pill-mode-btn.active {
+      background: var(--bg-color);
+      color: var(--text-main);
+      font-weight: 600;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+
+    /* Mobile Reading Main Pane */
+    .mobile-reading-viewport {
+      flex: 1;
+      width: 100%;
+      height: 100%;
+      overflow-y: auto;
+      padding: 92px 20px 96px 20px;
+      font-family: var(--font-family-reading);
+      font-size: var(--font-size);
+      line-height: var(--line-height);
+      text-align: var(--text-align);
+      color: var(--text-main);
+      user-select: text;
+      position: relative;
+    }
+
+    /* Paged Mode Container on Mobile */
+    .mobile-paged-stage {
+      display: none;
+      width: 100%;
+      height: 100%;
+      padding: 92px 18px 90px 18px;
+      overflow: hidden;
+      position: relative;
+      flex-direction: column;
+    }
+
+    .paged-active .mobile-reading-viewport {
+      display: none;
+    }
+
+    .paged-active .mobile-paged-stage {
+      display: flex;
+    }
+
+    .mobile-page-card {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+      font-family: var(--font-family-reading);
+      font-size: var(--font-size);
+      line-height: var(--line-height);
+      text-align: var(--text-align);
+      overflow: hidden;
+      animation: pageTurnMobile 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+
+    @keyframes pageTurnMobile {
+      from { opacity: 0.3; transform: translateX(12px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+
+    /* Touch Hotzones for Mobile Flip */
+    .mobile-touch-left, .mobile-touch-right {
+      position: absolute;
+      top: 90px;
+      bottom: 90px;
+      width: 25%;
+      z-index: 20;
+    }
+    .mobile-touch-left { left: 0; }
+    .mobile-touch-right { right: 0; }
+
+    /* Prose Formatting */
+    .prose-content p {
+      margin-bottom: 1.4em;
+    }
+
+    .prose-content .drop-cap::first-letter {
+      float: left;
+      font-family: 'Source Serif 4', serif;
+      font-size: 3.6em;
+      line-height: 0.82;
+      padding-top: 0.08em;
+      padding-right: 0.12em;
+      padding-left: 0;
+      color: var(--accent-color);
+      font-weight: 700;
+    }
+
+    .prose-content blockquote {
+      margin: 20px 0;
+      padding: 12px 16px;
+      border-left: 3px solid var(--accent-color);
+      background: var(--accent-soft);
+      font-style: italic;
+      border-radius: 0 8px 8px 0;
+    }
+
+    /* Highlights styling in text */
+    .hl-gold {
+      background-color: var(--hl-gold);
+      border-bottom: 2px solid var(--hl-border-gold);
+      border-radius: 2px;
+      padding: 1px 2px;
+      cursor: pointer;
+    }
+    .hl-rose {
+      background-color: var(--hl-rose);
+      border-bottom: 2px solid var(--hl-border-rose);
+      border-radius: 2px;
+      padding: 1px 2px;
+      cursor: pointer;
+    }
+    .hl-sage {
+      background-color: var(--hl-sage);
+      border-bottom: 2px solid var(--hl-border-sage);
+      border-radius: 2px;
+      padding: 1px 2px;
+      cursor: pointer;
+    }
+
+    /* Contextual Selection Popover Menu */
+    #selection-menu {
+      position: absolute;
+      z-index: 1000;
+      display: none;
+      background: var(--bg-sheet);
+      border: 1px solid var(--border-strong);
+      border-radius: 28px;
+      padding: 6px 12px;
+      box-shadow: var(--shadow-modal);
+      gap: 10px;
+      align-items: center;
+      backdrop-filter: blur(25px);
+      -webkit-backdrop-filter: blur(25px);
+      animation: popIn 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    @keyframes popIn {
+      from { transform: translate(-50%, 8px) scale(0.92); opacity: 0; }
+      to { transform: translate(-50%, 0) scale(1); opacity: 1; }
+    }
+
+    .sel-action-btn {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      border: none;
+      background: transparent;
+      color: var(--text-main);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      padding: 4px 6px;
+      border-radius: 6px;
+      white-space: nowrap;
+    }
+
+    .sel-action-btn:hover {
+      background: var(--bg-surface);
+    }
+
+    .hl-dots {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      padding-right: 6px;
+      border-right: 1px solid var(--border-color);
+    }
+
+    .hl-dot {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      cursor: pointer;
+      border: 1px solid rgba(0,0,0,0.15);
+      transition: transform 0.15s ease;
+    }
+    .hl-dot:hover { transform: scale(1.2); }
+    .dot-gold { background: #d4af37; }
+    .dot-rose { background: #e5b7b7; }
+    .dot-sage { background: #b2c2b2; }
+
+    /* Mobile Bottom Dock (Progress bar & scrubber) */
+    .mobile-reader-dock {
+      position: absolute;
+      bottom: 58px; /* sits right above bottom nav bar */
+      left: 0;
+      width: 100%;
+      padding: 10px 18px 8px 18px;
+      background: var(--bg-surface-translucent);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-top: 1px solid var(--border-color);
+      z-index: 50;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .mobile-reader-dock.hidden-bar {
+      transform: translateY(100%);
+    }
+
+    .mobile-progress-track {
+      width: 100%;
+      height: 4px;
+      background: var(--border-color);
+      border-radius: 999px;
+      position: relative;
+      cursor: pointer;
+    }
+
+    .mobile-progress-fill {
+      position: absolute;
+      top: 0;
+      left: 0;
+      height: 100%;
+      background: var(--accent-color);
+      border-radius: 999px;
+      width: 14%;
+    }
+
+    .dock-meta-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+
+    /* Fixed Bottom Tab Navigation Bar */
+    .mobile-tab-bar {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 60px;
+      background: var(--bg-surface-translucent);
+      backdrop-filter: blur(25px);
+      -webkit-backdrop-filter: blur(25px);
+      border-top: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      justify-content: space-around;
+      z-index: 60;
+    }
+
+    .tab-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      color: var(--text-muted);
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      font-size: 10px;
+      font-weight: 500;
+      flex: 1;
+      height: 100%;
+      transition: color 0.15s ease;
+    }
+
+    .tab-item.active {
+      color: var(--accent-color);
+      font-weight: 600;
+    }
+
+    .tab-item span.material-symbols-outlined {
+      font-size: 20px;
+    }
+
+    /* ====================================================
+       BOTTOM SHEETS & MODALS (Dictionary, Bookmarks, Aa)
+       ==================================================== */
+    .sheet-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+      z-index: 100;
+      display: none;
+      backdrop-filter: blur(4px);
+    }
+
+    .sheet-backdrop.open {
+      display: block;
+    }
+
+    .bottom-sheet {
+      position: absolute;
+      bottom: -100%;
+      left: 0;
+      width: 100%;
+      max-height: 80%;
+      background: var(--bg-sheet);
+      border-top: 1px solid var(--border-color);
+      border-radius: 24px 24px 0 0;
+      padding: 16px 20px 36px 20px;
+      z-index: 110;
+      display: flex;
+      flex-direction: column;
+      box-shadow: var(--shadow-modal);
+      transition: bottom 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .bottom-sheet.open {
+      bottom: 0;
+    }
+
+    .sheet-handle {
+      width: 36px;
+      height: 4px;
+      border-radius: 2px;
+      background: var(--border-strong);
+      margin: 0 auto 14px auto;
+    }
+
+    .sheet-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .sheet-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+
+    .sheet-close-btn {
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 18px;
+    }
+
+    .sheet-scroll-body {
+      overflow-y: auto;
+      flex: 1;
+    }
+
+    /* Dictionary Content Layout */
+    .dict-word-head {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+
+    .dict-word {
+      font-family: 'Playfair Display', serif;
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    .dict-phonetic {
+      font-size: 13px;
+      color: var(--text-muted);
+      font-style: italic;
+    }
+
+    .dict-pos {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      padding: 2px 8px;
+      background: var(--accent-soft);
+      color: var(--accent-color);
+      border-radius: 4px;
+      margin-bottom: 12px;
+    }
+
+    .dict-def {
+      font-size: 14px;
+      line-height: 1.5;
+      color: var(--text-main);
+      margin-bottom: 10px;
+    }
+
+    .dict-example {
+      font-size: 13px;
+      color: var(--text-secondary);
+      font-style: italic;
+      border-left: 2px solid var(--accent-color);
+      padding-left: 10px;
+      margin-top: 8px;
+    }
+
+    /* Bookmarks & Highlights List */
+    .mark-item {
+      padding: 12px;
+      border-radius: 12px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      margin-bottom: 10px;
+      cursor: pointer;
+      position: relative;
+    }
+
+    .mark-item:hover {
+      border-color: var(--border-strong);
+    }
+
+    .mark-item-header {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+
+    .mark-text-quote {
+      font-family: 'Source Serif 4', serif;
+      font-size: 13px;
+      color: var(--text-main);
+      font-style: italic;
+      margin-bottom: 6px;
+    }
+
+    .mark-delete-btn {
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    /* Notification Toast */
+    #app-toast {
+      position: absolute;
+      top: 50px;
+      left: 50%;
+      transform: translateX(-50%) translateY(-20px);
+      background: #1d1b18;
+      color: #fef9f3;
+      padding: 8px 16px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 500;
+      box-shadow: var(--shadow-modal);
+      opacity: 0;
+      pointer-events: none;
+      transition: all 0.22s ease;
+      z-index: 1500;
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    #app-toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    /* Sliders & Controls in Sheet */
+    .sheet-control-group {
+      margin-bottom: 18px;
+    }
+
+    .sheet-control-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .sheet-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .sheet-seg {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+    }
+
+    .sheet-btn {
+      padding: 8px;
+      font-size: 12px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      text-align: center;
+    }
+
+    .sheet-btn.active {
+      border-color: var(--text-main);
+      color: var(--text-main);
+      background: var(--bg-color);
+      font-weight: 600;
+    }
+
+    .theme-circle-btn {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      border: 2px solid transparent;
+      cursor: pointer;
+    }
+    .theme-circle-btn.active {
+      border-color: var(--accent-color);
+    }
+  </style>
+</head>
+<body data-theme="warm">
+
+  <!-- Outer Mobile Device Mockup -->
+  <div id="mobile-device-shell">
+    <!-- Mobile Notch -->
+    <div class="phone-notch"></div>
+
+    <!-- Status Bar -->
+    <div class="mobile-status-bar">
+      <span>9:41</span>
+      <div style="display: flex; align-items: center; gap: 4px;">
+        <span class="material-symbols-outlined" style="font-size: 14px;">signal_cellular_4_bar</span>
+        <span class="material-symbols-outlined" style="font-size: 14px;">wifi</span>
+        <span class="material-symbols-outlined" style="font-size: 16px;">battery_full</span>
+      </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="app-toast">
+      <span class="material-symbols-outlined" style="font-size: 16px;">check_circle</span>
+      <span id="toast-msg">Copied with citation!</span>
+    </div>
+
+    <!-- ==============================================
+         SCREEN 1: LIBRARY SCREEN
+         ============================================== -->
+    <div class="app-screen active-screen" id="screen-library">
+      <div class="library-header">
+        <div>
+          <h1 class="library-title">Lumina</h1>
+          <p class="library-subtitle">Your Digital Sanctuary • 3 Books</p>
+        </div>
+        <button id="lib-add-btn" style="width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--border-color); background: var(--bg-surface); color: var(--text-main); display: flex; align-items: center; justify-content: center; cursor: pointer;">
+          <span class="material-symbols-outlined" style="font-size: 20px;">add</span>
+        </button>
+      </div>
+
+      <div class="library-scroll">
+        <!-- Continue Reading Hero Card -->
+        <div class="section-headline">
+          <span>Current Read</span>
+          <span style="color: var(--accent-color); font-size: 11px;">Tap to open</span>
+        </div>
+
+        <div class="continue-reading-card" id="continue-reading-card">
+          <div class="book-cover-thumb" id="hero-cover" style="background-image: url('https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=400&q=80');">
+            <span>Kafka</span>
+          </div>
+          <div class="continue-info">
+            <span class="continue-badge">Last Read 2m ago</span>
+            <div class="book-title-text" id="hero-title">The Metamorphosis</div>
+            <div class="book-author-text" id="hero-author">Franz Kafka • Chapter I</div>
+            <div class="mini-progress-bar">
+              <div class="mini-progress-fill" id="hero-progress-fill" style="width: 38%;"></div>
+            </div>
+            <div class="mini-progress-stats">
+              <span id="hero-progress-pct">38% complete</span>
+              <span id="hero-time-left">16 mins left</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- All Books Grid -->
+        <div class="section-headline">
+          <span>All Books</span>
+        </div>
+
+        <div class="books-grid" id="library-books-grid">
+          <!-- Dynamically populated books -->
+        </div>
+
+        <!-- Hidden input for uploading EPUB -->
+        <input type="file" id="lib-epub-file" accept=".epub" style="display: none;"/>
+      </div>
+    </div>
+
+    <!-- ==============================================
+         SCREEN 2: READER SCREEN
+         ============================================== -->
+    <div class="app-screen" id="screen-reader">
+      <!-- Floating Top Header -->
+      <header class="mobile-reader-header" id="reader-header">
+        <button id="btn-back-to-lib" style="border: none; background: transparent; color: var(--text-main); cursor: pointer; display: flex; align-items: center;">
+          <span class="material-symbols-outlined" style="font-size: 22px;">arrow_back_ios</span>
+        </button>
+
+        <div class="header-book-info" id="header-book-info">
+          <div class="header-book-title" id="reader-top-title">The Metamorphosis</div>
+          <div class="header-book-chap" id="reader-top-chap">Chapter I</div>
+        </div>
+
+        <!-- Mode Toggle: Scroll vs Paged -->
+        <div class="pill-mode-switch">
+          <button class="pill-mode-btn active" id="btn-mode-scroll">Scroll</button>
+          <button class="pill-mode-btn" id="btn-mode-page">Paged</button>
+        </div>
+      </header>
+
+      <!-- Contextual Selection Popover Menu -->
+      <div id="selection-menu">
+        <div class="hl-dots">
+          <div class="hl-dot dot-gold" data-color="gold" title="Gold Highlight"></div>
+          <div class="hl-dot dot-rose" data-color="rose" title="Rose Highlight"></div>
+          <div class="hl-dot dot-sage" data-color="sage" title="Sage Highlight"></div>
+        </div>
+        <button class="sel-action-btn" id="sel-btn-cite">
+          <span class="material-symbols-outlined" style="font-size: 15px;">format_quote</span>
+          <span>Copy Citation</span>
+        </button>
+        <button class="sel-action-btn" id="sel-btn-dict">
+          <span class="material-symbols-outlined" style="font-size: 15px;">dictionary</span>
+          <span>Define</span>
+        </button>
+        <button class="sel-action-btn" id="sel-btn-mark">
+          <span class="material-symbols-outlined" style="font-size: 15px;">bookmark_add</span>
+          <span>Bookmark</span>
+        </button>
+      </div>
+
+      <!-- Vertical Continuous Reading View -->
+      <div class="mobile-reading-viewport" id="mobile-reading-viewport">
+        <div class="prose-content" id="mobile-prose-content">
+          <!-- Text rendered here -->
+        </div>
+      </div>
+
+      <!-- Paged Reading View -->
+      <div class="mobile-paged-stage" id="mobile-paged-stage">
+        <div class="mobile-touch-left" id="touch-left" title="Previous page"></div>
+        <div class="mobile-touch-right" id="touch-right" title="Next page"></div>
+        <div class="mobile-page-card" id="mobile-page-card">
+          <!-- Single page slice -->
+        </div>
+      </div>
+
+      <!-- Floating Bottom Dock: Progress Scrubber -->
+      <div class="mobile-reader-dock" id="reader-dock">
+        <div class="mobile-progress-track" id="reader-progress-track">
+          <div class="mobile-progress-fill" id="reader-progress-fill"></div>
+        </div>
+        <div class="dock-meta-row">
+          <span id="dock-page-label">Page 1 of 8</span>
+          <span id="dock-time-label">18m remaining</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==============================================
+         BOTTOM TAB NAVIGATION BAR
+         ============================================== -->
+    <nav class="mobile-tab-bar" id="app-tab-bar">
+      <button class="tab-item active" id="tab-nav-library">
+        <span class="material-symbols-outlined">auto_stories</span>
+        <span>Library</span>
+      </button>
+      <button class="tab-item" id="tab-nav-reader">
+        <span class="material-symbols-outlined">menu_book</span>
+        <span>Read</span>
+      </button>
+      <button class="tab-item" id="tab-nav-marks">
+        <span class="material-symbols-outlined">bookmarks</span>
+        <span>Highlights</span>
+      </button>
+      <button class="tab-item" id="tab-nav-settings">
+        <span class="material-symbols-outlined">tune</span>
+        <span>Appearance</span>
+      </button>
+    </nav>
+
+    <!-- ==============================================
+         SHEET 1: DICTIONARY LOOKUP
+         ============================================== -->
+    <div class="sheet-backdrop" id="sheet-backdrop"></div>
+
+    <div class="bottom-sheet" id="sheet-dict">
+      <div class="sheet-handle"></div>
+      <div class="sheet-header">
+        <span class="sheet-title">Dictionary Lookup</span>
+        <button class="sheet-close-btn" id="close-dict-btn">✕</button>
+      </div>
+      <div class="sheet-scroll-body" id="dict-content">
+        <div class="dict-word-head">
+          <h2 class="dict-word" id="dict-title">Metamorphosis</h2>
+          <span class="dict-phonetic" id="dict-phonetic">/ˌmet.əˈmɔːr.fə.sɪs/</span>
+        </div>
+        <div class="dict-pos" id="dict-pos">noun</div>
+        <p class="dict-def" id="dict-def">A complete change of form, structure, or substance as by transformation or magic.</p>
+        <div class="dict-example" id="dict-example">"He found himself transformed in his bed into a horrible vermin."</div>
+      </div>
+    </div>
+
+    <!-- ==============================================
+         SHEET 2: BOOKMARKS & HIGHLIGHTS
+         ============================================== -->
+    <div class="bottom-sheet" id="sheet-marks">
+      <div class="sheet-handle"></div>
+      <div class="sheet-header">
+        <span class="sheet-title">Saved Highlights & Bookmarks</span>
+        <button class="sheet-close-btn" id="close-marks-btn">✕</button>
+      </div>
+      <div class="sheet-scroll-body" id="marks-list">
+        <!-- Dynamically listed marks -->
+      </div>
+    </div>
+
+    <!-- ==============================================
+         SHEET 3: APPEARANCE & FONT SETTINGS
+         ============================================== -->
+    <div class="bottom-sheet" id="sheet-settings">
+      <div class="sheet-handle"></div>
+      <div class="sheet-header">
+        <span class="sheet-title">Reading Settings</span>
+        <button class="sheet-close-btn" id="close-settings-btn">✕</button>
+      </div>
+      <div class="sheet-scroll-body">
+        <!-- Font Size -->
+        <div class="sheet-control-group">
+          <div class="sheet-control-label">
+            <span>Text Size</span>
+            <span id="sheet-font-val">18px</span>
+          </div>
+          <div class="sheet-row">
+            <button class="sheet-btn" id="btn-size-dec" style="width: 38px;">A-</button>
+            <input type="range" id="sheet-size-slider" min="14" max="28" value="18" style="flex:1;"/>
+            <button class="sheet-btn" id="btn-size-inc" style="width: 38px;">A+</button>
+          </div>
+        </div>
+
+        <!-- Typeface -->
+        <div class="sheet-control-group">
+          <div class="sheet-control-label">Typeface</div>
+          <div class="sheet-seg">
+            <button class="sheet-btn active" data-font="serif" style="font-family: 'Source Serif 4', serif;">Serif</button>
+            <button class="sheet-btn" data-font="sans" style="font-family: 'Hanken Grotesk', sans-serif;">Sans</button>
+            <button class="sheet-btn" data-font="mono" style="font-family: 'JetBrains Mono', monospace;">Mono</button>
+          </div>
+        </div>
+
+        <!-- Line Spacing -->
+        <div class="sheet-control-group">
+          <div class="sheet-control-label">Line Spacing</div>
+          <div class="sheet-seg">
+            <button class="sheet-btn" data-lh="1.45">Compact</button>
+            <button class="sheet-btn active" data-lh="1.68">Normal</button>
+            <button class="sheet-btn" data-lh="1.95">Relaxed</button>
+          </div>
+        </div>
+
+        <!-- Themes -->
+        <div class="sheet-control-group">
+          <div class="sheet-control-label">Theme</div>
+          <div style="display: flex; gap: 16px;">
+            <button class="theme-circle-btn active" data-theme-val="warm" style="background: #fef9f3; box-shadow: inset 0 0 0 1px #d6ccc2;"></button>
+            <button class="theme-circle-btn" data-theme-val="white" style="background: #ffffff; box-shadow: inset 0 0 0 1px #e0e0e0;"></button>
+            <button class="theme-circle-btn" data-theme-val="dark" style="background: #141415; box-shadow: inset 0 0 0 1px #333333;"></button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    /**
+     * Lumina Mobile EPUB Reader & Library Core
+     */
+
+    // Built-in Sample Books in Library
+    const DEFAULT_BOOKS = [
+      {
+        id: "book-kafka",
+        title: "The Metamorphosis",
+        author: "Franz Kafka",
+        cover: "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=400&q=80",
+        lastRead: "Just now",
+        progress: 35,
+        readTimeLeft: "16m left",
+        currentChapter: 0,
+        currentPage: 0,
+        scrollPos: 0,
+        chapters: [
+          {
+            title: "Chapter I",
+            subtitle: "The Transformation",
+            readTime: "18 mins",
+            paragraphs: [
+              "One morning, when Gregor Samsa woke from troubled dreams, he found himself transformed in his bed into a horrible vermin. He lay on his armour-like back, and if he lifted his head a little he could see his brown belly, slightly domed and divided by arches into stiff sections.",
+              "The bedding was hardly able to cover it and seemed ready to slide off any moment. His many legs, pitifully thin compared with the size of the rest of him, waved about helplessly as he looked.",
+              "\"What's happened to me?\" he thought. It wasn't a dream. His room, a proper human room although a little too small, lay peacefully between its four familiar walls. A collection of textile samples lay spread out on the table—Samsa was a travelling salesman—and above it there hung a picture that he had recently cut out of an illustrated magazine and housed in a nice, gilded frame.",
+              "Gregor then turned to look out the window at the dull weather. Drops of rain could be heard hitting the pane, which made him feel quite sad. \"How about if I sleep a little bit longer and forget all this nonsense\", he thought, but that was something he was unable to do because he was used to sleeping on his right, and in his present state couldn't get into that position.",
+              "\"O God,\" he thought, \"what a grueling job I've picked! Day in, day out—on the road. The upset of doing business is much worse than the actual business in the home office, and, besides, I've got the torture of traveling, worrying about changing trains, eating miserable food at all hours, constantly seeing new faces, no relationships that last or get more intimate. To the devil with it all!\"",
+              "He felt a slight itching up on his belly; pushed himself slowly up on his back towards the headboard so that he could lift his head better; found where the itch was, and saw that it was covered with lots of little white spots which he didn't know what to make of."
+            ]
+          },
+          {
+            title: "Chapter II",
+            subtitle: "The Sister's Care",
+            readTime: "22 mins",
+            paragraphs: [
+              "It was not until it was getting dark that evening that Gregor awoke from his deep and coma-like sleep. He would have woken soon anyway, he felt, even without any disturbance, as he was sufficiently rested, but it seemed to him that he had been awoken by the sound of hurried steps and a door being softly shut.",
+              "The light of the electric street lamps in the room lay pale here and there on the ceiling and on the upper parts of the furniture, but below, around Gregor, it was dark.",
+              "His left side seemed one big, unpleasantly tautening scar, and he had to limp along awkwardly on his two rows of legs. One of his little legs, in the course of the morning's events, had suffered serious injury and dragged along lifelessly behind him."
+            ]
+          }
+        ]
+      },
+      {
+        id: "book-alice",
+        title: "Alice in Wonderland",
+        author: "Lewis Carroll",
+        cover: "https://images.unsplash.com/photo-1512820790803-83ca734da794?auto=format&fit=crop&w=400&q=80",
+        lastRead: "Yesterday",
+        progress: 12,
+        readTimeLeft: "42m left",
+        currentChapter: 0,
+        currentPage: 0,
+        scrollPos: 0,
+        chapters: [
+          {
+            title: "Chapter I",
+            subtitle: "Down the Rabbit-Hole",
+            readTime: "15 mins",
+            paragraphs: [
+              "Alice was beginning to get very tired of sitting by her sister on the bank, and of having nothing to do: once or twice she had peeped into the book her sister was reading, but it had no pictures or conversations in it, \"and what is the use of a book,\" thought Alice \"without pictures or conversation?\"",
+              "So she was considering in her own mind (as well as she could, for the hot day made her feel very sleepy and stupid), whether the pleasure of making a daisy-chain would be worth the trouble of getting up and picking the daisies, when suddenly a White Rabbit with pink eyes ran close by her.",
+              "There was nothing so very remarkable in that; nor did Alice think it so very much out of the way to hear the Rabbit say to itself, \"Oh dear! Oh dear! I shall be late!\""
+            ]
+          }
+        ]
+      },
+      {
+        id: "book-artofwar",
+        title: "The Art of War",
+        author: "Sun Tzu",
+        cover: "https://images.unsplash.com/photo-1457369804613-52c61a468e7d?auto=format&fit=crop&w=400&q=80",
+        lastRead: "3 days ago",
+        progress: 60,
+        readTimeLeft: "25m left",
+        currentChapter: 0,
+        currentPage: 0,
+        scrollPos: 0,
+        chapters: [
+          {
+            title: "Chapter I",
+            subtitle: "Laying Plans",
+            readTime: "12 mins",
+            paragraphs: [
+              "Sun Tzu said: The art of war is of vital importance to the State. It is a matter of life and death, a road either to safety or to ruin. Hence it is a subject of inquiry which can on no account be neglected.",
+              "The moral law causes the people to be in complete accord with their ruler, so that they will follow him regardless of their lives, undismayed by any danger.",
+              "All warfare is based on deception. Hence, when able to attack, we must seem unable; when using our forces, we must seem inactive; when we are near, we must make the enemy believe we are far away."
+            ]
+          }
+        ]
+      }
+    ];
+
+    // Local Storage Helpers
+    function getStoredBooks() {
+      const stored = localStorage.getItem('lumina_library_books');
+      if (stored) {
+        try { return JSON.parse(stored); } catch (e) {}
+      }
+      return DEFAULT_BOOKS;
+    }
+
+    function saveStoredBooks(books) {
+      localStorage.setItem('lumina_library_books', JSON.stringify(books));
+    }
+
+    function getStoredBookmarks() {
+      const stored = localStorage.getItem('lumina_saved_marks');
+      if (stored) {
+        try { return JSON.parse(stored); } catch (e) {}
+      }
+      return [
+        {
+          id: 1,
+          bookTitle: "The Metamorphosis",
+          chapter: "Chapter I",
+          quote: "One morning, when Gregor Samsa woke from troubled dreams, he found himself transformed in his bed into a horrible vermin.",
+          color: "gold",
+          time: "Saved 1h ago"
+        }
+      ];
+    }
+
+    function saveStoredBookmarks(marks) {
+      localStorage.setItem('lumina_saved_marks', JSON.stringify(marks));
+    }
+
+    // App State
+    const state = {
+      books: getStoredBooks(),
+      activeBookId: 'book-kafka',
+      activeTab: 'library', // 'library', 'reader', 'marks', 'settings'
+      readingMode: 'scroll', // 'scroll' or 'paged'
+      fontSize: 18,
+      fontFamily: 'serif',
+      lineHeight: 1.68,
+      theme: 'warm',
+      selectedText: '',
+      selectionRange: null,
+      bookmarks: getStoredBookmarks()
+    };
+
+    // DOM Elements
+    const screenLibrary = document.getElementById('screen-library');
+    const screenReader = document.getElementById('screen-reader');
+    const tabNavLibrary = document.getElementById('tab-nav-library');
+    const tabNavReader = document.getElementById('tab-nav-reader');
+    const tabNavMarks = document.getElementById('tab-nav-marks');
+    const tabNavSettings = document.getElementById('tab-nav-settings');
+    const continueReadingCard = document.getElementById('continue-reading-card');
+    const libraryBooksGrid = document.getElementById('library-books-grid');
+    const libAddBtn = document.getElementById('lib-add-btn');
+    const libEpubFile = document.getElementById('lib-epub-file');
+    const btnBackToLib = document.getElementById('btn-back-to-lib');
+    const readerHeader = document.getElementById('reader-header');
+    const readerDock = document.getElementById('reader-dock');
+    const readerTopTitle = document.getElementById('reader-top-title');
+    const readerTopChap = document.getElementById('reader-top-chap');
+    const btnModeScroll = document.getElementById('btn-mode-scroll');
+    const btnModePage = document.getElementById('btn-mode-page');
+    const mobileReadingViewport = document.getElementById('mobile-reading-viewport');
+    const mobileProseContent = document.getElementById('mobile-prose-content');
+    const mobilePagedStage = document.getElementById('mobile-paged-stage');
+    const mobilePageCard = document.getElementById('mobile-page-card');
+    const touchLeft = document.getElementById('touch-left');
+    const touchRight = document.getElementById('touch-right');
+    const readerProgressTrack = document.getElementById('reader-progress-track');
+    const readerProgressFill = document.getElementById('reader-progress-fill');
+    const dockPageLabel = document.getElementById('dock-page-label');
+    const dockTimeLabel = document.getElementById('dock-time-label');
+    const selectionMenu = document.getElementById('selection-menu');
+    const selBtnCite = document.getElementById('sel-btn-cite');
+    const selBtnDict = document.getElementById('sel-btn-dict');
+    const selBtnMark = document.getElementById('sel-btn-mark');
+    const sheetBackdrop = document.getElementById('sheet-backdrop');
+    const sheetDict = document.getElementById('sheet-dict');
+    const closeDictBtn = document.getElementById('close-dict-btn');
+    const sheetMarks = document.getElementById('sheet-marks');
+    const closeMarksBtn = document.getElementById('close-marks-btn');
+    const sheetSettings = document.getElementById('sheet-settings');
+    const closeSettingsBtn = document.getElementById('close-settings-btn');
+    const marksList = document.getElementById('marks-list');
+    const appToast = document.getElementById('app-toast');
+    const toastMsg = document.getElementById('toast-msg');
+
+    // Initialize App
+    function init() {
+      renderLibrary();
+      applySettings();
+      setupEventListeners();
+      
+      // Auto-restore last read book if found
+      const activeBook = getActiveBook();
+      if (activeBook) {
+        updateHeroCard(activeBook);
+      }
+    }
+
+    function getActiveBook() {
+      return state.books.find(b => b.id === state.activeBookId) || state.books[0];
+    }
+
+    function showToast(msg) {
+      toastMsg.textContent = msg;
+      appToast.classList.add('show');
+      setTimeout(() => appToast.classList.remove('show'), 2400);
+    }
+
+    // Render Library Screen
+    function renderLibrary() {
+      const activeBook = getActiveBook();
+      updateHeroCard(activeBook);
+
+      libraryBooksGrid.innerHTML = '';
+      state.books.forEach(b => {
+        const item = document.createElement('div');
+        item.className = 'book-grid-item';
+        item.innerHTML = `
+          <div class="grid-cover" style="background-image: url('${b.cover}'); background-size: cover; background-position: center;">
+            <span>${b.title}</span>
+          </div>
+          <div class="grid-book-title">${b.title}</div>
+          <div class="grid-book-author">${b.author}</div>
+          <div class="mini-progress-bar">
+            <div class="mini-progress-fill" style="width: ${b.progress}%;"></div>
+          </div>
+          <div style="font-size: 10px; color: var(--text-muted);">${b.progress}% • ${b.lastRead}</div>
+        `;
+        item.addEventListener('click', () => openBook(b.id));
+        libraryBooksGrid.appendChild(item);
+      });
+
+      // Add Book Card
+      const addCard = document.createElement('div');
+      addCard.className = 'add-book-card';
+      addCard.innerHTML = `
+        <span class="material-symbols-outlined" style="font-size: 32px;">upload_file</span>
+        <div style="font-size: 12px; font-weight: 600;">Add EPUB</div>
+        <div style="font-size: 10px; opacity: 0.7;">Upload book file</div>
+      `;
+      addCard.addEventListener('click', () => libEpubFile.click());
+      libraryBooksGrid.appendChild(addCard);
+    }
+
+    function updateHeroCard(b) {
+      document.getElementById('hero-title').textContent = b.title;
+      document.getElementById('hero-author').textContent = `${b.author} • ${b.chapters[b.currentChapter || 0].title}`;
+      document.getElementById('hero-progress-fill').style.width = `${b.progress}%`;
+      document.getElementById('hero-progress-pct').textContent = `${b.progress}% complete`;
+      document.getElementById('hero-time-left').textContent = b.readTimeLeft;
+      document.getElementById('hero-cover').style.backgroundImage = `url('${b.cover}')`;
+      document.getElementById('hero-cover').querySelector('span').textContent = b.author.split(' ').pop();
+    }
+
+    // Open Book in Reader
+    function openBook(bookId) {
+      state.activeBookId = bookId;
+      const book = getActiveBook();
+      book.lastRead = "Just now";
+      saveStoredBooks(state.books);
+
+      readerTopTitle.textContent = book.title;
+      readerTopChap.textContent = book.chapters[book.currentChapter || 0].title;
+
+      renderBookContent();
+      switchScreen('reader');
+
+      // Check for remembered position
+      if (book.scrollPos && state.readingMode === 'scroll') {
+        setTimeout(() => {
+          mobileReadingViewport.scrollTop = book.scrollPos;
+          showToast(`Resumed where you left off`);
+        }, 80);
+      } else {
+        showToast(`Opening ${book.title}`);
+      }
+    }
+
+    // Render Prose / Paged Content
+    function renderBookContent() {
+      const book = getActiveBook();
+      const chapter = book.chapters[book.currentChapter || 0];
+
+      let html = `
+        <div style="text-align: center; margin-bottom: 28px;">
+          <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.15em; color: var(--text-muted); margin-bottom: 6px;">${chapter.title}</div>
+          <h2 style="font-family: 'Playfair Display', serif; font-size: 26px; font-weight: 700; margin-bottom: 6px;">${book.title}</h2>
+          <div style="font-size: 12px; color: var(--text-secondary); font-style: italic;">${chapter.subtitle || ''}</div>
+        </div>
+      `;
+
+      chapter.paragraphs.forEach((p, idx) => {
+        let pText = p;
+        // Check if any highlights match this paragraph
+        state.bookmarks.forEach(bm => {
+          if (bm.bookTitle === book.title && pText.includes(bm.quote)) {
+            pText = pText.replace(bm.quote, `<mark class="hl-${bm.color}">${bm.quote}</mark>`);
+          }
+        });
+
+        if (idx === 0) {
+          html += `<p class="drop-cap">${pText}</p>`;
+        } else {
+          html += `<p>${pText}</p>`;
+        }
+      });
+
+      mobileProseContent.innerHTML = html;
+      updatePagedSlices();
+      updateProgressUI();
+    }
+
+    // Paging Slices
+    let pagedSlices = [];
+    function updatePagedSlices() {
+      const book = getActiveBook();
+      const chapter = book.chapters[book.currentChapter || 0];
+      const paras = chapter.paragraphs;
+
+      pagedSlices = [];
+      // Title page
+      pagedSlices.push(`
+        <div style="text-align: center; margin-top: 30px; margin-bottom: 20px;">
+          <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.15em; color: var(--text-muted); margin-bottom: 6px;">${chapter.title}</div>
+          <h2 style="font-family: 'Playfair Display', serif; font-size: 24px; font-weight: 700; margin-bottom: 6px;">${book.title}</h2>
+          <div style="font-size: 12px; color: var(--text-secondary); font-style: italic;">${chapter.subtitle || ''}</div>
+        </div>
+        <p class="drop-cap">${paras[0]}</p>
+      `);
+
+      for (let i = 1; i < paras.length; i += 2) {
+        let pageHtml = '';
+        paras.slice(i, i + 2).forEach(p => {
+          pageHtml += `<p style="margin-bottom: 1.2em;">${p}</p>`;
+        });
+        pagedSlices.push(pageHtml);
+      }
+
+      if (book.currentPage >= pagedSlices.length) book.currentPage = 0;
+      renderCurrentPageSlice();
+    }
+
+    function renderCurrentPageSlice() {
+      const book = getActiveBook();
+      mobilePageCard.innerHTML = pagedSlices[book.currentPage || 0] || '';
+      dockPageLabel.textContent = `Page ${(book.currentPage || 0) + 1} of ${pagedSlices.length}`;
+      const ratio = ((book.currentPage || 0) + 1) / pagedSlices.length;
+      readerProgressFill.style.width = `${ratio * 100}%`;
+    }
+
+    function nextPage() {
+      const book = getActiveBook();
+      if (book.currentPage < pagedSlices.length - 1) {
+        book.currentPage++;
+        renderCurrentPageSlice();
+        saveReadingPosition();
+      } else {
+        showToast("End of chapter");
+      }
+    }
+
+    function prevPage() {
+      const book = getActiveBook();
+      if (book.currentPage > 0) {
+        book.currentPage--;
+        renderCurrentPageSlice();
+        saveReadingPosition();
+      }
+    }
+
+    // Save Remembered Reading Position to localStorage
+    function saveReadingPosition() {
+      const book = getActiveBook();
+      if (state.readingMode === 'scroll') {
+        book.scrollPos = mobileReadingViewport.scrollTop;
+        const scrollHeight = mobileReadingViewport.scrollHeight - mobileReadingViewport.clientHeight;
+        if (scrollHeight > 0) {
+          book.progress = Math.min(Math.max(Math.round((book.scrollPos / scrollHeight) * 100), 1), 100);
+        }
+      } else {
+        book.progress = Math.round(((book.currentPage + 1) / pagedSlices.length) * 100);
+      }
+      saveStoredBooks(state.books);
+      updateHeroCard(book);
+    }
+
+    function updateProgressUI() {
+      const book = getActiveBook();
+      if (state.readingMode === 'scroll') {
+        const scrollHeight = mobileReadingViewport.scrollHeight - mobileReadingViewport.clientHeight;
+        const ratio = scrollHeight > 0 ? (mobileReadingViewport.scrollTop / scrollHeight) : 0;
+        readerProgressFill.style.width = `${Math.round(ratio * 100)}%`;
+        dockPageLabel.textContent = `${Math.round(ratio * 100)}% read`;
+      } else {
+        renderCurrentPageSlice();
+      }
+    }
+
+    // Screen Switching
+    function switchScreen(screenName) {
+      state.activeTab = screenName;
+      if (screenName === 'library') {
+        screenLibrary.classList.add('active-screen');
+        screenReader.classList.remove('active-screen');
+        tabNavLibrary.classList.add('active');
+        tabNavReader.classList.remove('active');
+      } else if (screenName === 'reader') {
+        screenReader.classList.add('active-screen');
+        screenLibrary.classList.remove('active-screen');
+        tabNavReader.classList.add('active');
+        tabNavLibrary.classList.remove('active');
+      }
+    }
+
+    // Contextual Text Selection Handling
+    function handleTextSelection() {
+      const selection = window.getSelection();
+      const text = selection.toString().trim();
+      
+      if (!text || text.length < 2) {
+        selectionMenu.style.display = 'none';
+        return;
+      }
+
+      state.selectedText = text;
+      state.selectionRange = selection.getRangeAt(0);
+
+      const rect = state.selectionRange.getBoundingClientRect();
+      const shellRect = document.getElementById('mobile-device-shell').getBoundingClientRect();
+
+      // Position menu directly above selected text
+      let topPos = rect.top - shellRect.top - 46;
+      let leftPos = rect.left - shellRect.left + (rect.width / 2);
+
+      if (topPos < 50) topPos = rect.bottom - shellRect.top + 10;
+      if (leftPos < 120) leftPos = 120;
+      if (leftPos > shellRect.width - 120) leftPos = shellRect.width - 120;
+
+      selectionMenu.style.top = `${topPos}px`;
+      selectionMenu.style.left = `${leftPos}px`;
+      selectionMenu.style.display = 'flex';
+    }
+
+    // Copy with Citation Reference
+    function copyWithCitation() {
+      const book = getActiveBook();
+      const chapter = book.chapters[book.currentChapter || 0];
+      const citation = `“${state.selectedText}”\n\n— ${book.author}, ${book.title} (${chapter.title})`;
+
+      navigator.clipboard.writeText(citation).then(() => {
+        showToast("Copied with citation reference!");
+      }).catch(() => {
+        showToast("Copied quote to clipboard!");
+      });
+
+      selectionMenu.style.display = 'none';
+      window.getSelection().removeAllRanges();
+    }
+
+    // Highlight Text
+    function highlightSelectedText(color) {
+      const book = getActiveBook();
+      const chapter = book.chapters[book.currentChapter || 0];
+
+      const newMark = {
+        id: Date.now(),
+        bookTitle: book.title,
+        chapter: chapter.title,
+        quote: state.selectedText,
+        color: color,
+        time: "Just now"
+      };
+
+      state.bookmarks.unshift(newMark);
+      saveStoredBookmarks(state.bookmarks);
+
+      renderBookContent();
+      selectionMenu.style.display = 'none';
+      window.getSelection().removeAllRanges();
+      showToast(`Added ${color} highlight`);
+    }
+
+    // Dictionary Lookup
+    async function lookupDictionary() {
+      const rawWord = state.selectedText.split(/\s+/)[0].replace(/[^a-zA-Z]/g, '').toLowerCase();
+      selectionMenu.style.display = 'none';
+
+      document.getElementById('dict-title').textContent = rawWord || state.selectedText;
+      document.getElementById('dict-phonetic').textContent = "Looking up...";
+      document.getElementById('dict-pos').textContent = "Searching";
+      document.getElementById('dict-def').textContent = "Fetching definition from dictionary API...";
+      document.getElementById('dict-example').textContent = "";
+
+      openSheet(sheetDict);
+
+      try {
+        const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${rawWord}`);
+        if (!res.ok) throw new Error("Not found");
+        const data = await res.json();
+        const entry = data[0];
+        const meaning = entry.meanings[0];
+        const def = meaning.definitions[0];
+
+        document.getElementById('dict-title').textContent = entry.word;
+        document.getElementById('dict-phonetic').textContent = entry.phonetic || (entry.phonetics[0] ? entry.phonetics[0].text : '');
+        document.getElementById('dict-pos').textContent = meaning.partOfSpeech || 'definition';
+        document.getElementById('dict-def').textContent = def.definition || 'No definition available.';
+        document.getElementById('dict-example').textContent = def.example ? `"${def.example}"` : `Sample: "${state.selectedText}"`;
+      } catch (e) {
+        // Fallback definition for common literary terms
+        document.getElementById('dict-title').textContent = rawWord;
+        document.getElementById('dict-phonetic').textContent = `/${rawWord}/`;
+        document.getElementById('dict-pos').textContent = "word in context";
+        document.getElementById('dict-def').textContent = `Definition from reading context: "${state.selectedText}". (Offline fallback definition)`;
+        document.getElementById('dict-example').textContent = `From ${getActiveBook().title}`;
+      }
+    }
+
+    // Open Bookmarks Sheet
+    function openMarksSheet() {
+      marksList.innerHTML = '';
+      if (state.bookmarks.length === 0) {
+        marksList.innerHTML = `<p style="font-size: 13px; color: var(--text-muted); text-align: center; padding: 20px;">No saved highlights or bookmarks yet.</p>`;
+      } else {
+        state.bookmarks.forEach((m, idx) => {
+          const item = document.createElement('div');
+          item.className = 'mark-item';
+          item.innerHTML = `
+            <div class="mark-item-header">
+              <span style="font-weight: 600; color: var(--accent-color);">${m.bookTitle} • ${m.chapter}</span>
+              <button class="mark-delete-btn" data-idx="${idx}" title="Delete highlight">✕</button>
+            </div>
+            <div class="mark-text-quote" style="border-left: 3px solid var(--hl-border-${m.color || 'gold'}); padding-left: 8px;">“${m.quote}”</div>
+            <div style="font-size: 10px; color: var(--text-muted);">${m.time}</div>
+          `;
+
+          item.querySelector('.mark-delete-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            state.bookmarks.splice(idx, 1);
+            saveStoredBookmarks(state.bookmarks);
+            openMarksSheet();
+            renderBookContent();
+          });
+
+          marksList.appendChild(item);
+        });
+      }
+      openSheet(sheetMarks);
+    }
+
+    // Bottom Sheet Helpers
+    function openSheet(sheetElem) {
+      sheetBackdrop.classList.add('open');
+      sheetElem.classList.add('open');
+    }
+
+    function closeAllSheets() {
+      sheetBackdrop.classList.remove('open');
+      document.querySelectorAll('.bottom-sheet').forEach(s => s.classList.remove('open'));
+    }
+
+    // Apply Settings
+    function applySettings() {
+      document.body.setAttribute('data-theme', state.theme);
+      document.documentElement.style.setProperty('--font-size', `${state.fontSize}px`);
+      document.getElementById('sheet-font-val').textContent = `${state.fontSize}px`;
+      document.getElementById('sheet-size-slider').value = state.fontSize;
+
+      let fontStack = "'Source Serif 4', Georgia, serif";
+      if (state.fontFamily === 'sans') fontStack = "'Hanken Grotesk', sans-serif";
+      if (state.fontFamily === 'mono') fontStack = "'JetBrains Mono', monospace";
+      document.documentElement.style.setProperty('--font-family-reading', fontStack);
+      document.documentElement.style.setProperty('--line-height', state.lineHeight);
+
+      // Active button states
+      document.querySelectorAll('[data-font]').forEach(b => {
+        b.classList.toggle('active', b.getAttribute('data-font') === state.fontFamily);
+      });
+      document.querySelectorAll('[data-lh]').forEach(b => {
+        b.classList.toggle('active', parseFloat(b.getAttribute('data-lh')) === state.lineHeight);
+      });
+      document.querySelectorAll('.theme-circle-btn').forEach(b => {
+        b.classList.toggle('active', b.getAttribute('data-theme-val') === state.theme);
+      });
+
+      if (state.readingMode === 'paged') {
+        updatePagedSlices();
+      }
+    }
+
+    // Event Listeners
+    function setupEventListeners() {
+      // Bottom Bar Navigation
+      tabNavLibrary.addEventListener('click', () => switchScreen('library'));
+      tabNavReader.addEventListener('click', () => switchScreen('reader'));
+      tabNavMarks.addEventListener('click', openMarksSheet);
+      tabNavSettings.addEventListener('click', () => openSheet(sheetSettings));
+
+      continueReadingCard.addEventListener('click', () => openBook(state.activeBookId));
+      btnBackToLib.addEventListener('click', () => switchScreen('library'));
+
+      // Mode Switch: Scroll vs Paged
+      btnModeScroll.addEventListener('click', () => {
+        state.readingMode = 'scroll';
+        btnModeScroll.classList.add('active');
+        btnModePage.classList.remove('active');
+        screenReader.classList.remove('paged-active');
+        updateProgressUI();
+      });
+
+      btnModePage.addEventListener('click', () => {
+        state.readingMode = 'paged';
+        btnModePage.classList.add('active');
+        btnModeScroll.classList.remove('active');
+        screenReader.classList.add('paged-active');
+        updatePagedSlices();
+      });
+
+      // Paged Flip Touch zones
+      touchRight.addEventListener('click', nextPage);
+      touchLeft.addEventListener('click', prevPage);
+
+      // Scroll Position tracking
+      let lastScroll = 0;
+      mobileReadingViewport.addEventListener('scroll', () => {
+        if (state.readingMode !== 'scroll') return;
+        saveReadingPosition();
+        updateProgressUI();
+
+        // Autohide top and dock on scroll down
+        const curScroll = mobileReadingViewport.scrollTop;
+        if (curScroll > lastScroll && curScroll > 40) {
+          readerHeader.classList.add('hidden-bar');
+          readerDock.classList.add('hidden-bar');
+        } else {
+          readerHeader.classList.remove('hidden-bar');
+          readerDock.classList.remove('hidden-bar');
+        }
+        lastScroll = curScroll;
+      });
+
+      // Tap center of reader screen to toggle controls
+      mobileReadingViewport.addEventListener('click', (e) => {
+        if (window.getSelection().toString().trim().length > 0) return;
+        readerHeader.classList.toggle('hidden-bar');
+        readerDock.classList.toggle('hidden-bar');
+      });
+
+      // Text Selection Menu
+      document.addEventListener('selectionchange', handleTextSelection);
+
+      selBtnCite.addEventListener('click', copyWithCitation);
+      selBtnDict.addEventListener('click', lookupDictionary);
+      selBtnMark.addEventListener('click', () => highlightSelectedText('gold'));
+
+      // Highlight color dots
+      document.querySelectorAll('.hl-dot').forEach(dot => {
+        dot.addEventListener('click', () => {
+          highlightSelectedText(dot.getAttribute('data-color'));
+        });
+      });
+
+      // Sheet close buttons
+      sheetBackdrop.addEventListener('click', closeAllSheets);
+      closeDictBtn.addEventListener('click', closeAllSheets);
+      closeMarksBtn.addEventListener('click', closeAllSheets);
+      closeSettingsBtn.addEventListener('click', closeAllSheets);
+
+      // Font size slider & steppers
+      document.getElementById('sheet-size-slider').addEventListener('input', (e) => {
+        state.fontSize = parseInt(e.target.value, 10);
+        applySettings();
+      });
+      document.getElementById('btn-size-dec').addEventListener('click', () => {
+        if (state.fontSize > 14) { state.fontSize--; applySettings(); }
+      });
+      document.getElementById('btn-size-inc').addEventListener('click', () => {
+        if (state.fontSize < 28) { state.fontSize++; applySettings(); }
+      });
+
+      // Typeface buttons
+      document.querySelectorAll('[data-font]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          state.fontFamily = btn.getAttribute('data-font');
+          applySettings();
+        });
+      });
+
+      // Line height buttons
+      document.querySelectorAll('[data-lh]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          state.lineHeight = parseFloat(btn.getAttribute('data-lh'));
+          applySettings();
+        });
+      });
+
+      // Theme buttons
+      document.querySelectorAll('.theme-circle-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          state.theme = btn.getAttribute('data-theme-val');
+          applySettings();
+        });
+      });
+
+      // EPUB Upload
+      libAddBtn.addEventListener('click', () => libEpubFile.click());
+      libEpubFile.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        showToast(`Loading ${file.name}...`);
+        const reader = new FileReader();
+        reader.onload = async function(ev) {
+          try {
+            if (typeof ePub !== 'undefined') {
+              const epubBook = ePub(ev.target.result);
+              const metadata = await epubBook.loaded.metadata;
+              const spine = await epubBook.loaded.spine;
+
+              const customBook = {
+                id: `epub-${Date.now()}`,
+                title: metadata.title || file.name.replace('.epub', ''),
+                author: metadata.creator || 'Author',
+                cover: "https://images.unsplash.com/photo-1497633762265-9d179a990aa6?auto=format&fit=crop&w=400&q=80",
+                lastRead: "Just now",
+                progress: 0,
+                readTimeLeft: "20m left",
+                currentChapter: 0,
+                currentPage: 0,
+                scrollPos: 0,
+                chapters: []
+              };
+
+              for (const item of spine.items.slice(0, 10)) {
+                const doc = await item.load(epubBook.load.bind(epubBook));
+                const text = doc.body.innerText.trim();
+                if (text.length > 50) {
+                  customBook.chapters.push({
+                    title: `Section ${customBook.chapters.length + 1}`,
+                    subtitle: `Chapter ${customBook.chapters.length + 1}`,
+                    readTime: "15 mins",
+                    paragraphs: text.split(/\n\s*\n/).filter(p => p.trim().length > 0).slice(0, 25)
+                  });
+                }
+              }
+
+              if (customBook.chapters.length > 0) {
+                state.books.unshift(customBook);
+                saveStoredBooks(state.books);
+                renderLibrary();
+                openBook(customBook.id);
+                showToast(`Added "${customBook.title}" to Library!`);
+              }
+            }
+          } catch (err) {
+            console.error(err);
+            showToast("Failed to parse EPUB file");
+          }
+        };
+        reader.readAsArrayBuffer(file);
+      });
+    }
+
+    document.addEventListener('DOMContentLoaded', init);
+  </script>
+</body>
+</html>
