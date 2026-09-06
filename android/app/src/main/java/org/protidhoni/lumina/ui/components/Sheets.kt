@@ -11,8 +11,14 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
+import androidx.compose.material.icons.filled.BrightnessAuto
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
@@ -32,7 +38,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.protidhoni.lumina.model.Bookmark
 import org.protidhoni.lumina.model.HighlightColor
+import org.protidhoni.lumina.model.ThemeFamily
 import org.protidhoni.lumina.model.ThemeMode
+import org.protidhoni.lumina.model.ThemeVariant
 import org.protidhoni.lumina.model.TypefaceMode
 import org.protidhoni.lumina.model.WordDefinition
 
@@ -148,6 +156,7 @@ fun BookmarksSheet(
     bookmarks: List<Bookmark>,
     onNavigate: (Bookmark) -> Unit,
     onDelete: (Long) -> Unit,
+    onShare: (() -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
     ModalBottomSheet(
@@ -172,8 +181,15 @@ fun BookmarksSheet(
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Medium
                 )
-                IconButton(onClick = onDismiss) {
-                    Icon(Icons.Default.Close, contentDescription = "Close")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (onShare != null && bookmarks.isNotEmpty()) {
+                        IconButton(onClick = onShare) {
+                            Icon(Icons.Default.Share, contentDescription = "Share Highlights", tint = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "Close")
+                    }
                 }
             }
 
@@ -259,6 +275,17 @@ fun BookmarksSheet(
                                     )
                                 }
 
+                                if (mark.note.isNotBlank()) {
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = "Note: ${mark.note}",
+                                        fontFamily = FontFamily.SansSerif,
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.secondary,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+
                                 Spacer(modifier = Modifier.height(6.dp))
                                 Text(
                                     text = mark.timestamp,
@@ -281,17 +308,19 @@ fun AppearanceSheet(
     onFontSizeChange: (Int) -> Unit,
     typeface: TypefaceMode,
     onTypefaceChange: (TypefaceMode) -> Unit,
-    themeMode: ThemeMode,
-    onThemeChange: (ThemeMode) -> Unit,
+    quickFonts: Set<TypefaceMode> = setOf(TypefaceMode.SERIF, TypefaceMode.SANS),
+    themeFamily: ThemeFamily = ThemeFamily.PAPER,
+    onThemeFamilyChange: (ThemeFamily) -> Unit = {},
+    themeVariant: ThemeVariant = ThemeVariant.LIGHT,
+    onThemeVariantChange: (ThemeVariant) -> Unit = {},
+    quickThemes: Set<ThemeFamily> = setOf(ThemeFamily.PAPER, ThemeFamily.MODERN),
+    themeMode: ThemeMode = ThemeMode.WARM_PAPER,
+    onThemeChange: (ThemeMode) -> Unit = {},
     showAssistant: Boolean = true,
     onToggleAssistant: (Boolean) -> Unit = {},
-    geminiApiKey: String = "",
-    onGeminiApiKeyChange: (String) -> Unit = {},
+    onOpenAdvancedSettings: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
-    var apiKeyText by androidx.compose.runtime.remember(geminiApiKey) { androidx.compose.runtime.mutableStateOf(geminiApiKey) }
-    var isApiKeyVisible by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
-
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = MaterialTheme.colorScheme.surface,
@@ -355,19 +384,40 @@ fun AppearanceSheet(
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            // Typeface - Strictly 2 fonts (Serif & Sans)
-            Text("Typeface", fontFamily = FontFamily.SansSerif, fontSize = 13.sp, fontWeight = FontWeight.Normal)
+            // Typeface - displays user-selected quickFonts (or fallback to Serif and Sans)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Typeface", fontFamily = FontFamily.SansSerif, fontSize = 13.sp, fontWeight = FontWeight.Normal)
+                Text(
+                    text = "${quickFonts.size} available",
+                    fontFamily = FontFamily.SansSerif,
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             Spacer(modifier = Modifier.height(8.dp))
+            val fontsToShow = if (quickFonts.isNotEmpty()) quickFonts.toList() else listOf(TypefaceMode.SERIF, TypefaceMode.SANS)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                listOf(TypefaceMode.SERIF, TypefaceMode.SANS).forEach { mode ->
+                fontsToShow.forEach { mode ->
                     val isSelected = mode == typeface
                     FilterChip(
                         selected = isSelected,
                         onClick = { onTypefaceChange(mode) },
-                        label = { Text(mode.displayName, fontFamily = FontFamily.SansSerif, fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal) },
+                        label = {
+                            Text(
+                                text = mode.displayName,
+                                fontFamily = FontFamily.SansSerif,
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal
+                            )
+                        },
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -375,33 +425,107 @@ fun AppearanceSheet(
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            // Color Themes
-            Text("Color Theme", fontFamily = FontFamily.SansSerif, fontSize = 13.sp, fontWeight = FontWeight.Normal)
-            Spacer(modifier = Modifier.height(10.dp))
+            // Color Themes & Variant - Fully unified with ThemeFamily & ThemeVariant
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                ThemeMode.entries.forEach { mode ->
-                    val isSelected = mode == themeMode
-                    val bgColor = when (mode) {
-                        ThemeMode.WARM_PAPER -> Color(0xFFFEF9F3)
-                        ThemeMode.PURE_WHITE -> Color(0xFFFFFFFF)
-                        ThemeMode.NIGHT -> Color(0xFF141415)
+                Text("Color Theme", fontFamily = FontFamily.SansSerif, fontSize = 13.sp, fontWeight = FontWeight.Normal)
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                        .padding(2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    listOf(
+                        Triple(ThemeVariant.LIGHT, "Light", Icons.Default.LightMode),
+                        Triple(ThemeVariant.DARK, "Dark", Icons.Default.DarkMode),
+                        Triple(ThemeVariant.SYSTEM, "Auto", Icons.Default.BrightnessAuto)
+                    ).forEach { (variant, label, icon) ->
+                        val isSelected = themeVariant == variant
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(16.dp))
+                                .clickable { onThemeVariantChange(variant) }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = label,
+                                    modifier = Modifier.size(11.dp),
+                                    tint = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text(
+                                    text = label,
+                                    fontSize = 10.5.sp,
+                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                    color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
                     }
-
-                    Box(
+                }
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+            val familiesToShow = if (quickThemes.isNotEmpty()) quickThemes.toList() else ThemeFamily.entries.take(4)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                familiesToShow.forEach { family ->
+                    val isSelected = family == themeFamily
+                    val isDark = themeVariant == ThemeVariant.DARK
+                    val bgPreview = when (family) {
+                        ThemeFamily.PAPER -> if (!isDark) Color(0xFFFBF0D9) else Color(0xFF1E1A16)
+                        ThemeFamily.MODERN -> if (!isDark) Color(0xFFFFFFFF) else Color(0xFF121212)
+                        ThemeFamily.FOREST -> if (!isDark) Color(0xFFEFF5F0) else Color(0xFF131A15)
+                        ThemeFamily.PARCHMENT -> if (!isDark) Color(0xFFF5EEDB) else Color(0xFF211B14)
+                        ThemeFamily.LINEN -> if (!isDark) Color(0xFFECE7DF) else Color(0xFF1B1B19)
+                        ThemeFamily.CUSTOM -> Color(0xFF1C1917)
+                    }
+                    val textPreview = when (family) {
+                        ThemeFamily.PAPER -> if (!isDark) Color(0xFF2C221E) else Color(0xFFE8DCC4)
+                        ThemeFamily.MODERN -> if (!isDark) Color(0xFF1A1A1A) else Color(0xFFE0E0E0)
+                        ThemeFamily.FOREST -> if (!isDark) Color(0xFF1D2B20) else Color(0xFFD3E4D6)
+                        ThemeFamily.PARCHMENT -> if (!isDark) Color(0xFF2A2118) else Color(0xFFE8DCBE)
+                        ThemeFamily.LINEN -> if (!isDark) Color(0xFF242321) else Color(0xFFDDD8CF)
+                        ThemeFamily.CUSTOM -> Color(0xFFE7E5E4)
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = bgPreview,
+                        border = BorderStroke(
+                            width = if (isSelected) 2.5.dp else 1.dp,
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                        ),
                         modifier = Modifier
-                            .size(44.dp)
-                            .clip(CircleShape)
-                            .background(bgColor)
-                            .border(
-                                width = if (isSelected) 3.dp else 1.dp,
-                                color = if (isSelected) MaterialTheme.colorScheme.secondary else Color(0x33888888),
-                                shape = CircleShape
+                            .weight(1f)
+                            .height(42.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { onThemeFamilyChange(family) }
+                    ) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            Text(
+                                text = family.displayName,
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                color = textPreview
                             )
-                            .clickable { onThemeChange(mode) }
-                    )
+                        }
+                    }
                 }
             }
 
@@ -424,7 +548,7 @@ fun AppearanceSheet(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = "Movable voice & action orb with radial wheel",
+                        text = "Movable voice & action orb with inward arc",
                         fontFamily = FontFamily.SansSerif,
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -436,37 +560,62 @@ fun AppearanceSheet(
                 )
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
-            // Google Gemini API Key Input
-            Text(
-                text = "Gemini API Key (Optional)",
-                fontFamily = FontFamily.SansSerif,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Normal,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            OutlinedTextField(
-                value = apiKeyText,
-                onValueChange = {
-                    apiKeyText = it
-                    onGeminiApiKeyChange(it)
+            // Open Advanced Settings Button
+            Surface(
+                onClick = {
+                    onDismiss()
+                    onOpenAdvancedSettings()
                 },
-                placeholder = { Text("Paste your Google Gemini API key", fontSize = 12.sp) },
-                singleLine = true,
-                visualTransformation = if (isApiKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                trailingIcon = {
-                    IconButton(onClick = { isApiKeyVisible = !isApiKeyVisible }) {
-                        Icon(
-                            imageVector = if (isApiKeyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                            contentDescription = "Toggle visibility",
-                            modifier = Modifier.size(16.dp)
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 13.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Tune,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(
+                            text = "Open Advanced Settings",
+                            fontFamily = FontFamily.SansSerif,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 14.sp,
+                            maxLines = 1,
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                     }
-                },
-                modifier = Modifier.fillMaxWidth()
-            )
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
+                        contentDescription = "Open Advanced Settings",
+                        modifier = Modifier.size(14.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
         }
     }
 }

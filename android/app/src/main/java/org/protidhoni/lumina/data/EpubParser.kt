@@ -275,13 +275,15 @@ object EpubParser {
             val navPointRegex = "<navPoint[^>]*>.*?<navLabel>\\s*<text>([^<]+)</text>\\s*</navLabel>\\s*<content\\s+src=[\"']([^\"']+)[\"']".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
             navPointRegex.findAll(ncxXml).forEach { match ->
                 val rawTitle = decodeHtmlEntities(match.groupValues[1].trim())
+                    .replace("(?i)(Part\\s+\\w+)(Chapter\\s+\\d+)".toRegex(), "$1 — $2")
+                val cleanTitle = deduplicateRepeatedHeading(rawTitle)
                 val rawSrc = match.groupValues[2].trim()
                 val cleanSrc = try { URLDecoder.decode(rawSrc, "UTF-8") } catch (_: Exception) { rawSrc }
                 val targetFile = cleanSrc.substringBefore('#')
                 val anchor = cleanSrc.substringAfter('#', "")
                 val resolvedTarget = resolveZipPath(ncxDir, targetFile)
-                if (rawTitle.isNotBlank()) {
-                    tocList.add(TocEntry(rawTitle, cleanSrc, resolvedTarget, anchor))
+                if (cleanTitle.isNotBlank()) {
+                    tocList.add(TocEntry(cleanTitle, cleanSrc, resolvedTarget, anchor))
                 }
             }
         }
@@ -298,25 +300,59 @@ object EpubParser {
                 aRegex.findAll(navHtml).forEach { match ->
                     val rawSrc = match.groupValues[1].trim()
                     val rawTitle = decodeHtmlEntities(match.groupValues[2].trim())
+                        .replace("(?i)(Part\\s+\\w+)(Chapter\\s+\\d+)".toRegex(), "$1 — $2")
+                    val cleanTitle = deduplicateRepeatedHeading(rawTitle)
                     val cleanSrc = try { URLDecoder.decode(rawSrc, "UTF-8") } catch (_: Exception) { rawSrc }
                     val targetFile = cleanSrc.substringBefore('#')
                     val anchor = cleanSrc.substringAfter('#', "")
                     val resolvedTarget = resolveZipPath(navDir, targetFile)
-                    if (rawTitle.isNotBlank()) {
-                        tocList.add(TocEntry(rawTitle, cleanSrc, resolvedTarget, anchor))
+                    if (cleanTitle.isNotBlank()) {
+                        tocList.add(TocEntry(cleanTitle, cleanSrc, resolvedTarget, anchor))
                     }
                 }
             }
         }
 
         // 7. Spine parsing: Ordered sequence of chapters
+        val guideTocHrefs = mutableSetOf<String>()
+        val guideCoverHrefs = mutableSetOf<String>()
+        if (opfContent.isNotBlank()) {
+            val guideRegex = "<reference[^>]+type=[\"']([^\"']+)[\"'][^>]+href=[\"']([^\"']+)[\"']".toRegex(RegexOption.IGNORE_CASE)
+            guideRegex.findAll(opfContent).forEach { match ->
+                val type = match.groupValues[1].lowercase()
+                val href = match.groupValues[2].split("#")[0].split("?")[0].trim()
+                if (type == "toc" || type.contains("contents")) {
+                    guideTocHrefs.add(href)
+                } else if (type == "cover") {
+                    guideCoverHrefs.add(href)
+                }
+            }
+        }
+
         val spineHrefs = mutableListOf<String>()
         if (opfContent.isNotBlank()) {
-            val itemrefRegex = "<itemref\\s+[^>]*idref=[\"']([^\"']+)[\"']".toRegex(RegexOption.IGNORE_CASE)
+            val itemrefRegex = "<itemref\\s+([^>]+)>".toRegex(RegexOption.IGNORE_CASE)
             itemrefRegex.findAll(opfContent).forEach { match ->
-                val idref = match.groupValues[1]
+                val attrs = match.groupValues[1]
+                val idref = "\\bidref=[\"']([^\"']+)[\"']".toRegex(RegexOption.IGNORE_CASE).find(attrs)?.groupValues?.get(1) ?: ""
+                val linear = "\\blinear=[\"']([^\"']+)[\"']".toRegex(RegexOption.IGNORE_CASE).find(attrs)?.groupValues?.get(1)?.lowercase() ?: "yes"
                 val item = manifestItems[idref]
                 if (item != null && (item.mediaType.contains("html") || item.href.endsWith(".html") || item.href.endsWith(".xhtml") || item.href.endsWith(".htm"))) {
+                    val cleanHref = item.href.split("#")[0].split("?")[0].trim()
+                    val fileName = cleanHref.substringAfterLast('/').lowercase()
+
+                    // Exclude EPUB 3 Navigation document
+                    if (item.properties.contains("nav", ignoreCase = true)) return@forEach
+
+                    // Exclude TOC from <guide>
+                    if (cleanHref in guideTocHrefs || guideTocHrefs.any { cleanHref.endsWith(it) || it.endsWith(cleanHref) }) return@forEach
+
+                    // Exclude TOC/Nav files by filename heuristics
+                    if (fileName.contains("toc") || fileName.contains("nav") || fileName == "contents.xhtml" || fileName == "contents.html") return@forEach
+
+                    // Exclude non-linear cover pages
+                    if (linear == "no" && (fileName.contains("cover") || cleanHref in guideCoverHrefs)) return@forEach
+
                     spineHrefs.add(item.href)
                 }
             }
@@ -326,21 +362,30 @@ object EpubParser {
             spineHrefs.map { resolveZipPath(opfDir, it) }
         } else {
             entries.keys.filter {
-                it.endsWith(".xhtml", ignoreCase = true) ||
+                (it.endsWith(".xhtml", ignoreCase = true) ||
                 it.endsWith(".html", ignoreCase = true) ||
-                it.endsWith(".htm", ignoreCase = true)
+                it.endsWith(".htm", ignoreCase = true)) &&
+                !it.contains("toc", ignoreCase = true) &&
+                !it.contains("nav", ignoreCase = true)
             }.sorted()
         }
 
         // 8. Extract Content & Inline Images per Chapter
         val imagesDir = if (context != null) File(context.filesDir, "books/$bookId/images").apply { mkdirs() } else null
         val extractedChapters = mutableListOf<Chapter>()
+        var currentPart = ""
 
         chapterPaths.forEachIndexed { chapIdx, fullPath ->
             val entryKey = resolveZipEntry(opfDir, fullPath)
             if (entryKey != null) {
                 val rawHtml = String(entries[entryKey] ?: ByteArray(0), Charsets.UTF_8)
                 val currentFileDir = if (entryKey.contains("/")) entryKey.substringBeforeLast('/') else ""
+
+                // Double-check if this file is an embedded TOC page
+                if (rawHtml.contains("epub:type=[\"']toc[\"']".toRegex(RegexOption.IGNORE_CASE)) ||
+                    (rawHtml.contains("class=[\"'][^\"']*toc[^\"']*[\"']".toRegex(RegexOption.IGNORE_CASE)) && rawHtml.contains("<a\\s+href".toRegex(RegexOption.IGNORE_CASE)))) {
+                    return@forEachIndexed
+                }
 
                 // Match official Chapter Title from TOC
                 val matchedToc = tocList.firstOrNull { toc ->
@@ -368,6 +413,7 @@ object EpubParser {
                         }
                     }
                 }
+                chapterTitle = deduplicateRepeatedHeading(chapterTitle)
                 if (chapterTitle.isBlank()) {
                     chapterTitle = "Chapter ${chapIdx + 1}"
                 }
@@ -399,16 +445,47 @@ object EpubParser {
 
                 // Convert HTML to clean readable paragraphs with isolated images
                 val paras = cleanHtmlToParagraphs(processedHtml)
-                if (paras.isNotEmpty()) {
-                    val wordCount = paras.filterNot { it.startsWith("[IMG:") }.joinToString(" ").split("\\s+".toRegex()).size
+
+                // Detect standalone Part/Section divider page (e.g. only contains "Part One")
+                if (paras.size <= 1) {
+                    val singleText = paras.firstOrNull()?.trim() ?: ""
+                    if (singleText.length in 1..40 && "^(?i)(part|book|volume|section)\\s+\\w+".toRegex().matches(singleText)) {
+                        currentPart = deduplicateRepeatedHeading(singleText)
+                        return@forEachIndexed
+                    }
+                    if (singleText.length in 1..30 && (singleText.contains("cover", ignoreCase = true) || singleText.equals(title, ignoreCase = true))) {
+                        return@forEachIndexed
+                    }
+                }
+
+                // Filter out fallback TOC link list
+                if (paras.size > 8) {
+                    val headingMatchCount = paras.count { p ->
+                        p.startsWith("Chapter", ignoreCase = true) || p.startsWith("Part", ignoreCase = true)
+                    }
+                    if (headingMatchCount > paras.size * 0.5) {
+                        return@forEachIndexed
+                    }
+                }
+
+                // Strip leading heading paragraphs matching chapter title, part name, or book title
+                val cleanedParas = paras.toMutableList()
+                while (cleanedParas.isNotEmpty() && isHeadingOnly(cleanedParas[0], chapterTitle, title, currentPart)) {
+                    cleanedParas.removeAt(0)
+                }
+
+                if (cleanedParas.isNotEmpty()) {
+                    val wordCount = cleanedParas.filterNot { it.startsWith("[IMG:") }.joinToString(" ").split("\\s+".toRegex()).size
                     val readTimeMins = maxOf(wordCount / 200, 1)
+
+                    val subtitleText = if (currentPart.isNotBlank()) currentPart else "Section ${extractedChapters.size + 1}"
 
                     extractedChapters.add(
                         Chapter(
                             title = chapterTitle,
-                            subtitle = "Section ${chapIdx + 1}",
+                            subtitle = subtitleText,
                             readTime = "$readTimeMins mins",
-                            paragraphs = paras
+                            paragraphs = cleanedParas
                         )
                     )
                 }
@@ -461,9 +538,11 @@ object EpubParser {
         val text = html
             .replace("(?i)<script.*?>.*?</script>".toRegex(RegexOption.DOT_MATCHES_ALL), "")
             .replace("(?i)<style.*?>.*?</style>".toRegex(RegexOption.DOT_MATCHES_ALL), "")
+            .replace("(?i)<head.*?>.*?</head>".toRegex(RegexOption.DOT_MATCHES_ALL), "")
             .replace("<br\\s*/?>".toRegex(RegexOption.IGNORE_CASE), "\n")
-            .replace("(?i)</(p|div|h[1-6]|section|article|blockquote|li|tr)>".toRegex(), "\n\n")
-            .replace("<[^>]+>".toRegex(), "")
+            .replace("(?i)</?(p|div|h[1-6]|section|article|blockquote|li|ol|ul|tr|td|th|header|footer|nav|title|table)>".toRegex(), "\n\n")
+            .replace("(?i)</(a|span|em|i|b|strong)>".toRegex(), " ")
+            .replace("<[^>]+>".toRegex(), " ")
 
         val tokenRegex = "__IMG_TOKEN_START__(.*?)__IMG_TOKEN_END__".toRegex()
         val textWithImgs = tokenRegex.replace(text) { m -> "\n\n[IMG:${m.groupValues[1]}]\n\n" }
@@ -483,7 +562,8 @@ object EpubParser {
                     val before = trimmed.substring(lastIdx, match.range.first).trim()
                     if (before.isNotBlank()) {
                         val norm = decodeHtmlEntities(before).replace("\\s+".toRegex(), " ").trim()
-                        if (norm.length > 1) result.add(norm)
+                        val dedup = deduplicateRepeatedHeading(norm)
+                        if (dedup.length > 1) result.add(dedup)
                     }
                     result.add("[IMG:${match.groupValues[1]}]")
                     lastIdx = match.range.last + 1
@@ -491,19 +571,70 @@ object EpubParser {
                 val after = trimmed.substring(lastIdx).trim()
                 if (after.isNotBlank()) {
                     val norm = decodeHtmlEntities(after).replace("\\s+".toRegex(), " ").trim()
-                    if (norm.length > 1) result.add(norm)
+                    val dedup = deduplicateRepeatedHeading(norm)
+                    if (dedup.length > 1) result.add(dedup)
                 }
             } else {
                 val normalized = decodeHtmlEntities(trimmed)
                     .replace("\\s+".toRegex(), " ")
                     .trim()
 
-                if (normalized.isNotBlank() && normalized.length > 1) {
-                    result.add(normalized)
+                val dedup = deduplicateRepeatedHeading(normalized)
+                if (dedup.isNotBlank() && dedup.length > 1) {
+                    result.add(dedup)
                 }
             }
         }
         return result
+    }
+
+    fun isHeadingOnly(para: String, chapterTitle: String, bookTitle: String, currentPart: String = ""): Boolean {
+        val trimmed = para.trim()
+        if (trimmed.isBlank()) return true
+        if (trimmed.length > 80) return false
+        val normPara = trimmed.replace("[^a-zA-Z0-9]".toRegex(), "").lowercase()
+        val normChap = chapterTitle.replace("[^a-zA-Z0-9]".toRegex(), "").lowercase()
+        val normBook = bookTitle.replace("[^a-zA-Z0-9]".toRegex(), "").lowercase()
+        val normPart = currentPart.replace("[^a-zA-Z0-9]".toRegex(), "").lowercase()
+
+        if (normPara.isEmpty()) return true
+        if (normPara == normChap || normPara == normBook || (normPart.isNotEmpty() && normPara == normPart)) return true
+        if (normChap.isNotEmpty() && normPara.replace(normChap, "").isEmpty()) return true
+        if (normPart.isNotEmpty() && normPara.replace(normPart, "").isEmpty()) return true
+        if (normBook.isNotEmpty() && normPara.replace(normBook, "").isEmpty()) return true
+        if (normPart.isNotEmpty() && normChap.isNotEmpty() && (normPara == normPart + normChap || normPara == normChap + normPart)) return true
+
+        val chapterPattern = "^(?i)(chapter|part|section|book|canto)\\s+([0-9ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)[.:\\s—–-]*$".toRegex()
+        if (chapterPattern.matches(trimmed)) return true
+
+        return false
+    }
+
+    fun deduplicateRepeatedHeading(text: String): String {
+        val trimmed = text.trim()
+        val len = trimmed.length
+        if (len >= 6) {
+            // Check exact half repeat: "Part TwoPart Two" or "Chapter 1Chapter 1"
+            if (len % 2 == 0) {
+                val half = len / 2
+                val first = trimmed.substring(0, half).trim()
+                val second = trimmed.substring(half).trim()
+                if (first.equals(second, ignoreCase = true)) {
+                    return first
+                }
+            }
+            // Check repeated words separated by whitespace: "Part Two Part Two"
+            val words = trimmed.split("\\s+".toRegex())
+            if (words.size >= 2 && words.size % 2 == 0) {
+                val halfWords = words.size / 2
+                val firstHalf = words.subList(0, halfWords).joinToString(" ")
+                val secondHalf = words.subList(halfWords, words.size).joinToString(" ")
+                if (firstHalf.equals(secondHalf, ignoreCase = true)) {
+                    return firstHalf
+                }
+            }
+        }
+        return trimmed
     }
 
     private fun decodeHtmlEntities(input: String): String {

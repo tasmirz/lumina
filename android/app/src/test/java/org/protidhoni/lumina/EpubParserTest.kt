@@ -44,4 +44,20 @@ class EpubParserTest {
         assertTrue(firstChapter.paragraphs.isNotEmpty())
         assertTrue(firstChapter.paragraphs.any { it.contains("Gregor Samsa") })
     }
+
+    @Test
+    fun testIsHeadingOnlyDetection() {
+        assertTrue(EpubParser.isHeadingOnly("Chapter 1", "Chapter 1", "Nineteen Eighty-Four", "Part One"))
+        assertTrue(EpubParser.isHeadingOnly("Chapter 1Chapter 1", "Chapter 1", "Nineteen Eighty-Four", "Part One"))
+        assertTrue(EpubParser.isHeadingOnly("Part One", "Chapter 1", "Nineteen Eighty-Four", "Part One"))
+        assertTrue(EpubParser.isHeadingOnly("Nineteen Eighty-Four", "Chapter 1", "Nineteen Eighty-Four", "Part One"))
+        assertTrue(EpubParser.isHeadingOnly("Chapter 2", "Chapter 2", "Book Title", ""))
+        assertTrue(EpubParser.isHeadingOnly("Chapter IV", "Chapter IV", "Book Title", ""))
+        org.junit.Assert.assertFalse(EpubParser.isHeadingOnly(
+            "It was a bright cold day in April, and the clocks were striking thirteen.",
+            "Chapter 1",
+            "Nineteen Eighty-Four",
+            "Part One"
+        ))
+    }
 }

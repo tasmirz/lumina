@@ -2,13 +2,7 @@ package org.protidhoni.lumina.data
 
 import android.content.Context
 import android.content.SharedPreferences
-import org.protidhoni.lumina.model.Book
-import org.protidhoni.lumina.model.Bookmark
-import org.protidhoni.lumina.model.Chapter
-import org.protidhoni.lumina.model.HighlightColor
-import org.protidhoni.lumina.model.ReadingMode
-import org.protidhoni.lumina.model.ThemeMode
-import org.protidhoni.lumina.model.TypefaceMode
+import org.protidhoni.lumina.model.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -17,7 +11,11 @@ import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
 
+import org.protidhoni.lumina.data.db.LuminaDatabaseHelper
+
 class BookRepository(private val context: Context) {
+
+    val dbHelper = LuminaDatabaseHelper(context)
 
     private val prefs: SharedPreferences =
         context.getSharedPreferences("lumina_reader_prefs", Context.MODE_PRIVATE)
@@ -30,6 +28,9 @@ class BookRepository(private val context: Context) {
 
     private val _bookmarks = MutableStateFlow<List<Bookmark>>(loadPersistedBookmarks())
     val bookmarks: StateFlow<List<Bookmark>> = _bookmarks.asStateFlow()
+
+    private val _wishlistBooks = MutableStateFlow<List<WishlistBook>>(dbHelper.getAllWishlist())
+    val wishlistBooks: StateFlow<List<WishlistBook>> = _wishlistBooks.asStateFlow()
 
     // Preferences
     private val _fontSize = MutableStateFlow(prefs.getInt("font_size", 18))
@@ -56,8 +57,162 @@ class BookRepository(private val context: Context) {
     private val _showFloatingAssistant = MutableStateFlow(prefs.getBoolean("show_floating_assistant", true))
     val showFloatingAssistant: StateFlow<Boolean> = _showFloatingAssistant.asStateFlow()
 
+    private val _themeFamily = MutableStateFlow(
+        try {
+            ThemeFamily.valueOf(prefs.getString("theme_family", ThemeFamily.PAPER.name) ?: ThemeFamily.PAPER.name)
+        } catch (_: Exception) { ThemeFamily.PAPER }
+    )
+    val themeFamily: StateFlow<ThemeFamily> = _themeFamily.asStateFlow()
+
+    private val _themeVariant = MutableStateFlow(
+        try {
+            ThemeVariant.valueOf(prefs.getString("theme_variant", ThemeVariant.LIGHT.name) ?: ThemeVariant.LIGHT.name)
+        } catch (_: Exception) { ThemeVariant.LIGHT }
+    )
+    val themeVariant: StateFlow<ThemeVariant> = _themeVariant.asStateFlow()
+
+    private val _backgroundTexture = MutableStateFlow(
+        try {
+            BackgroundTexture.valueOf(prefs.getString("background_texture", BackgroundTexture.NONE.name) ?: BackgroundTexture.NONE.name)
+        } catch (_: Exception) { BackgroundTexture.NONE }
+    )
+    val backgroundTexture: StateFlow<BackgroundTexture> = _backgroundTexture.asStateFlow()
+
+    private val _customBgUri = MutableStateFlow(prefs.getString("custom_bg_uri", "") ?: "")
+    val customBgUri: StateFlow<String> = _customBgUri.asStateFlow()
+
+    private val _orbActionItems = MutableStateFlow<Set<OrbActionItem>>(
+        prefs.getStringSet("orb_action_items", null)?.mapNotNull { name ->
+            try { OrbActionItem.valueOf(name) } catch (_: Exception) { null }
+        }?.toSet() ?: setOf(
+            OrbActionItem.READING_MODE,
+            OrbActionItem.TTS,
+            OrbActionItem.NOTE,
+            OrbActionItem.TOC,
+            OrbActionItem.SETTINGS
+        )
+    )
+    val orbActionItems: StateFlow<Set<OrbActionItem>> = _orbActionItems.asStateFlow()
+
+    private val _quickThemes = MutableStateFlow<Set<ThemeFamily>>(
+        prefs.getStringSet("quick_themes", null)?.mapNotNull {
+            try { ThemeFamily.valueOf(it) } catch (_: Exception) { null }
+        }?.toSet() ?: ThemeFamily.entries.toSet()
+    )
+    val quickThemes: StateFlow<Set<ThemeFamily>> = _quickThemes.asStateFlow()
+
+    private val _quickFonts = MutableStateFlow<Set<TypefaceMode>>(
+        prefs.getStringSet("quick_fonts", null)?.mapNotNull {
+            try { TypefaceMode.valueOf(it) } catch (_: Exception) { null }
+        }?.toSet() ?: setOf(TypefaceMode.SERIF, TypefaceMode.SANS, TypefaceMode.GEORGIA)
+    )
+    val quickFonts: StateFlow<Set<TypefaceMode>> = _quickFonts.asStateFlow()
+
+    private val _orbActionOrder = MutableStateFlow<List<OrbActionItem>>(
+        prefs.getString("orb_action_order", null)?.split(",")?.mapNotNull { name ->
+            try { OrbActionItem.valueOf(name) } catch (_: Exception) { null }
+        }?.let { savedList ->
+            val set = savedList.toSet()
+            savedList + OrbActionItem.entries.filter { it !in set }
+        } ?: OrbActionItem.entries.toList()
+    )
+    val orbActionOrder: StateFlow<List<OrbActionItem>> = _orbActionOrder.asStateFlow()
+
+    private val _textAlignmentMode = MutableStateFlow(
+        try {
+            TextAlignmentMode.valueOf(prefs.getString("text_alignment_mode", TextAlignmentMode.JUSTIFY.name) ?: TextAlignmentMode.JUSTIFY.name)
+        } catch (_: Exception) { TextAlignmentMode.JUSTIFY }
+    )
+    val textAlignmentMode: StateFlow<TextAlignmentMode> = _textAlignmentMode.asStateFlow()
+
+    private val _letterSpacing = MutableStateFlow(prefs.getFloat("letter_spacing", 0.2f))
+    val letterSpacing: StateFlow<Float> = _letterSpacing.asStateFlow()
+
     private val _geminiApiKey = MutableStateFlow(prefs.getString("gemini_api_key", "") ?: "")
     val geminiApiKey: StateFlow<String> = _geminiApiKey.asStateFlow()
+
+    private val _aiProvider = MutableStateFlow(
+        try {
+            AiProvider.valueOf(prefs.getString("ai_provider", AiProvider.GEMINI.name) ?: AiProvider.GEMINI.name)
+        } catch (_: Exception) { AiProvider.GEMINI }
+    )
+    val aiProvider: StateFlow<AiProvider> = _aiProvider.asStateFlow()
+
+    private val _aiBaseUrl = MutableStateFlow(prefs.getString("ai_base_url", "https://api.openai.com/v1") ?: "https://api.openai.com/v1")
+    val aiBaseUrl: StateFlow<String> = _aiBaseUrl.asStateFlow()
+
+    private val _aiModel = MutableStateFlow(
+        prefs.getString("ai_model", null).let { if (it.isNullOrBlank()) "gemini-3.1-flash-lite" else it }
+    )
+    val aiModel: StateFlow<String> = _aiModel.asStateFlow()
+
+    private val _customBgColor = MutableStateFlow(prefs.getLong("custom_bg_color", 0xFF1C1917L))
+    val customBgColor: StateFlow<Long> = _customBgColor.asStateFlow()
+
+    private val _customTextColor = MutableStateFlow(prefs.getLong("custom_text_color", 0xFFE7E5E4L))
+    val customTextColor: StateFlow<Long> = _customTextColor.asStateFlow()
+
+    private val _customAccentColor = MutableStateFlow(prefs.getLong("custom_accent_color", 0xFFD4AF37L))
+    val customAccentColor: StateFlow<Long> = _customAccentColor.asStateFlow()
+
+    fun setCustomThemeColors(bg: Long, text: Long, accent: Long) {
+        _customBgColor.value = bg
+        _customTextColor.value = text
+        _customAccentColor.value = accent
+        prefs.edit()
+            .putLong("custom_bg_color", bg)
+            .putLong("custom_text_color", text)
+            .putLong("custom_accent_color", accent)
+            .apply()
+    }
+
+    fun setAiProvider(provider: AiProvider) {
+        _aiProvider.value = provider
+        prefs.edit().putString("ai_provider", provider.name).apply()
+    }
+
+    fun setAiBaseUrl(url: String) {
+        _aiBaseUrl.value = url
+        prefs.edit().putString("ai_base_url", url).apply()
+    }
+
+    fun setAiModel(model: String) {
+        _aiModel.value = model
+        prefs.edit().putString("ai_model", model).apply()
+    }
+
+    fun toggleQuickTheme(family: ThemeFamily) {
+        val current = _quickThemes.value.toMutableSet()
+        if (current.contains(family)) {
+            if (current.size > 1) current.remove(family)
+        } else {
+            current.add(family)
+        }
+        _quickThemes.value = current
+        prefs.edit().putStringSet("quick_themes", current.map { it.name }.toSet()).apply()
+    }
+
+    fun toggleQuickFont(font: TypefaceMode) {
+        val current = _quickFonts.value.toMutableSet()
+        if (current.contains(font)) {
+            if (current.size > 1) current.remove(font)
+        } else {
+            current.add(font)
+        }
+        _quickFonts.value = current
+        prefs.edit().putStringSet("quick_fonts", current.map { it.name }.toSet()).apply()
+    }
+
+    fun reorderOrbAction(fromIndex: Int, toIndex: Int) {
+        if (fromIndex == toIndex) return
+        val list = _orbActionOrder.value.toMutableList()
+        if (fromIndex in list.indices && toIndex in list.indices) {
+            val item = list.removeAt(fromIndex)
+            list.add(toIndex, item)
+            _orbActionOrder.value = list
+            prefs.edit().putString("orb_action_order", list.joinToString(",") { it.name }).apply()
+        }
+    }
 
     fun getActiveBook(): Book {
         val id = _activeBookId.value
@@ -96,6 +251,12 @@ class BookRepository(private val context: Context) {
             .putInt("${bookId}_scroll", scrollPos)
             .putInt("${bookId}_progress", progressPct)
             .apply()
+
+        // Sync with SQLite reading progress
+        val book = _books.value.find { it.id == bookId }
+        if (book != null) {
+            dbHelper.updateReadingProgress(bookId, book.title, book.author, progressPct, "${100 - progressPct}m left")
+        }
     }
 
     fun setFontSize(size: Int) {
@@ -111,6 +272,65 @@ class BookRepository(private val context: Context) {
     fun setThemeMode(theme: ThemeMode) {
         _themeMode.value = theme
         prefs.edit().putString("theme_mode", theme.name).apply()
+        when (theme) {
+            ThemeMode.WARM_PAPER -> {
+                setThemeFamily(ThemeFamily.PAPER)
+                setThemeVariant(ThemeVariant.LIGHT)
+            }
+            ThemeMode.PURE_WHITE -> {
+                setThemeFamily(ThemeFamily.MODERN)
+                setThemeVariant(ThemeVariant.LIGHT)
+            }
+            ThemeMode.NIGHT -> {
+                setThemeFamily(ThemeFamily.MODERN)
+                setThemeVariant(ThemeVariant.DARK)
+            }
+        }
+    }
+
+    fun setThemeFamily(family: ThemeFamily) {
+        _themeFamily.value = family
+        prefs.edit().putString("theme_family", family.name).apply()
+    }
+
+    fun setThemeVariant(variant: ThemeVariant) {
+        _themeVariant.value = variant
+        prefs.edit().putString("theme_variant", variant.name).apply()
+    }
+
+    fun setBackgroundTexture(texture: BackgroundTexture) {
+        _backgroundTexture.value = texture
+        prefs.edit().putString("background_texture", texture.name).apply()
+    }
+
+    fun setCustomBgUri(uri: String) {
+        _customBgUri.value = uri
+        prefs.edit().putString("custom_bg_uri", uri).apply()
+    }
+
+    fun setOrbActionItems(items: Set<OrbActionItem>) {
+        _orbActionItems.value = items
+        prefs.edit().putStringSet("orb_action_items", items.map { it.name }.toSet()).apply()
+    }
+
+    fun toggleOrbActionItem(item: OrbActionItem) {
+        val current = _orbActionItems.value.toMutableSet()
+        if (current.contains(item)) {
+            current.remove(item)
+        } else {
+            current.add(item)
+        }
+        setOrbActionItems(current)
+    }
+
+    fun setTextAlignmentMode(alignment: TextAlignmentMode) {
+        _textAlignmentMode.value = alignment
+        prefs.edit().putString("text_alignment_mode", alignment.name).apply()
+    }
+
+    fun setLetterSpacing(spacing: Float) {
+        _letterSpacing.value = spacing
+        prefs.edit().putFloat("letter_spacing", spacing).apply()
     }
 
     fun setTypefaceMode(typeface: TypefaceMode) {
@@ -141,7 +361,7 @@ class BookRepository(private val context: Context) {
         return prefs.getString("last_screen_tab", "LIBRARY") ?: "LIBRARY"
     }
 
-    fun addBookmark(quote: String, color: HighlightColor = HighlightColor.GOLD) {
+    fun addBookmark(quote: String, color: HighlightColor = HighlightColor.GOLD, note: String = "") {
         val book = getActiveBook()
         val chapter = book.chapters.getOrNull(book.currentChapter)?.title ?: "Chapter"
         val mark = Bookmark(
@@ -149,17 +369,70 @@ class BookRepository(private val context: Context) {
             chapter = chapter,
             quote = quote,
             color = color,
+            note = note.trim(),
             timestamp = "Just now"
         )
         val updated = listOf(mark) + _bookmarks.value
         _bookmarks.value = updated
+        dbHelper.insertBookmark(mark)
+        saveBookmarks(updated)
+    }
+
+    fun updateBookmark(bookmark: Bookmark) {
+        val updated = _bookmarks.value.map { if (it.id == bookmark.id) bookmark else it }
+        _bookmarks.value = updated
+        dbHelper.insertBookmark(bookmark)
         saveBookmarks(updated)
     }
 
     fun removeBookmark(id: Long) {
         val updated = _bookmarks.value.filterNot { it.id == id }
         _bookmarks.value = updated
+        dbHelper.deleteBookmark(id)
         saveBookmarks(updated)
+    }
+
+    // --- Wishlist Management ---
+
+    fun addToWishlist(title: String, author: String = "", note: String = "") {
+        val item = WishlistBook(
+            title = title.trim(),
+            author = author.trim(),
+            note = note.trim(),
+            addedAt = "Today"
+        )
+        dbHelper.insertWishlist(item)
+        _wishlistBooks.value = dbHelper.getAllWishlist()
+    }
+
+    fun removeFromWishlist(id: String) {
+        dbHelper.deleteWishlist(id)
+        _wishlistBooks.value = dbHelper.getAllWishlist()
+    }
+
+    // --- SQLite Content Sharing ---
+
+    fun shareHighlights(context: Context, bookTitle: String? = null) {
+        val text = dbHelper.formatHighlightsForShare(bookTitle)
+        shareContent(context, text, "Reading Highlights - Lumina")
+    }
+
+    fun shareReadingList(context: Context) {
+        val text = dbHelper.formatReadingListForShare()
+        shareContent(context, text, "My Lumina Reading List")
+    }
+
+    fun shareContent(context: Context, text: String, title: String) {
+        val sendIntent = android.content.Intent().apply {
+            action = android.content.Intent.ACTION_SEND
+            putExtra(android.content.Intent.EXTRA_TEXT, text)
+            putExtra(android.content.Intent.EXTRA_TITLE, title)
+            type = "text/plain"
+        }
+        val shareIntent = android.content.Intent.createChooser(sendIntent, title).apply {
+            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(shareIntent)
     }
 
     private val defaultBookIds = setOf("book-kafka", "book-alice", "book-artofwar")
@@ -284,30 +557,91 @@ class BookRepository(private val context: Context) {
                         bookAuthor = "George Orwell"
                     }
                 }
-                val cleanedChapters = chapters.map { chap ->
-                    chap.copy(
-                        paragraphs = chap.paragraphs.map { p ->
-                            if (p.startsWith("[IMG:") && p.endsWith("]")) p
-                            else p.replace("\\s+".toRegex(), " ").trim()
-                        }.filter { it.isNotBlank() }
+                var currentPart = ""
+                val cleanedChapters = mutableListOf<Chapter>()
+                for (chap in chapters) {
+                    val cleanTitle = EpubParser.deduplicateRepeatedHeading(chap.title)
+                    val rawParas = chap.paragraphs.map { p ->
+                        if (p.startsWith("[IMG:") && p.endsWith("]")) p
+                        else EpubParser.deduplicateRepeatedHeading(p.replace("\\s+".toRegex(), " ").trim())
+                    }.filter { it.isNotBlank() }
+
+                    // 1. Skip TOC chapter
+                    if (cleanTitle.contains("Table of Contents", ignoreCase = true) ||
+                        cleanTitle.contains("toc", ignoreCase = true)) {
+                        continue
+                    }
+                    if (rawParas.size > 8) {
+                        val headingCount = rawParas.count { p ->
+                            p.startsWith("Chapter", ignoreCase = true) || p.startsWith("Part", ignoreCase = true)
+                        }
+                        if (headingCount > rawParas.size * 0.5) {
+                            continue
+                        }
+                    }
+
+                    // 2. Skip cover or empty part divider page
+                    if (rawParas.size <= 1) {
+                        val singleText = rawParas.firstOrNull() ?: ""
+                        val singleTrimmed = singleText.trim()
+                        if (singleTrimmed.length in 1..40 && "^(?i)(part|book|volume|section)\\s+\\w+".toRegex().matches(singleTrimmed)) {
+                            currentPart = EpubParser.deduplicateRepeatedHeading(singleTrimmed)
+                            continue
+                        }
+                        if (singleTrimmed.length in 1..30 && (singleTrimmed.contains("cover", ignoreCase = true) || singleTrimmed.equals(bookTitle, ignoreCase = true))) {
+                            continue
+                        }
+                    }
+
+                    // 3. Strip leading heading paragraphs
+                    val dedupParas = rawParas.toMutableList()
+                    while (dedupParas.isNotEmpty() && EpubParser.isHeadingOnly(dedupParas[0], cleanTitle, bookTitle, currentPart)) {
+                        dedupParas.removeAt(0)
+                    }
+
+                    if (dedupParas.isEmpty()) continue
+
+                    val finalSubtitle = if (currentPart.isNotBlank()) currentPart else chap.subtitle.ifBlank { "Section ${cleanedChapters.size + 1}" }
+
+                    cleanedChapters.add(
+                        chap.copy(
+                            title = cleanTitle,
+                            subtitle = finalSubtitle,
+                            paragraphs = dedupParas
+                        )
                     )
                 }
+
+                val rawCover = obj.optString("coverUrl", "")
+                val finalCover = if (rawCover.isBlank() || rawCover.contains("unsplash")) {
+                    if (bookTitle.contains("Nineteen Eighty-Four", ignoreCase = true) || bookTitle.contains("1984")) {
+                        "res://cover_1984"
+                    } else {
+                        "res://cover_kafka"
+                    }
+                } else rawCover
+
+                val maxChapter = maxOf(0, cleanedChapters.size - 1)
+                val savedChapter = prefs.getInt("${id}_chapter", obj.optInt("currentChapter", 0)).coerceIn(0, maxChapter)
+
                 list.add(
                     Book(
                         id = id,
                         title = bookTitle,
                         author = bookAuthor,
-                        coverUrl = obj.optString("coverUrl", "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=400&q=80"),
+                        coverUrl = finalCover,
                         lastRead = obj.optString("lastRead", "Just added"),
                         progress = prefs.getInt("${id}_progress", obj.optInt("progress", 0)),
                         readTimeLeft = obj.optString("readTimeLeft", "10m left"),
-                        currentChapter = prefs.getInt("${id}_chapter", obj.optInt("currentChapter", 0)),
+                        currentChapter = savedChapter,
                         currentPage = prefs.getInt("${id}_page", obj.optInt("currentPage", 0)),
                         scrollPos = prefs.getInt("${id}_scroll", obj.optInt("scrollPos", 0)),
-                        chapters = cleanedChapters
+                        chapters = if (cleanedChapters.isNotEmpty()) cleanedChapters else chapters
                     )
                 )
             }
+            // Save back cleaned books if any were fixed
+            saveCustomBooks(list)
             list
         } catch (e: Exception) {
             e.printStackTrace()
@@ -325,37 +659,52 @@ class BookRepository(private val context: Context) {
                 obj.put("chapter", bm.chapter)
                 obj.put("quote", bm.quote)
                 obj.put("color", bm.color.name)
+                obj.put("note", bm.note)
                 obj.put("timestamp", bm.timestamp)
                 array.put(obj)
             }
-            File(context.filesDir, "custom_bookmarks.json").writeText(array.toString())
+            File(context.filesDir, "bookmarks.json").writeText(array.toString())
         } catch (e: Exception) {
             e.printStackTrace()
         }
     }
 
     private fun loadPersistedBookmarks(): List<Bookmark> {
+        val fromDb = try { dbHelper.getAllBookmarks() } catch (_: Exception) { emptyList() }
+        if (fromDb.isNotEmpty()) return fromDb
+
         val file = File(context.filesDir, "custom_bookmarks.json")
-        if (!file.exists()) return loadInitialBookmarks()
+        if (!file.exists()) {
+            val initial = loadInitialBookmarks()
+            initial.forEach { dbHelper.insertBookmark(it) }
+            return initial
+        }
         return try {
             val array = JSONArray(file.readText())
             val list = mutableListOf<Bookmark>()
             for (i in 0 until array.length()) {
                 val obj = array.getJSONObject(i)
-                list.add(
-                    Bookmark(
-                        id = obj.getLong("id"),
-                        bookTitle = obj.getString("bookTitle"),
-                        chapter = obj.getString("chapter"),
-                        quote = obj.getString("quote"),
-                        color = try { HighlightColor.valueOf(obj.getString("color")) } catch (_: Exception) { HighlightColor.GOLD },
-                        timestamp = obj.optString("timestamp", "Just now")
-                    )
+                val bm = Bookmark(
+                    id = obj.getLong("id"),
+                    bookTitle = obj.getString("bookTitle"),
+                    chapter = obj.getString("chapter"),
+                    quote = obj.getString("quote"),
+                    color = try { HighlightColor.valueOf(obj.getString("color")) } catch (_: Exception) { HighlightColor.GOLD },
+                    note = obj.optString("note", ""),
+                    timestamp = obj.optString("timestamp", "Just now")
                 )
+                list.add(bm)
+                dbHelper.insertBookmark(bm)
             }
-            if (list.isEmpty()) loadInitialBookmarks() else list
+            if (list.isEmpty()) {
+                val initial = loadInitialBookmarks()
+                initial.forEach { dbHelper.insertBookmark(it) }
+                initial
+            } else list
         } catch (e: Exception) {
-            loadInitialBookmarks()
+            val initial = loadInitialBookmarks()
+            initial.forEach { dbHelper.insertBookmark(it) }
+            initial
         }
     }
 
@@ -378,7 +727,7 @@ class BookRepository(private val context: Context) {
                 id = "book-kafka",
                 title = "The Metamorphosis",
                 author = "Franz Kafka",
-                coverUrl = "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=400&q=80",
+                coverUrl = "res://cover_kafka",
                 lastRead = "2m ago",
                 progress = 35,
                 readTimeLeft = "16m left",
@@ -415,7 +764,7 @@ class BookRepository(private val context: Context) {
                 id = "book-alice",
                 title = "Alice in Wonderland",
                 author = "Lewis Carroll",
-                coverUrl = "https://images.unsplash.com/photo-1512820790803-83ca734da794?auto=format&fit=crop&w=400&q=80",
+                coverUrl = "res://cover_alice",
                 lastRead = "Yesterday",
                 progress = 12,
                 readTimeLeft = "42m left",
@@ -438,7 +787,7 @@ class BookRepository(private val context: Context) {
                 id = "book-artofwar",
                 title = "The Art of War",
                 author = "Sun Tzu",
-                coverUrl = "https://images.unsplash.com/photo-1457369804613-52c61a468e7d?auto=format&fit=crop&w=400&q=80",
+                coverUrl = "res://cover_gatsby",
                 lastRead = "3 days ago",
                 progress = 60,
                 readTimeLeft = "25m left",

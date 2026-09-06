@@ -17,6 +17,11 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
 
+enum class AiProvider(val displayName: String) {
+    GEMINI("Google Gemini"),
+    OPENAI_COMPATIBLE("OpenAI / Compatible")
+}
+
 sealed class AssistantAction {
     data class NavigateChapter(val targetIndex: Int) : AssistantAction()
     data class NextChapter(val dummy: Unit = Unit) : AssistantAction()
@@ -33,6 +38,7 @@ class AssistantService(private val context: Context) {
     fun startListening(
         onReady: () -> Unit = {},
         onRmsChanged: (Float) -> Unit = {},
+        onPartialResult: (String) -> Unit = {},
         onResult: (String) -> Unit,
         onError: (String) -> Unit
     ) {
@@ -71,7 +77,13 @@ class AssistantService(private val context: Context) {
                         onError("No speech recognized")
                     }
                 }
-                override fun onPartialResults(partialResults: Bundle?) {}
+                override fun onPartialResults(partialResults: Bundle?) {
+                    val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    val text = matches?.firstOrNull() ?: ""
+                    if (text.isNotBlank()) {
+                        onPartialResult(text)
+                    }
+                }
                 override fun onEvent(eventType: Int, params: Bundle?) {}
             })
         }
@@ -80,6 +92,7 @@ class AssistantService(private val context: Context) {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         }
 
         try {
@@ -136,74 +149,173 @@ class AssistantService(private val context: Context) {
         return null
     }
 
+    suspend fun queryAssistant(
+        provider: AiProvider,
+        apiKey: String,
+        baseUrl: String,
+        modelName: String,
+        bookTitle: String,
+        activeChapterTitle: String,
+        knownContext: String,
+        userQuery: String
+    ): String = withContext(Dispatchers.IO) {
+        val systemInstruction = """
+            You are Lumina's attentive reading assistant for the book "$bookTitle".
+            The reader is currently reading "$activeChapterTitle".
+            STRICT RULE: Only answer based on context up to this chapter. NEVER reveal spoilers or upcoming plot developments from later chapters.
+            STRICT RULE: Answer directly and concisely (1-3 sentences). Do NOT provide unsolicited background details unless directly asked.
+            If the user asks to take a note or summarize, provide a clean, elegant note.
+        """.trimIndent()
+
+        if (provider == AiProvider.GEMINI) {
+            if (apiKey.isBlank()) {
+                return@withContext "To enable intelligent Q&A and character explanations, please add your Google Gemini API key in Settings."
+            }
+
+            try {
+                val model = if (modelName.isNotBlank()) modelName.trim() else "gemini-3.1-flash-lite"
+                val urlString = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=${apiKey.trim()}"
+                val url = URL(urlString)
+                val conn = (url.openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    setRequestProperty("Content-Type", "application/json")
+                    connectTimeout = 15000
+                    readTimeout = 20000
+                    doOutput = true
+                }
+
+                val body = JSONObject().apply {
+                    put("contents", JSONArray().apply {
+                        put(JSONObject().apply {
+                            put("role", "user")
+                            put("parts", JSONArray().apply {
+                                put(JSONObject().apply {
+                                    put("text", "$systemInstruction\n\n[Book Context so far]:\n${knownContext.take(12000)}\n\n[Reader Question]:\n$userQuery")
+                                })
+                            })
+                        })
+                    })
+                    put("generationConfig", JSONObject().apply {
+                        put("temperature", 0.3)
+                        put("maxOutputTokens", 600)
+                        put("thinkingConfig", JSONObject().apply {
+                            put("thinkingBudget", 1024)
+                        })
+                    })
+                }
+
+                OutputStreamWriter(conn.outputStream).use { writer ->
+                    writer.write(body.toString())
+                    writer.flush()
+                }
+
+                val responseCode = conn.responseCode
+                if (responseCode == 200) {
+                    val responseText = BufferedReader(InputStreamReader(conn.inputStream)).use { it.readText() }
+                    val json = JSONObject(responseText)
+                    val candidates = json.optJSONArray("candidates")
+                    val firstCandidate = candidates?.optJSONObject(0)
+                    val content = firstCandidate?.optJSONObject("content")
+                    val parts = content?.optJSONArray("parts")
+
+                    var foundText = ""
+                    if (parts != null) {
+                        for (i in 0 until parts.length()) {
+                            val part = parts.optJSONObject(i)
+                            val isThought = part?.optBoolean("thought", false) ?: false
+                            if (!isThought && part?.has("text") == true) {
+                                val t = part.optString("text", "").trim()
+                                if (t.isNotBlank()) {
+                                    foundText = t
+                                    break
+                                }
+                            }
+                        }
+                    }
+                    val text = if (foundText.isNotBlank()) foundText else parts?.optJSONObject(0)?.optString("text") ?: "I couldn't find an answer in the chapters read so far."
+                    text.trim()
+                } else {
+                    val errorStream = conn.errorStream?.let { BufferedReader(InputStreamReader(it)).use { r -> r.readText() } }
+                    "Gemini request error ($responseCode): ${errorStream?.take(150) ?: "Check your API key"}"
+                }
+            } catch (e: Exception) {
+                "Unable to connect to Gemini: ${e.localizedMessage ?: "Network error"}"
+            }
+        } else {
+            // OpenAI Compatible Provider (OpenAI, Groq, OpenRouter, Ollama, LocalAI)
+            val cleanBase = (if (baseUrl.isNotBlank()) baseUrl.trim() else "https://api.openai.com/v1").trimEnd('/')
+            if (apiKey.isBlank() && !cleanBase.contains("localhost") && !cleanBase.contains("127.0.0.1") && !cleanBase.contains("10.0.2.2")) {
+                return@withContext "To enable intelligent Q&A with OpenAI or custom models, please configure your API key in Advanced Settings."
+            }
+            try {
+                val endpoint = if (cleanBase.endsWith("/chat/completions")) cleanBase else "$cleanBase/chat/completions"
+                val model = if (modelName.isNotBlank()) modelName.trim() else "gpt-4o-mini"
+                val url = URL(endpoint)
+                val conn = (url.openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    setRequestProperty("Content-Type", "application/json")
+                    if (apiKey.isNotBlank()) {
+                        setRequestProperty("Authorization", "Bearer ${apiKey.trim()}")
+                    }
+                    connectTimeout = 15000
+                    readTimeout = 20000
+                    doOutput = true
+                }
+
+                val body = JSONObject().apply {
+                    put("model", model)
+                    put("messages", JSONArray().apply {
+                        put(JSONObject().apply {
+                            put("role", "system")
+                            put("content", "$systemInstruction\n\n[Book Context so far]:\n${knownContext.take(12000)}")
+                        })
+                        put(JSONObject().apply {
+                            put("role", "user")
+                            put("content", userQuery)
+                        })
+                    })
+                    put("temperature", 0.3)
+                    put("max_tokens", 400)
+                }
+
+                OutputStreamWriter(conn.outputStream).use { writer ->
+                    writer.write(body.toString())
+                    writer.flush()
+                }
+
+                val responseCode = conn.responseCode
+                if (responseCode == 200) {
+                    val responseText = BufferedReader(InputStreamReader(conn.inputStream)).use { it.readText() }
+                    val json = JSONObject(responseText)
+                    val choices = json.optJSONArray("choices")
+                    val firstChoice = choices?.optJSONObject(0)
+                    val message = firstChoice?.optJSONObject("message")
+                    val content = message?.optString("content") ?: "I couldn't find an answer in the chapters read so far."
+                    content.trim()
+                } else {
+                    val errorStream = conn.errorStream?.let { BufferedReader(InputStreamReader(it)).use { r -> r.readText() } }
+                    "AI service error ($responseCode): ${errorStream?.take(150) ?: "Check your API key/Base URL"}"
+                }
+            } catch (e: Exception) {
+                "Unable to connect to AI service: ${e.localizedMessage ?: "Network error"}"
+            }
+        }
+    }
+
     suspend fun queryGemini(
         apiKey: String,
         bookTitle: String,
         activeChapterTitle: String,
         knownContext: String,
         userQuery: String
-    ): String = withContext(Dispatchers.IO) {
-        if (apiKey.isBlank()) {
-            return@withContext "To enable intelligent Q&A and character explanations, please add your Google Gemini API key in Settings."
-        }
-
-        try {
-            val urlString = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$apiKey"
-            val url = URL(urlString)
-            val conn = (url.openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                setRequestProperty("Content-Type", "application/json")
-                connectTimeout = 15000
-                readTimeout = 20000
-                doOutput = true
-            }
-
-            val systemInstruction = """
-                You are Lumina's attentive reading assistant for the book "$bookTitle".
-                The reader is currently reading "$activeChapterTitle".
-                STRICT RULE: Only answer based on context up to this chapter. NEVER reveal spoilers or upcoming plot developments from later chapters.
-                STRICT RULE: Answer directly and concisely (1-3 sentences). Do NOT provide unsolicited background details unless directly asked.
-                If the user asks to take a note or summarize, provide a clean, elegant note.
-            """.trimIndent()
-
-            val body = JSONObject().apply {
-                put("contents", JSONArray().apply {
-                    put(JSONObject().apply {
-                        put("role", "user")
-                        put("parts", JSONArray().apply {
-                            put(JSONObject().apply {
-                                put("text", "$systemInstruction\n\n[Book Context so far]:\n${knownContext.take(12000)}\n\n[Reader Question]:\n$userQuery")
-                            })
-                        })
-                    })
-                })
-                put("generationConfig", JSONObject().apply {
-                    put("temperature", 0.3)
-                    put("maxOutputTokens", 400)
-                })
-            }
-
-            OutputStreamWriter(conn.outputStream).use { writer ->
-                writer.write(body.toString())
-                writer.flush()
-            }
-
-            val responseCode = conn.responseCode
-            if (responseCode == 200) {
-                val responseText = BufferedReader(InputStreamReader(conn.inputStream)).use { it.readText() }
-                val json = JSONObject(responseText)
-                val candidates = json.optJSONArray("candidates")
-                val firstCandidate = candidates?.optJSONObject(0)
-                val content = firstCandidate?.optJSONObject("content")
-                val parts = content?.optJSONArray("parts")
-                val text = parts?.optJSONObject(0)?.optString("text") ?: "I couldn't find an answer in the chapters read so far."
-                text.trim()
-            } else {
-                val errorStream = conn.errorStream?.let { BufferedReader(InputStreamReader(it)).use { r -> r.readText() } }
-                "Gemini request error ($responseCode): ${errorStream?.take(150) ?: "Check your API key"}"
-            }
-        } catch (e: Exception) {
-            "Unable to connect to Gemini: ${e.localizedMessage ?: "Network error"}"
-        }
-    }
+    ): String = queryAssistant(
+        provider = AiProvider.GEMINI,
+        apiKey = apiKey,
+        baseUrl = "",
+        modelName = "gemini-1.5-flash",
+        bookTitle = bookTitle,
+        activeChapterTitle = activeChapterTitle,
+        knownContext = knownContext,
+        userQuery = userQuery
+    )
 }

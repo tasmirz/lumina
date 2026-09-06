@@ -47,3 +47,6 @@ Thumbs.db
 
 # MCP and testing caches
 .playwright-mcp/
+
+# Debug artifacts and screenshots
+debug/

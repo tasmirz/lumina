@@ -14,12 +14,18 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -31,6 +37,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.protidhoni.lumina.model.Book
+import org.protidhoni.lumina.model.WishlistBook
 import org.protidhoni.lumina.ui.components.BookContextMenuSheet
 import org.protidhoni.lumina.ui.components.BookCoverImage
 
@@ -39,13 +46,19 @@ import org.protidhoni.lumina.ui.components.BookCoverImage
 fun LibraryScreen(
     books: List<Book>,
     activeBook: Book,
+    wishlistBooks: List<WishlistBook> = emptyList(),
     onBookSelect: (String) -> Unit,
     onDeleteBook: (String) -> Unit = {},
     onResetProgress: (String) -> Unit = {},
     onAddEpubClick: () -> Unit,
+    onAddToWishlist: (title: String, author: String, notes: String) -> Unit = { _, _, _ -> },
+    onRemoveFromWishlist: (String) -> Unit = {},
+    onShareReadingList: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    var selectedTab by rememberSaveable { mutableIntStateOf(0) } // 0: Gallery, 1: Wishlist
+    var showAddWishlistDialog by remember { mutableStateOf(false) }
     var bookToDelete by remember { mutableStateOf<Book?>(null) }
     var bookForContextMenu by remember { mutableStateOf<Book?>(null) }
 
@@ -59,7 +72,7 @@ fun LibraryScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 18.dp),
+                .padding(horizontal = 20.dp, vertical = 16.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -72,26 +85,165 @@ fun LibraryScreen(
                     color = MaterialTheme.colorScheme.onBackground
                 )
                 Text(
-                    text = "Your Digital Sanctuary • ${books.size} Books",
+                    text = if (selectedTab == 0) "Your Digital Sanctuary • ${books.size} Books" else "Curated Want to Read • ${wishlistBooks.size} Titles",
                     fontFamily = FontFamily.SansSerif,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Normal,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            IconButton(
-                onClick = onAddEpubClick,
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-            ) {
-                Icon(Icons.Default.Add, contentDescription = "Add Book", tint = MaterialTheme.colorScheme.onSurface)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(
+                    onClick = onShareReadingList,
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Share,
+                        contentDescription = "Share Reading List",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                IconButton(
+                    onClick = {
+                        if (selectedTab == 0) onAddEpubClick() else showAddWishlistDialog = true
+                    },
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Add Book", tint = MaterialTheme.colorScheme.onSurface)
+                }
             }
         }
 
+        // Tab Selector Chips
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            FilterChip(
+                selected = selectedTab == 0,
+                onClick = { selectedTab = 0 },
+                label = { Text("Gallery (${books.size})", fontSize = 12.sp) },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f),
+                    selectedLabelColor = MaterialTheme.colorScheme.secondary
+                )
+            )
+            FilterChip(
+                selected = selectedTab == 1,
+                onClick = { selectedTab = 1 },
+                label = { Text("Wishlist (${wishlistBooks.size})", fontSize = 12.sp) },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f),
+                    selectedLabelColor = MaterialTheme.colorScheme.secondary
+                )
+            )
+        }
+
+        if (selectedTab == 1) {
+            // Wishlist View
+            if (wishlistBooks.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(bottom = 120.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            imageVector = Icons.Default.Favorite,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f),
+                            modifier = Modifier.size(48.dp)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "Your Wishlist is Empty",
+                            fontFamily = FontFamily.Serif,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onBackground
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Tap + above to add titles you wish to read next.",
+                            fontFamily = FontFamily.SansSerif,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            } else {
+                LazyColumn(
+                    contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 150.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    items(wishlistBooks, key = { it.id }) { item ->
+                        Card(
+                            shape = RoundedCornerShape(14.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(14.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = item.title,
+                                        fontFamily = FontFamily.Serif,
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    if (item.author.isNotBlank()) {
+                                        Text(
+                                            text = item.author,
+                                            fontFamily = FontFamily.SansSerif,
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    if (item.note.isNotBlank()) {
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = item.note,
+                                            fontFamily = FontFamily.SansSerif,
+                                            fontSize = 11.sp,
+                                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                            color = MaterialTheme.colorScheme.secondary
+                                        )
+                                    }
+                                }
+                                IconButton(onClick = { onRemoveFromWishlist(item.id) }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Delete,
+                                        contentDescription = "Remove",
+                                        tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+
         LazyVerticalGrid(
             columns = GridCells.Fixed(2),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 90.dp),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 150.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
             modifier = Modifier.fillMaxSize()
@@ -366,6 +518,71 @@ fun LibraryScreen(
                 }
             }
         }
+    }
+}
+
+    // Add to Wishlist Dialog
+    if (showAddWishlistDialog) {
+        var title by remember { mutableStateOf("") }
+        var author by remember { mutableStateOf("") }
+        var notes by remember { mutableStateOf("") }
+
+        AlertDialog(
+            onDismissRequest = { showAddWishlistDialog = false },
+            title = {
+                Text(
+                    text = "Add to Wishlist",
+                    fontFamily = FontFamily.Serif,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 18.sp
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = title,
+                        onValueChange = { title = it },
+                        label = { Text("Book Title") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = author,
+                        onValueChange = { author = it },
+                        label = { Text("Author (optional)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = notes,
+                        onValueChange = { notes = it },
+                        label = { Text("Notes / Recommendation") },
+                        maxLines = 3,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (title.isNotBlank()) {
+                            onAddToWishlist(title.trim(), author.trim(), notes.trim())
+                            showAddWishlistDialog = false
+                        }
+                    },
+                    enabled = title.isNotBlank()
+                ) {
+                    Text("Add Title")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddWishlistDialog = false }) {
+                    Text("Cancel")
+                }
+            },
+            containerColor = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(18.dp)
+        )
     }
 
     // Long-press Context Menu Sheet

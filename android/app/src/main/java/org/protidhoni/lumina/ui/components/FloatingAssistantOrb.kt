@@ -12,11 +12,17 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloseFullscreen
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.*
@@ -38,7 +44,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.delay
+import org.protidhoni.lumina.model.OrbActionItem
+import org.protidhoni.lumina.model.ReadingMode
+import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
@@ -50,8 +58,16 @@ enum class AssistantVoiceState {
     RESPONDING
 }
 
+private data class OrbAction(
+    val icon: ImageVector,
+    val label: String,
+    val action: () -> Unit
+)
+
 @Composable
 fun FloatingAssistantOrb(
+    readingMode: ReadingMode,
+    onToggleReadingMode: () -> Unit,
     isTtsPlaying: Boolean,
     onToggleTts: () -> Unit,
     onOpenToc: () -> Unit,
@@ -59,10 +75,20 @@ fun FloatingAssistantOrb(
     onOpenSettings: () -> Unit,
     onStartVoiceListening: () -> Unit,
     onDismissOrb: () -> Unit,
+    isFullscreen: Boolean = false,
+    onToggleFullscreen: () -> Unit = {},
+    orbActions: Set<OrbActionItem> = setOf(
+        OrbActionItem.READING_MODE,
+        OrbActionItem.TTS,
+        OrbActionItem.NOTE,
+        OrbActionItem.TOC,
+        OrbActionItem.SETTINGS
+    ),
     voiceState: AssistantVoiceState = AssistantVoiceState.IDLE,
     voiceQuery: String = "",
     voiceResponse: String = "",
     onDismissVoiceDialog: () -> Unit = {},
+    onOpenAdvancedSettings: () -> Unit = onOpenSettings,
     modifier: Modifier = Modifier
 ) {
     val density = LocalDensity.current
@@ -70,11 +96,12 @@ fun FloatingAssistantOrb(
     val screenWidthPx = with(density) { config.screenWidthDp.dp.toPx() }
     val screenHeightPx = with(density) { config.screenHeightDp.dp.toPx() }
 
-    val orbSizeDp = 58.dp
+    // Compact Orb Size (46dp)
+    val orbSizeDp = 46.dp
     val orbSizePx = with(density) { orbSizeDp.toPx() }
 
     // Initial position: docked at bottom right
-    var offsetX by remember { mutableFloatStateOf(screenWidthPx - orbSizePx - with(density) { 20.dp.toPx() }) }
+    var offsetX by remember { mutableFloatStateOf(screenWidthPx - orbSizePx - with(density) { 16.dp.toPx() }) }
     var offsetY by remember { mutableFloatStateOf(screenHeightPx - orbSizePx - with(density) { 110.dp.toPx() }) }
 
     var isDragging by remember { mutableStateOf(false) }
@@ -85,7 +112,7 @@ fun FloatingAssistantOrb(
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val pulseScale by infiniteTransition.animateFloat(
         initialValue = 1.0f,
-        targetValue = 1.22f,
+        targetValue = 1.18f,
         animationSpec = infiniteRepeatable(
             animation = tween(800, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
@@ -94,8 +121,8 @@ fun FloatingAssistantOrb(
     )
 
     // Bin zone coordinates (bottom center)
-    val binTargetY = screenHeightPx - with(density) { 100.dp.toPx() }
-    val binTargetXRange = (screenWidthPx / 2f - with(density) { 60.dp.toPx() })..(screenWidthPx / 2f + with(density) { 60.dp.toPx() })
+    val binTargetY = screenHeightPx - with(density) { 110.dp.toPx() }
+    val binCenterX = screenWidthPx / 2f
 
     Box(modifier = modifier.fillMaxSize()) {
         // Drop-to-Delete Target Bin at Bottom Center
@@ -113,7 +140,7 @@ fun FloatingAssistantOrb(
                     .clip(CircleShape)
                     .background(
                         if (isOverBin) MaterialTheme.colorScheme.error
-                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.9f)
+                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.92f)
                     )
                     .border(
                         width = 2.dp,
@@ -123,57 +150,144 @@ fun FloatingAssistantOrb(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.Default.Delete,
+                    imageVector = Icons.Default.Close,
                     contentDescription = "Drop here to dismiss assistant",
                     tint = if (isOverBin) Color.White else MaterialTheme.colorScheme.error,
-                    modifier = Modifier.size(if (isOverBin) 32.dp else 24.dp)
+                    modifier = Modifier.size(if (isOverBin) 32.dp else 26.dp)
                 )
             }
         }
 
-        // Tap-to-expand Radial Wheel overlay
+        // Tap-to-expand Smart One-Sided Inward Arc overlay with 35% black backdrop scrim
         if (isWheelExpanded) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.35f))
                     .clickable { isWheelExpanded = false }
             ) {
-                val wheelRadius = with(density) { 82.dp.toPx() }
-                val items = listOf(
-                    Triple(
-                        if (isTtsPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                        if (isTtsPlaying) "Pause" else "Read",
-                        { onToggleTts(); isWheelExpanded = false }
-                    ),
-                    Triple(Icons.Outlined.EditNote, "Note", { onOpenNote(); isWheelExpanded = false }),
-                    Triple(Icons.AutoMirrored.Filled.FormatListBulleted, "TOC", { onOpenToc(); isWheelExpanded = false }),
-                    Triple(Icons.Outlined.Tune, "Settings", { onOpenSettings(); isWheelExpanded = false })
-                )
+                // Build active action items based on user settings
+                val activeItems = mutableListOf<OrbAction>()
+                if (orbActions.contains(OrbActionItem.READING_MODE)) {
+                    activeItems.add(
+                        OrbAction(
+                            icon = if (readingMode == ReadingMode.SCROLL) Icons.Filled.SwapVert else Icons.AutoMirrored.Filled.MenuBook,
+                            label = if (readingMode == ReadingMode.SCROLL) "Scroll Mode" else "Paged Mode",
+                            action = { onToggleReadingMode(); isWheelExpanded = false }
+                        )
+                    )
+                }
+                if (orbActions.contains(OrbActionItem.TTS)) {
+                    activeItems.add(
+                        OrbAction(
+                            icon = if (isTtsPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            label = if (isTtsPlaying) "Pause Audio" else "Read Aloud",
+                            action = { onToggleTts(); isWheelExpanded = false }
+                        )
+                    )
+                }
+                if (orbActions.contains(OrbActionItem.NOTE)) {
+                    activeItems.add(
+                        OrbAction(
+                            icon = Icons.Outlined.EditNote,
+                            label = "Notes & Highlights",
+                            action = { onOpenNote(); isWheelExpanded = false }
+                        )
+                    )
+                }
+                if (orbActions.contains(OrbActionItem.TOC)) {
+                    activeItems.add(
+                        OrbAction(
+                            icon = Icons.AutoMirrored.Filled.FormatListBulleted,
+                            label = "Table of Contents",
+                            action = { onOpenToc(); isWheelExpanded = false }
+                        )
+                    )
+                }
+                if (orbActions.contains(OrbActionItem.SETTINGS)) {
+                    activeItems.add(
+                        OrbAction(
+                            icon = Icons.Outlined.Tune,
+                            label = "Appearance Settings",
+                            action = { onOpenSettings(); isWheelExpanded = false }
+                        )
+                    )
+                }
+                if (orbActions.contains(OrbActionItem.VOICE)) {
+                    activeItems.add(
+                        OrbAction(
+                            icon = Icons.Default.Mic,
+                            label = "Voice Assistant",
+                            action = { onStartVoiceListening(); isWheelExpanded = false }
+                        )
+                    )
+                }
+                if (orbActions.contains(OrbActionItem.FULLSCREEN)) {
+                    activeItems.add(
+                        OrbAction(
+                            icon = if (isFullscreen) Icons.Default.CloseFullscreen else Icons.Default.Fullscreen,
+                            label = "Fullscreen",
+                            action = { onToggleFullscreen(); isWheelExpanded = false }
+                        )
+                    )
+                }
 
-                items.forEachIndexed { index, (icon, label, action) ->
-                    // 4 items arranged evenly (angles: -135°, -45°, 45°, 135° or 0°, 90°, 180°, 270°)
-                    val angleDeg = 180.0 + (index * 90.0) // distributes in arc
-                    val rad = Math.toRadians(angleDeg)
-                    val itemX = (offsetX + (orbSizePx / 2f) + (wheelRadius * cos(rad)).toFloat() - with(density) { 24.dp.toPx() })
-                        .coerceIn(with(density) { 16.dp.toPx() }, screenWidthPx - with(density) { 56.dp.toPx() })
-                    val itemY = (offsetY + (orbSizePx / 2f) + (wheelRadius * sin(rad)).toFloat() - with(density) { 24.dp.toPx() })
-                        .coerceIn(with(density) { 60.dp.toPx() }, screenHeightPx - with(density) { 90.dp.toPx() })
+                // If somehow empty, provide default TOC & Settings
+                if (activeItems.isEmpty()) {
+                    activeItems.add(
+                        OrbAction(
+                            icon = Icons.AutoMirrored.Filled.FormatListBulleted,
+                            label = "Table of Contents",
+                            action = { onOpenToc(); isWheelExpanded = false }
+                        )
+                    )
+                    activeItems.add(
+                        OrbAction(
+                            icon = Icons.Outlined.Tune,
+                            label = "Appearance Settings",
+                            action = { onOpenSettings(); isWheelExpanded = false }
+                        )
+                    )
+                }
+
+                val wheelRadius = with(density) { 92.dp.toPx() }
+                val orbCenterX = offsetX + (orbSizePx / 2f)
+                val orbCenterY = offsetY + (orbSizePx / 2f)
+                val isRightSide = orbCenterX > (screenWidthPx / 2f)
+
+                // Fan strictly inward into the screen away from boundaries
+                val centerAngle = if (isRightSide) Math.PI else 0.0
+                val arcSpanRad = Math.toRadians(135.0)
+                val startAngle = if (activeItems.size > 1) {
+                    centerAngle - (arcSpanRad / 2.0)
+                } else {
+                    centerAngle
+                }
+                val angleStep = if (activeItems.size > 1) arcSpanRad / (activeItems.size - 1) else 0.0
+
+                activeItems.forEachIndexed { index, item ->
+                    val angle = startAngle + (index * angleStep)
+                    val itemSizePx = with(density) { 42.dp.toPx() }
+                    val itemX = (orbCenterX + (wheelRadius * cos(angle)).toFloat() - (itemSizePx / 2f))
+                        .coerceIn(with(density) { 16.dp.toPx() }, screenWidthPx - itemSizePx - with(density) { 16.dp.toPx() })
+                    val itemY = (orbCenterY + (wheelRadius * sin(angle)).toFloat() - (itemSizePx / 2f))
+                        .coerceIn(with(density) { 40.dp.toPx() }, screenHeightPx - itemSizePx - with(density) { 60.dp.toPx() })
 
                     Box(
                         modifier = Modifier
                             .offset { IntOffset(itemX.roundToInt(), itemY.roundToInt()) }
-                            .size(48.dp)
-                            .shadow(6.dp, CircleShape)
+                            .size(42.dp)
+                            .shadow(4.dp, CircleShape)
                             .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.surface)
-                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
-                            .clickable { action() },
+                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.94f))
+                            .border(0.8.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f), CircleShape)
+                            .clickable { item.action() },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = icon,
-                            contentDescription = label,
-                            modifier = Modifier.size(22.dp),
+                            imageVector = item.icon,
+                            contentDescription = item.label,
+                            modifier = Modifier.size(20.dp),
                             tint = MaterialTheme.colorScheme.primary
                         )
                     }
@@ -181,28 +295,21 @@ fun FloatingAssistantOrb(
             }
         }
 
-        // The Floating Assistant Orb
+        // The Floating Assistant Orb: 1:1 Direct Finger Tracking with zero drag offset
         Box(
             modifier = Modifier
                 .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
                 .size(orbSizeDp)
                 .scale(if (voiceState == AssistantVoiceState.LISTENING) pulseScale else 1.0f)
                 .shadow(
-                    elevation = if (isDragging) 12.dp else 6.dp,
+                    elevation = if (isDragging) 6.dp else 2.5.dp,
                     shape = CircleShape
                 )
                 .clip(CircleShape)
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(
-                            MaterialTheme.colorScheme.primary,
-                            MaterialTheme.colorScheme.tertiary
-                        )
-                    )
-                )
+                .background(MaterialTheme.colorScheme.surfaceColorAtElevation(4.dp).copy(alpha = 0.92f))
                 .border(
-                    width = 2.dp,
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f),
+                    width = 1.dp,
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                     shape = CircleShape
                 )
                 .pointerInput(Unit) {
@@ -225,18 +332,21 @@ fun FloatingAssistantOrb(
                         onDrag = { change, dragAmount ->
                             change.consume()
                             val newX = (offsetX + dragAmount.x).coerceIn(
-                                with(density) { 12.dp.toPx() },
-                                screenWidthPx - orbSizePx - with(density) { 12.dp.toPx() }
+                                with(density) { 10.dp.toPx() },
+                                screenWidthPx - orbSizePx - with(density) { 10.dp.toPx() }
                             )
                             val newY = (offsetY + dragAmount.y).coerceIn(
-                                with(density) { 40.dp.toPx() },
-                                screenHeightPx - orbSizePx - with(density) { 40.dp.toPx() }
+                                with(density) { 32.dp.toPx() },
+                                screenHeightPx - orbSizePx - with(density) { 12.dp.toPx() }
                             )
                             offsetX = newX
                             offsetY = newY
 
-                            isOverBin = (offsetY > binTargetY - with(density) { 50.dp.toPx() }) &&
-                                    (offsetX + orbSizePx / 2f in binTargetXRange)
+                            val orbCenterXPx = offsetX + orbSizePx / 2f
+                            val orbCenterYPx = offsetY + orbSizePx / 2f
+                            val distFromBinXPx = kotlin.math.abs(orbCenterXPx - binCenterX)
+                            val isInBottomZone = orbCenterYPx > screenHeightPx - with(density) { 150.dp.toPx() }
+                            isOverBin = isInBottomZone && distFromBinXPx < with(density) { 95.dp.toPx() }
                         }
                     )
                 }
@@ -258,11 +368,11 @@ fun FloatingAssistantOrb(
                     AssistantVoiceState.LISTENING -> Icons.Filled.Mic
                     AssistantVoiceState.THINKING -> Icons.Filled.AutoAwesome
                     AssistantVoiceState.RESPONDING -> Icons.Filled.AutoAwesome
-                    AssistantVoiceState.IDLE -> Icons.Filled.AutoAwesome
+                    AssistantVoiceState.IDLE -> Icons.Default.AutoAwesome
                 },
                 contentDescription = "Lumina Assistant",
-                modifier = Modifier.size(26.dp),
-                tint = MaterialTheme.colorScheme.onPrimary
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.primary
             )
         }
 
@@ -271,7 +381,7 @@ fun FloatingAssistantOrb(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.45f))
+                    .background(Color.Black.copy(alpha = 0.5f))
                     .clickable { onDismissVoiceDialog() },
                 contentAlignment = Alignment.Center
             ) {
@@ -313,7 +423,7 @@ fun FloatingAssistantOrb(
                                 AssistantVoiceState.LISTENING -> "Listening to your voice..."
                                 AssistantVoiceState.THINKING -> "Consulting the story so far..."
                                 AssistantVoiceState.RESPONDING -> "Lumina Assistant"
-                                else -> ""
+                                AssistantVoiceState.IDLE -> ""
                             },
                             fontFamily = FontFamily.SansSerif,
                             fontWeight = FontWeight.Medium,
@@ -321,7 +431,17 @@ fun FloatingAssistantOrb(
                             color = MaterialTheme.colorScheme.onSurface
                         )
 
-                        if (voiceQuery.isNotBlank()) {
+                        if (voiceState == AssistantVoiceState.LISTENING) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = if (voiceQuery.isNotBlank()) "\"$voiceQuery\"" else "Speak a question or command...",
+                                fontFamily = FontFamily.Serif,
+                                fontSize = 14.sp,
+                                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                textAlign = TextAlign.Center,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        } else if (voiceQuery.isNotBlank()) {
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
                                 text = "\"$voiceQuery\"",
@@ -348,6 +468,27 @@ fun FloatingAssistantOrb(
                                     color = MaterialTheme.colorScheme.onSurface,
                                     modifier = Modifier.padding(14.dp)
                                 )
+                            }
+
+                            val isAiConfigNeeded = voiceResponse.contains("API key", ignoreCase = true) ||
+                                                voiceResponse.contains("Gemini", ignoreCase = true) ||
+                                                voiceResponse.contains("error", ignoreCase = true) ||
+                                                voiceResponse.contains("fail", ignoreCase = true) ||
+                                                voiceResponse.contains("configure", ignoreCase = true)
+                            if (isAiConfigNeeded) {
+                                Spacer(modifier = Modifier.height(14.dp))
+                                Button(
+                                    onClick = {
+                                        onDismissVoiceDialog()
+                                        onOpenAdvancedSettings()
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                                ) {
+                                    Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Open Advanced Settings", fontSize = 13.sp)
+                                }
                             }
                         }
 

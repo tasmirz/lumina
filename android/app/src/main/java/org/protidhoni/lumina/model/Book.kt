@@ -17,10 +17,54 @@ enum class ThemeMode(val displayName: String) {
     NIGHT("Night")
 }
 
+enum class ThemeFamily(val displayName: String) {
+    PAPER("Warm Paper"),
+    MODERN("Clean Modern"),
+    FOREST("Serene Forest"),
+    PARCHMENT("Parchment"),
+    LINEN("Linen Canvas"),
+    CUSTOM("Custom")
+}
+
+enum class ThemeVariant(val displayName: String) {
+    LIGHT("Light"),
+    DARK("Dark"),
+    SYSTEM("Auto")
+}
+
+enum class BackgroundTexture(val displayName: String) {
+    NONE("Clean"),
+    GRAIN("Paper Grain"),
+    PARCHMENT("Parchment"),
+    LINEN("Linen Canvas")
+}
+
+enum class OrbActionItem(val displayName: String, val description: String) {
+    READING_MODE("Scroll / Paged Mode", "Toggle between continuous scroll and page flip"),
+    TTS("Audiobook / TTS", "Play or pause text-to-speech reading"),
+    NOTE("Highlights & Notes", "View or manage bookmarks and highlighted excerpts"),
+    TOC("Table of Contents", "Jump directly to any book chapter"),
+    SETTINGS("Quick Appearance", "Open reader font and theme quick controls"),
+    VOICE("Voice Assistant", "Consult AI assistant with speech"),
+    FULLSCREEN("Distraction-Free Mode", "Hide all chrome and status bars")
+}
+
+enum class TextAlignmentMode(val displayName: String) {
+    JUSTIFY("Justified"),
+    START("Left-aligned")
+}
+
 enum class TypefaceMode(val displayName: String) {
     SERIF("Serif"),
-    SANS("Sans"),
-    MONO("Mono")
+    SANS("Sans-Serif"),
+    MONO("Monospace"),
+    LITERARY("Literary Elegant"),
+    DYSLEXIC("Dyslexic-Friendly"),
+    GEORGIA("Georgia"),
+    GARAMOND("Garamond"),
+    PALATINO("Palatino"),
+    MERRIWEATHER("Merriweather"),
+    ROUNDED("Soft Rounded")
 }
 
 data class Chapter(
@@ -36,6 +80,7 @@ data class Bookmark(
     val chapter: String,
     val quote: String,
     val color: HighlightColor = HighlightColor.GOLD,
+    val note: String = "",
     val timestamp: String = "Just now"
 )
 
@@ -59,4 +104,12 @@ data class WordDefinition(
     val partOfSpeech: String,
     val definition: String,
     val example: String
+)
+
+data class WishlistBook(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val title: String,
+    val author: String = "",
+    val note: String = "",
+    val addedAt: String = "Recently"
 )

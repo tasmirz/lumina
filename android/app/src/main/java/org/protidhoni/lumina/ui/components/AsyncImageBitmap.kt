@@ -26,6 +26,7 @@ private val bitmapCache = object : android.util.LruCache<String, Bitmap>(60) {}
 
 @Composable
 fun rememberBookImage(source: String): Bitmap? {
+    val context = androidx.compose.ui.platform.LocalContext.current.applicationContext
     var bitmap by remember(source) { mutableStateOf(bitmapCache.get(source)) }
 
     LaunchedEffect(source) {
@@ -82,6 +83,38 @@ fun rememberBookImage(source: String): Bitmap? {
                         val decodeOpt = BitmapFactory.Options().apply { inSampleSize = sample }
                         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOpt)
                     } else null
+                } else if (source.startsWith("res://") || source.startsWith("android.resource://")) {
+                    try {
+                        val resName = source.substringAfterLast("/")
+                        val resId = context.resources.getIdentifier(resName, "drawable", context.packageName)
+                        if (resId != 0) {
+                            val opt = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                            BitmapFactory.decodeResource(context.resources, resId, opt)
+                            var sample = 1
+                            while (opt.outWidth / sample > 1200 || opt.outHeight / sample > 1600) {
+                                sample *= 2
+                            }
+                            val decodeOpt = BitmapFactory.Options().apply { inSampleSize = sample }
+                            BitmapFactory.decodeResource(context.resources, resId, decodeOpt)
+                        } else null
+                    } catch (_: Exception) { null }
+                } else if (source.startsWith("content://")) {
+                    try {
+                        val uri = android.net.Uri.parse(source)
+                        // ContentResolver decode
+                        val stream = context.contentResolver.openInputStream(uri)
+                        stream?.use {
+                            val bytes = it.readBytes()
+                            val opt = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opt)
+                            var sample = 1
+                            while (opt.outWidth / sample > 1200 || opt.outHeight / sample > 1600) {
+                                sample *= 2
+                            }
+                            val decodeOpt = BitmapFactory.Options().apply { inSampleSize = sample }
+                            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOpt)
+                        }
+                    } catch (_: Exception) { null }
                 } else {
                     val cleanPath = source.removePrefix("file://")
                     val file = File(cleanPath)
@@ -108,6 +141,24 @@ fun rememberBookImage(source: String): Bitmap? {
         }
     }
     return bitmap
+}
+
+@Composable
+fun AsyncImageBitmap(
+    url: String,
+    contentDescription: String? = null,
+    contentScale: ContentScale = ContentScale.Crop,
+    modifier: Modifier = Modifier
+) {
+    val bitmap = rememberBookImage(url)
+    if (bitmap != null) {
+        Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = contentDescription,
+            contentScale = contentScale,
+            modifier = modifier
+        )
+    }
 }
 
 @Composable

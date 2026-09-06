@@ -12,10 +12,13 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
@@ -23,40 +26,63 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.text.selection.TextSelectionColors
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.ui.input.pointer.PointerEventPass
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBackIos
 import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
 import androidx.compose.material.icons.automirrored.filled.MenuBook
+import androidx.compose.material.icons.filled.AutoStories
+import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FormatQuote
 import androidx.compose.material.icons.filled.Headphones
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalTextToolbar
+import androidx.compose.ui.platform.TextToolbar
+import androidx.compose.ui.platform.TextToolbarStatus
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
@@ -74,16 +100,28 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.max
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.compose.material.icons.filled.EditNote
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.TextUnit
+import org.protidhoni.lumina.data.AiProvider
 import org.protidhoni.lumina.data.AssistantAction
 import org.protidhoni.lumina.data.AssistantService
+import org.protidhoni.lumina.model.BackgroundTexture
 import org.protidhoni.lumina.model.Book
 import org.protidhoni.lumina.model.Bookmark
 import org.protidhoni.lumina.model.HighlightColor
+import org.protidhoni.lumina.model.OrbActionItem
 import org.protidhoni.lumina.model.ReadingMode
+import org.protidhoni.lumina.model.TextAlignmentMode
 import org.protidhoni.lumina.model.TypefaceMode
 import org.protidhoni.lumina.ui.components.AssistantVoiceState
+import org.protidhoni.lumina.ui.components.AsyncImageBitmap
 import org.protidhoni.lumina.ui.components.FloatingAssistantOrb
 import org.protidhoni.lumina.ui.components.TableOfContentsSheet
 import org.protidhoni.lumina.ui.components.rememberBookImage
@@ -91,6 +129,101 @@ import org.protidhoni.lumina.util.CitationHelper
 import kotlinx.coroutines.launch
 import java.util.Locale
 
+/**
+ * Builds an AnnotatedString highlighting only the exact quote matches within the text,
+ * preventing rectangular block coloring of the entire paragraph container.
+ * Uses LinkAnnotation.Clickable for native click-to-view/edit/delete note support without breaking selection.
+ */
+fun buildHighlightedAnnotatedString(
+    text: String,
+    matchingBookmarks: List<Bookmark>,
+    onBookmarkClick: ((Bookmark) -> Unit)? = null,
+    isDropCap: Boolean = false,
+    dropCapFontFamily: FontFamily = FontFamily.Serif,
+    dropCapFontSize: TextUnit = TextUnit.Unspecified,
+    dropCapColor: Color = Color.Unspecified,
+    baseFontFamily: FontFamily,
+    baseFontSize: TextUnit,
+    baseTextColor: Color
+): AnnotatedString {
+    return buildAnnotatedString {
+        if (isDropCap && text.length > 40 && !text.startsWith("[IMG:")) {
+            val dropChar = text.take(1)
+            val rest = text.drop(1)
+            withStyle(
+                SpanStyle(
+                    fontFamily = dropCapFontFamily,
+                    fontSize = dropCapFontSize,
+                    fontWeight = FontWeight.Medium,
+                    color = dropCapColor
+                )
+            ) {
+                append(dropChar)
+            }
+            withStyle(
+                SpanStyle(
+                    fontFamily = baseFontFamily,
+                    fontSize = baseFontSize,
+                    color = baseTextColor
+                )
+            ) {
+                append(rest)
+            }
+        } else {
+            withStyle(
+                SpanStyle(
+                    fontFamily = baseFontFamily,
+                    fontSize = baseFontSize,
+                    color = baseTextColor
+                )
+            ) {
+                append(text)
+            }
+        }
+
+        matchingBookmarks.forEach { bm ->
+            val quote = bm.quote.trim()
+            if (quote.isNotEmpty()) {
+                if (text.contains(quote, ignoreCase = true)) {
+                    var searchIndex = 0
+                    while (searchIndex < text.length) {
+                        val idx = text.indexOf(quote, searchIndex, ignoreCase = true)
+                        if (idx == -1) break
+                        val end = (idx + quote.length).coerceAtMost(text.length)
+                        val bg = when (bm.color) {
+                            HighlightColor.GOLD -> Color(0x66F59E0B)
+                            HighlightColor.ROSE -> Color(0x66F43F5E)
+                            HighlightColor.SAGE -> Color(0x6610B981)
+                        }
+                        addStyle(
+                            SpanStyle(
+                                background = bg,
+                                textDecoration = if (bm.note.isNotBlank()) TextDecoration.Underline else TextDecoration.None
+                            ),
+                            start = idx,
+                            end = end
+                        )
+                        if (onBookmarkClick != null) {
+                            addLink(
+                                clickable = LinkAnnotation.Clickable(
+                                    tag = bm.id.toString(),
+                                    linkInteractionListener = {
+                                        onBookmarkClick(bm)
+                                    }
+                                ),
+                                start = idx,
+                                end = end
+                            )
+                        }
+                        searchIndex = end
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReaderScreen(
     book: Book,
@@ -109,11 +242,28 @@ fun ReaderScreen(
     onPositionChange: (chapterIdx: Int, pageIdx: Int, scrollPos: Int, progressPct: Int) -> Unit,
     onAddBookmark: (String, HighlightColor) -> Unit,
     onRemoveBookmark: (Long) -> Unit,
+    onUpdateBookmark: (Bookmark) -> Unit = {},
     onLookupWord: (String) -> Unit,
     onOpenAppearance: () -> Unit = {},
+    onOpenAdvancedSettings: () -> Unit = onOpenAppearance,
+    onOpenBookmarks: () -> Unit = {},
     showFloatingAssistant: Boolean = true,
     onToggleFloatingAssistant: (Boolean) -> Unit = {},
+    activeOrbActions: Set<OrbActionItem> = setOf(
+        OrbActionItem.READING_MODE,
+        OrbActionItem.TTS,
+        OrbActionItem.NOTE,
+        OrbActionItem.TOC,
+        OrbActionItem.SETTINGS
+    ),
+    backgroundTexture: BackgroundTexture = BackgroundTexture.NONE,
+    customBgUri: String = "",
+    textAlignment: TextAlignmentMode = TextAlignmentMode.JUSTIFY,
+    letterSpacing: Float = 0.2f,
     geminiApiKey: String = "",
+    aiProvider: AiProvider = AiProvider.GEMINI,
+    aiBaseUrl: String = "https://api.openai.com/v1",
+    aiModel: String = "",
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -123,6 +273,8 @@ fun ReaderScreen(
     var selectedText by remember { mutableStateOf("") }
     var selectedChapterTitle by rememberSaveable { mutableStateOf("") }
     var showSelectionMenu by remember { mutableStateOf(false) }
+    var selectedBookmarkForModal by remember { mutableStateOf<Bookmark?>(null) }
+    var showBookmarkDetailModal by remember { mutableStateOf(false) }
     var showTocSheet by rememberSaveable { mutableStateOf(false) }
     var activeChapterTitle by rememberSaveable { mutableStateOf(book.chapters.firstOrNull()?.title ?: "Chapter 1") }
 
@@ -219,12 +371,20 @@ fun ReaderScreen(
         }
     }
 
-    // Only two fonts across entire app: Serif for reading/titles, SansSerif for UI
     val fontFamily = when (typeface) {
         TypefaceMode.SERIF -> FontFamily.Serif
         TypefaceMode.SANS -> FontFamily.SansSerif
-        TypefaceMode.MONO -> FontFamily.SansSerif
+        TypefaceMode.MONO -> FontFamily.Monospace
+        TypefaceMode.LITERARY -> FontFamily.Cursive
+        TypefaceMode.DYSLEXIC -> FontFamily.SansSerif
+        TypefaceMode.GEORGIA -> FontFamily.Serif
+        TypefaceMode.GARAMOND -> FontFamily.Serif
+        TypefaceMode.PALATINO -> FontFamily.Serif
+        TypefaceMode.MERRIWEATHER -> FontFamily.Serif
+        TypefaceMode.ROUNDED -> FontFamily.SansSerif
     }
+
+    val contentTextAlign = if (textAlignment == TextAlignmentMode.START) TextAlign.Start else TextAlign.Justify
 
     val isUiVisible = showControls && !isFullscreen
 
@@ -272,30 +432,104 @@ fun ReaderScreen(
         backgroundColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.35f)
     )
 
-    // Prepared pages for Paged Mode
-    val pages = remember(book, fontSize) {
-        val list = mutableListOf<Pair<String, String>>()
-        book.chapters.forEach { chap ->
-            list.add(Pair(chap.title, "TITLE:::${chap.title}:::${chap.subtitle}"))
-            val isShortListChapter = chap.paragraphs.isNotEmpty() && chap.paragraphs.take(6).all { it.length < 120 }
-            val chunkSize = if (isShortListChapter) 8 else if (fontSize >= 22) 1 else 2
-            var i = 0
-            while (i < chap.paragraphs.size) {
-                val p = chap.paragraphs[i]
-                if (p.startsWith("[IMG:") && p.endsWith("]")) {
-                    list.add(Pair(chap.title, p))
-                    i++
-                } else {
-                    val textBatch = mutableListOf<String>()
-                    while (i < chap.paragraphs.size && textBatch.size < chunkSize && !(chap.paragraphs[i].startsWith("[IMG:") && chap.paragraphs[i].endsWith("]"))) {
-                        textBatch.add(chap.paragraphs[i])
-                        i++
-                    }
-                    if (textBatch.isNotEmpty()) {
-                        list.add(Pair(chap.title, textBatch.joinToString("\n\n")))
-                    }
+    // Intercept LocalClipboardManager so SelectionManager gives us the exact selected text
+    val defaultClipboard = LocalClipboardManager.current
+    val customClipboard = remember(defaultClipboard) {
+        object : androidx.compose.ui.platform.ClipboardManager {
+            override fun getText(): AnnotatedString? = defaultClipboard.getText()
+            override fun setText(annotatedString: AnnotatedString) {
+                defaultClipboard.setText(annotatedString)
+                val str = annotatedString.text.trim()
+                if (str.isNotBlank()) {
+                    selectedText = str
+                    showSelectionMenu = true
                 }
             }
+            override fun hasText(): Boolean = defaultClipboard.hasText()
+        }
+    }
+
+    // Custom TextToolbar that delegates to customClipboard
+    val defaultToolbar = LocalTextToolbar.current
+    val customTextToolbar = remember(defaultToolbar) {
+        object : TextToolbar {
+            override val status: TextToolbarStatus
+                get() = defaultToolbar.status
+
+            override fun hide() {
+                defaultToolbar.hide()
+            }
+
+            override fun showMenu(
+                rect: Rect,
+                onCopyRequested: (() -> Unit)?,
+                onPasteRequested: (() -> Unit)?,
+                onCutRequested: (() -> Unit)?,
+                onSelectAllRequested: (() -> Unit)?
+            ) {
+                onCopyRequested?.invoke()
+            }
+        }
+    }
+
+    // Prepared pages for Paged Mode with smart character/sentence budgeting so text never overflows
+    val pages = remember(book, fontSize) {
+        val list = mutableListOf<Pair<String, String>>()
+        val maxCharsPerPage = when {
+            fontSize <= 14 -> 950
+            fontSize <= 16 -> 800
+            fontSize <= 18 -> 650
+            fontSize <= 20 -> 520
+            fontSize <= 22 -> 420
+            else -> 340
+        }
+
+        book.chapters.forEach { chap ->
+            list.add(Pair(chap.title, "TITLE:::${chap.title}:::${chap.subtitle}"))
+            val currentBatch = StringBuilder()
+
+            fun flushBatch() {
+                val str = currentBatch.toString().trim()
+                if (str.isNotEmpty()) {
+                    list.add(Pair(chap.title, str))
+                    currentBatch.clear()
+                }
+            }
+
+            for (p in chap.paragraphs) {
+                if (p.startsWith("[IMG:") && p.endsWith("]")) {
+                    flushBatch()
+                    list.add(Pair(chap.title, p))
+                    continue
+                }
+
+                // If a single paragraph itself is larger than maxCharsPerPage, split into sentence-based pages
+                if (p.length > maxCharsPerPage) {
+                    flushBatch()
+                    val sentences = p.split(Regex("(?<=[.!?])\\s+"))
+                    val sentenceBatch = StringBuilder()
+                    for (s in sentences) {
+                        if (sentenceBatch.isNotEmpty() && sentenceBatch.length + s.length > maxCharsPerPage) {
+                            list.add(Pair(chap.title, sentenceBatch.toString().trim()))
+                            sentenceBatch.clear()
+                        }
+                        if (sentenceBatch.isNotEmpty()) sentenceBatch.append(" ")
+                        sentenceBatch.append(s)
+                    }
+                    if (sentenceBatch.isNotEmpty()) {
+                        list.add(Pair(chap.title, sentenceBatch.toString().trim()))
+                    }
+                } else {
+                    if (currentBatch.isNotEmpty() && (currentBatch.length + p.length + 2) > maxCharsPerPage) {
+                        flushBatch()
+                    }
+                    if (currentBatch.isNotEmpty()) {
+                        currentBatch.append("\n\n")
+                    }
+                    currentBatch.append(p)
+                }
+            }
+            flushBatch()
         }
         list
     }
@@ -307,11 +541,14 @@ fun ReaderScreen(
     )
 
     val startVoiceAssistant: () -> Unit = {
+        showControls = false
+        onControlsVisibilityChange(false)
         voiceState = AssistantVoiceState.LISTENING
         voiceQuery = ""
         voiceResponse = ""
         assistantService.startListening(
             onReady = { voiceState = AssistantVoiceState.LISTENING },
+            onPartialResult = { partial -> voiceQuery = partial },
             onResult = { query ->
                 voiceQuery = query
                 voiceState = AssistantVoiceState.THINKING
@@ -396,8 +633,11 @@ fun ReaderScreen(
                                 appendLine(ch.paragraphs.filterNot { it.startsWith("[IMG:") }.joinToString(" "))
                             }
                         }
-                        val ans = assistantService.queryGemini(
+                        val ans = assistantService.queryAssistant(
+                            provider = aiProvider,
                             apiKey = geminiApiKey,
+                            baseUrl = aiBaseUrl,
+                            modelName = aiModel,
                             bookTitle = book.title,
                             activeChapterTitle = activeChapterTitle,
                             knownContext = knownContext,
@@ -431,7 +671,95 @@ fun ReaderScreen(
             .background(MaterialTheme.colorScheme.background)
             .nestedScroll(nestedScrollConnection)
     ) {
-        CompositionLocalProvider(LocalTextSelectionColors provides customSelectionColors) {
+        // Optional Custom Background Image
+        if (customBgUri.isNotBlank()) {
+            AsyncImageBitmap(
+                url = customBgUri,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .alpha(0.2f)
+            )
+        }
+
+        // Optional Surface Texture Overlay (Grain, Parchment, Linen Canvas)
+        when (backgroundTexture) {
+            BackgroundTexture.GRAIN -> {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val onBg = Color.DarkGray.copy(alpha = 0.025f)
+                    var x = 4f
+                    while (x < size.width) {
+                        var y = 4f
+                        while (y < size.height) {
+                            val dotAlpha = (((x.toInt() * 31 + y.toInt() * 17) % 100) / 100f) * 0.035f
+                            drawCircle(
+                                color = onBg.copy(alpha = dotAlpha),
+                                radius = 0.8f,
+                                center = Offset(x, y)
+                            )
+                            y += 12f
+                        }
+                        x += 12f
+                    }
+                }
+            }
+            BackgroundTexture.PARCHMENT -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(
+                                    Color(0xFFE8DCC4).copy(alpha = 0.12f),
+                                    Color.Transparent,
+                                    Color(0xFFDECBB0).copy(alpha = 0.16f)
+                                )
+                            )
+                        )
+                )
+            }
+            BackgroundTexture.LINEN -> {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val lineColor = Color.Gray.copy(alpha = 0.035f)
+                    var x = 0f
+                    while (x < size.width) {
+                        drawLine(
+                            color = lineColor,
+                            start = Offset(x, 0f),
+                            end = Offset(x, size.height),
+                            strokeWidth = 0.75f
+                        )
+                        x += 16f
+                    }
+                    var y = 0f
+                    while (y < size.height) {
+                        drawLine(
+                            color = lineColor,
+                            start = Offset(0f, y),
+                            end = Offset(size.width, y),
+                            strokeWidth = 0.75f
+                        )
+                        y += 16f
+                    }
+                }
+            }
+            BackgroundTexture.NONE -> {}
+        }
+
+        val progressBottomInset = max(
+            max(
+                WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(),
+                WindowInsets.mandatorySystemGestures.asPaddingValues().calculateBottomPadding()
+            ),
+            16.dp
+        )
+
+        CompositionLocalProvider(
+            LocalTextToolbar provides customTextToolbar,
+            LocalClipboardManager provides customClipboard,
+            LocalTextSelectionColors provides customSelectionColors
+        ) {
             SelectionContainer {
                 if (readingMode == ReadingMode.SCROLL) {
                     // Continuous Vertical Scroll Mode across all chapters
@@ -462,19 +790,7 @@ fun ReaderScreen(
                             start = 22.dp,
                             end = 22.dp
                         ),
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .pointerInput(Unit) {
-                                detectTapGestures(
-                                    onTap = {
-                                        if (showSelectionMenu) {
-                                            showSelectionMenu = false
-                                        } else {
-                                            showControls = !showControls
-                                        }
-                                    }
-                                )
-                            }
+                        modifier = Modifier.fillMaxSize()
                     ) {
                         book.chapters.forEachIndexed { chapIdx, chapter ->
                             item(key = "chap-header-$chapIdx") {
@@ -484,8 +800,13 @@ fun ReaderScreen(
                                         .padding(top = if (chapIdx == 0) 8.dp else 40.dp, bottom = 20.dp),
                                     horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
+                                    val eyebrowText = if (chapter.subtitle.isNotBlank() && chapter.subtitle.startsWith("Part", ignoreCase = true)) {
+                                        chapter.subtitle.uppercase()
+                                    } else {
+                                        book.title.uppercase()
+                                    }
                                     Text(
-                                        text = chapter.title.uppercase(),
+                                        text = eyebrowText,
                                         fontFamily = FontFamily.SansSerif,
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Normal,
@@ -494,14 +815,14 @@ fun ReaderScreen(
                                     )
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text(
-                                        text = book.title,
+                                        text = chapter.title,
                                         fontFamily = FontFamily.Serif,
                                         fontSize = 24.sp,
                                         fontWeight = FontWeight.Medium,
                                         textAlign = TextAlign.Center,
                                         color = MaterialTheme.colorScheme.onBackground
                                     )
-                                    if (chapter.subtitle.isNotBlank()) {
+                                    if (chapter.subtitle.isNotBlank() && !chapter.subtitle.startsWith("Part", ignoreCase = true)) {
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
                                             text = chapter.subtitle,
@@ -524,18 +845,13 @@ fun ReaderScreen(
                                 items = chapter.paragraphs,
                                 key = { pIdx, _ -> "chap-${chapIdx}-para-${pIdx}" }
                             ) { pIdx, para ->
-                                val matchingBookmark = bookmarks.firstOrNull {
-                                    it.quote.trim() == para.trim() || para.contains(it.quote.trim())
+                                val matchingBookmarks = remember(para, bookmarks) {
+                                    bookmarks.filter { b ->
+                                        val q = b.quote.trim()
+                                        q.isNotBlank() && para.contains(q, ignoreCase = true)
+                                    }
                                 }
                                 val isBeingSpoken = isTtsSpeaking && speakingChapterIdx == chapIdx && speakingParaIdx == pIdx
-                                val highlightBg = when {
-                                    isBeingSpoken -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.22f)
-                                    matchingBookmark?.color == HighlightColor.GOLD -> Color(0x3DF59E0B)
-                                    matchingBookmark?.color == HighlightColor.ROSE -> Color(0x3DF43F5E)
-                                    matchingBookmark?.color == HighlightColor.SAGE -> Color(0x3D10B981)
-                                    selectedText == para && showSelectionMenu -> Color(0x26D4AF37)
-                                    else -> Color.Transparent
-                                }
 
                                 if (para.startsWith("[IMG:") && para.endsWith("]")) {
                                     // Inline illustration with safe image loading and placeholder
@@ -544,7 +860,13 @@ fun ReaderScreen(
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .padding(vertical = 14.dp),
+                                            .padding(vertical = 14.dp)
+                                            .clickable(
+                                                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                                                indication = null
+                                            ) {
+                                                if (showSelectionMenu) showSelectionMenu = false else showControls = !showControls
+                                            },
                                         contentAlignment = Alignment.Center
                                     ) {
                                         if (bitmap != null) {
@@ -576,56 +898,81 @@ fun ReaderScreen(
                                         }
                                     }
                                 } else {
-                                    // Text Paragraph — JUSTIFIED TEXT ALIGNMENT with native word/line selection
+                                    // Text Paragraph — Highlights applied strictly to text spans, no block background
+                                    val isDropCap = chapIdx == 0 && pIdx == 0 && para.length > 40 && !para.startsWith("[IMG:")
+                                    val onBgColor = MaterialTheme.colorScheme.onBackground
+                                    val secColor = MaterialTheme.colorScheme.secondary
+                                    val annotatedText = remember(para, matchingBookmarks, isDropCap, fontSize, fontFamily, onBgColor) {
+                                        buildHighlightedAnnotatedString(
+                                            text = para,
+                                            matchingBookmarks = matchingBookmarks,
+                                            onBookmarkClick = { bm ->
+                                                selectedBookmarkForModal = bm
+                                                showBookmarkDetailModal = true
+                                            },
+                                            isDropCap = isDropCap,
+                                            dropCapFontFamily = FontFamily.Serif,
+                                            dropCapFontSize = (fontSize * 2.2f).sp,
+                                            dropCapColor = secColor,
+                                            baseFontFamily = fontFamily,
+                                            baseFontSize = fontSize.sp,
+                                            baseTextColor = onBgColor
+                                        )
+                                    }
+
+                                    var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
+
                                     Column(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .clip(RoundedCornerShape(6.dp))
-                                            .background(highlightBg)
-                                            .padding(vertical = 6.dp)
-                                    ) {
-                                        // Drop cap on first paragraph of chapter 1 if long enough
-                                        if (chapIdx == 0 && pIdx == 0 && para.length > 40 && !para.startsWith("[IMG:")) {
-                                            val dropChar = para.take(1)
-                                            val rest = para.drop(1)
-                                            val annotatedString = buildAnnotatedString {
-                                                withStyle(
-                                                    SpanStyle(
-                                                        fontFamily = FontFamily.Serif,
-                                                        fontSize = (fontSize * 2.2f).sp,
-                                                        fontWeight = FontWeight.Medium,
-                                                        color = MaterialTheme.colorScheme.secondary
-                                                    )
-                                                ) {
-                                                    append(dropChar)
-                                                }
-                                                withStyle(
-                                                    SpanStyle(
-                                                        fontFamily = fontFamily,
-                                                        fontSize = fontSize.sp,
-                                                        color = MaterialTheme.colorScheme.onBackground
-                                                    )
-                                                ) {
-                                                    append(rest)
+                                            .background(if (isBeingSpoken) MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f) else Color.Transparent)
+                                            .padding(vertical = 4.dp)
+                                            .pointerInput(para, matchingBookmarks) {
+                                                awaitEachGesture {
+                                                    val down = awaitFirstDown(pass = PointerEventPass.Main, requireUnconsumed = false)
+                                                    val up = waitForUpOrCancellation(pass = PointerEventPass.Main)
+                                                    if (up != null) {
+                                                        val layout = textLayoutResult
+                                                        var hitBookmark: Bookmark? = null
+                                                        if (layout != null && matchingBookmarks.isNotEmpty()) {
+                                                            val offset = layout.getOffsetForPosition(up.position)
+                                                            hitBookmark = matchingBookmarks.firstOrNull { bm ->
+                                                                val quote = bm.quote.trim()
+                                                                if (quote.isEmpty()) return@firstOrNull false
+                                                                var sIdx = 0
+                                                                while (sIdx < para.length) {
+                                                                    val s = para.indexOf(quote, sIdx, ignoreCase = true)
+                                                                    if (s == -1) break
+                                                                    val e = (s + quote.length).coerceAtMost(para.length)
+                                                                    if (offset in s until e) return@firstOrNull true
+                                                                    sIdx = e
+                                                                }
+                                                                false
+                                                            }
+                                                        }
+                                                        if (hitBookmark != null) {
+                                                            selectedBookmarkForModal = hitBookmark
+                                                            showBookmarkDetailModal = true
+                                                        } else {
+                                                            if (showSelectionMenu) {
+                                                                showSelectionMenu = false
+                                                            } else {
+                                                                showControls = !showControls
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                             }
-                                            Text(
-                                                text = annotatedString,
-                                                lineHeight = (fontSize * lineHeightMultiplier).sp,
-                                                textAlign = TextAlign.Justify,
-                                                modifier = Modifier.fillMaxWidth()
-                                            )
-                                        } else {
-                                            Text(
-                                                text = para,
-                                                fontFamily = fontFamily,
-                                                fontSize = fontSize.sp,
-                                                lineHeight = (fontSize * lineHeightMultiplier).sp,
-                                                textAlign = TextAlign.Justify,
-                                                color = MaterialTheme.colorScheme.onBackground,
-                                                modifier = Modifier.fillMaxWidth()
-                                            )
-                                        }
+                                    ) {
+                                        Text(
+                                            text = annotatedText,
+                                            onTextLayout = { textLayoutResult = it },
+                                            lineHeight = (fontSize * lineHeightMultiplier).sp,
+                                            letterSpacing = letterSpacing.sp,
+                                            textAlign = contentTextAlign,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
                                     }
                                 }
                             }
@@ -644,6 +991,13 @@ fun ReaderScreen(
                         onPositionChange(chapIdx, pagerState.currentPage, 0, progress)
                     }
 
+                    val pagedBottomPadding = if (isUiVisible) {
+                        val dockHeight = if (showNavBarInReader) 94.dp else 44.dp
+                        progressBottomInset + 10.dp + dockHeight + 8.dp
+                    } else {
+                        progressBottomInset + 20.dp
+                    }
+
                     Box(modifier = Modifier.fillMaxSize()) {
                         HorizontalPager(
                             state = pagerState,
@@ -651,7 +1005,7 @@ fun ReaderScreen(
                                 .fillMaxSize()
                                 .padding(
                                     top = if (isUiVisible) 80.dp else 24.dp,
-                                    bottom = if (isUiVisible) 76.dp else 24.dp,
+                                    bottom = pagedBottomPadding,
                                     start = 22.dp,
                                     end = 22.dp
                                 )
@@ -668,8 +1022,13 @@ fun ReaderScreen(
                                     verticalArrangement = Arrangement.Center,
                                     horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
+                                    val eyebrowText = if (cSub.isNotBlank() && cSub.startsWith("Part", ignoreCase = true)) {
+                                        cSub.uppercase()
+                                    } else {
+                                        book.title.uppercase()
+                                    }
                                     Text(
-                                        text = cTitle.uppercase(),
+                                        text = eyebrowText,
                                         fontFamily = FontFamily.SansSerif,
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Normal,
@@ -678,14 +1037,14 @@ fun ReaderScreen(
                                     )
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Text(
-                                        text = book.title,
+                                        text = cTitle,
                                         fontFamily = FontFamily.Serif,
                                         fontSize = 26.sp,
                                         fontWeight = FontWeight.Medium,
                                         textAlign = TextAlign.Center,
                                         color = MaterialTheme.colorScheme.onBackground
                                     )
-                                    if (cSub.isNotBlank()) {
+                                    if (cSub.isNotBlank() && !cSub.startsWith("Part", ignoreCase = true)) {
                                         Spacer(modifier = Modifier.height(6.dp))
                                         Text(
                                             text = cSub,
@@ -733,29 +1092,81 @@ fun ReaderScreen(
                                     }
                                 }
                             } else {
-                                val matchingBookmark = bookmarks.firstOrNull {
-                                    it.quote.trim() == content.trim() || content.contains(it.quote.trim())
+                                val matchingBookmarks = remember(content, bookmarks) {
+                                    bookmarks.filter { b ->
+                                        val q = b.quote.trim()
+                                        q.isNotBlank() && content.contains(q, ignoreCase = true)
+                                    }
                                 }
-                                val highlightBg = when (matchingBookmark?.color) {
-                                    HighlightColor.GOLD -> Color(0x3DF59E0B)
-                                    HighlightColor.ROSE -> Color(0x3DF43F5E)
-                                    HighlightColor.SAGE -> Color(0x3D10B981)
-                                    null -> if (selectedText == content && showSelectionMenu) Color(0x26D4AF37) else Color.Transparent
+                                val onBgColor = MaterialTheme.colorScheme.onBackground
+                                val annotatedContent = remember(content, matchingBookmarks, fontSize, fontFamily, onBgColor) {
+                                    buildHighlightedAnnotatedString(
+                                        text = content,
+                                        matchingBookmarks = matchingBookmarks,
+                                        onBookmarkClick = { bm ->
+                                            selectedBookmarkForModal = bm
+                                            showBookmarkDetailModal = true
+                                        },
+                                        isDropCap = false,
+                                        baseFontFamily = fontFamily,
+                                        baseFontSize = fontSize.sp,
+                                        baseTextColor = onBgColor
+                                    )
                                 }
+
+                                var pagedTextLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
 
                                 Column(
                                     modifier = Modifier
                                         .fillMaxSize()
+                                        .verticalScroll(rememberScrollState())
                                         .clip(RoundedCornerShape(8.dp))
-                                        .background(highlightBg)
-                                        .padding(6.dp)
+                                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                                        .pointerInput(content, matchingBookmarks) {
+                                            awaitEachGesture {
+                                                val down = awaitFirstDown(pass = PointerEventPass.Main, requireUnconsumed = false)
+                                                val up = waitForUpOrCancellation(pass = PointerEventPass.Main)
+                                                if (up != null) {
+                                                    val layout = pagedTextLayoutResult
+                                                    var hitBookmark: Bookmark? = null
+                                                    if (layout != null && matchingBookmarks.isNotEmpty()) {
+                                                        val offset = layout.getOffsetForPosition(up.position)
+                                                        hitBookmark = matchingBookmarks.firstOrNull { bm ->
+                                                            val quote = bm.quote.trim()
+                                                            if (quote.isEmpty()) return@firstOrNull false
+                                                            var sIdx = 0
+                                                            while (sIdx < content.length) {
+                                                                val s = content.indexOf(quote, sIdx, ignoreCase = true)
+                                                                if (s == -1) break
+                                                                val e = (s + quote.length).coerceAtMost(content.length)
+                                                                if (offset in s until e) return@firstOrNull true
+                                                                sIdx = e
+                                                            }
+                                                            false
+                                                        }
+                                                    }
+                                                    if (hitBookmark != null) {
+                                                        selectedBookmarkForModal = hitBookmark
+                                                        showBookmarkDetailModal = true
+                                                    } else {
+                                                        if (showSelectionMenu) {
+                                                            showSelectionMenu = false
+                                                        } else {
+                                                            showControls = !showControls
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
                                 ) {
                                     Text(
-                                        text = content,
+                                        text = annotatedContent,
+                                        onTextLayout = { pagedTextLayoutResult = it },
                                         fontFamily = fontFamily,
                                         fontSize = fontSize.sp,
                                         lineHeight = (fontSize * lineHeightMultiplier).sp,
-                                        textAlign = TextAlign.Justify,
+                                        letterSpacing = letterSpacing.sp,
+                                        textAlign = contentTextAlign,
                                         color = MaterialTheme.colorScheme.onBackground,
                                         modifier = Modifier.fillMaxWidth()
                                     )
@@ -795,16 +1206,16 @@ fun ReaderScreen(
             }
         }
 
-        // TOP HEADER BAR: Back chevron, Center Title/Chapter (tap for TOC), TOC button, Mode Toggler
+        // TOP HEADER BAR: Distraction-Free Header (Zero buttons, clean title & chapter)
         AnimatedVisibility(
-            visible = isUiVisible,
+            visible = isUiVisible && voiceState == AssistantVoiceState.IDLE,
             enter = slideInVertically { -it },
             exit = slideOutVertically { -it },
             modifier = Modifier.align(Alignment.TopCenter)
         ) {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                color = MaterialTheme.colorScheme.background
+                color = MaterialTheme.colorScheme.background.copy(alpha = 0.95f)
             ) {
                 Column(
                     modifier = Modifier
@@ -814,33 +1225,14 @@ fun ReaderScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(52.dp)
-                            .padding(horizontal = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            .height(44.dp)
+                            .padding(horizontal = 20.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
                     ) {
-                        // Left: Back arrow (< chevron)
-                        IconButton(
-                            onClick = {
-                                ttsRef.value?.stop()
-                                isTtsSpeaking = false
-                                onBackToLibrary()
-                            },
-                            modifier = Modifier.size(38.dp)
-                        ) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.ArrowBackIos,
-                                contentDescription = "Library",
-                                modifier = Modifier.size(17.dp),
-                                tint = MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-
-                        // Center: Stacked Title & Chapter — weight(1f) ensures it shrinks dynamically without overlap
                         Column(
                             modifier = Modifier
-                                .weight(1f)
-                                .padding(horizontal = 6.dp)
-                                .clip(RoundedCornerShape(8.dp))
+                                .fillMaxWidth()
                                 .clickable { showTocSheet = true },
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Center
@@ -848,7 +1240,7 @@ fun ReaderScreen(
                             Text(
                                 text = book.title,
                                 fontFamily = FontFamily.Serif,
-                                fontSize = 15.sp,
+                                fontSize = 14.sp,
                                 fontWeight = FontWeight.Medium,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
@@ -867,79 +1259,383 @@ fun ReaderScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
                             )
                         }
-
-                        // Right: TOC icon button & Mode Toggler (Scroll <-> Paged)
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            // Table of Contents Button
-                            IconButton(
-                                onClick = { showTocSheet = true },
-                                modifier = Modifier.size(34.dp)
-                            ) {
-                                Icon(
-                                    Icons.AutoMirrored.Filled.FormatListBulleted,
-                                    contentDescription = "Table of Contents",
-                                    modifier = Modifier.size(18.dp),
-                                    tint = MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.width(4.dp))
-
-                            // Mode Toggler Pill
-                            Surface(
-                                shape = RoundedCornerShape(16.dp),
-                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                                border = BorderStroke(0.6.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-                                modifier = Modifier
-                                    .height(32.dp)
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .clickable {
-                                        val nextMode = if (readingMode == ReadingMode.SCROLL) ReadingMode.PAGED else ReadingMode.SCROLL
-                                        onModeChange(nextMode)
-                                    }
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        imageVector = if (readingMode == ReadingMode.SCROLL) Icons.Filled.SwapVert else Icons.AutoMirrored.Filled.MenuBook,
-                                        contentDescription = "Toggle Reading Mode",
-                                        modifier = Modifier.size(14.dp),
-                                        tint = MaterialTheme.colorScheme.onSurface
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = if (readingMode == ReadingMode.SCROLL) "Scroll" else "Paged",
-                                        fontFamily = FontFamily.SansSerif,
-                                        fontSize = 11.5.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                }
-                            }
-                        }
                     }
 
                     // Delicate hairline divider underneath the header bar
                     HorizontalDivider(
                         thickness = 0.5.dp,
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
                     )
                 }
             }
         }
 
-        // Selection Menu Pill
+
+
+
+
+        // Highlight & Note Inspector / Editor Sheet
+        if (showBookmarkDetailModal && selectedBookmarkForModal != null) {
+            val bm = selectedBookmarkForModal!!
+            var noteDraft by rememberSaveable(bm.id) { mutableStateOf(bm.note) }
+            var currentHighlightColor by rememberSaveable(bm.id) { mutableStateOf(bm.color) }
+
+            ModalBottomSheet(
+                onDismissRequest = { showBookmarkDetailModal = false },
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                tonalElevation = 6.dp
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 22.dp)
+                        .padding(bottom = 32.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Highlight & Note",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        IconButton(onClick = { showBookmarkDetailModal = false }) {
+                            Icon(Icons.Default.Close, contentDescription = "Close")
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    val markColor = when (currentHighlightColor) {
+                        HighlightColor.GOLD -> Color(0xFFD4AF37)
+                        HighlightColor.ROSE -> Color(0xFFE5B7B7)
+                        HighlightColor.SAGE -> Color(0xFFB2C2B2)
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(14.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .width(4.dp)
+                                    .height(48.dp)
+                                    .background(markColor, RoundedCornerShape(2.dp))
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = "“${bm.quote}”",
+                                    fontFamily = FontFamily.Serif,
+                                    fontStyle = FontStyle.Italic,
+                                    fontSize = 14.sp,
+                                    lineHeight = 20.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "${bm.chapter} • ${bm.timestamp}",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Text(
+                        text = "Highlight Color",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        listOf(
+                            Triple(HighlightColor.GOLD, Color(0xFFD4AF37), "Gold"),
+                            Triple(HighlightColor.ROSE, Color(0xFFE5B7B7), "Rose"),
+                            Triple(HighlightColor.SAGE, Color(0xFFB2C2B2), "Sage")
+                        ).forEach { (colorKey, colorVal, _) ->
+                            val isSelected = currentHighlightColor == colorKey
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(CircleShape)
+                                    .background(colorVal)
+                                    .border(
+                                        width = if (isSelected) 2.5.dp else 1.dp,
+                                        color = if (isSelected) MaterialTheme.colorScheme.onSurface else Color.Transparent,
+                                        shape = CircleShape
+                                    )
+                                    .clickable {
+                                        currentHighlightColor = colorKey
+                                        val updated = bm.copy(color = colorKey, note = noteDraft)
+                                        selectedBookmarkForModal = updated
+                                        onUpdateBookmark(updated)
+                                    }
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(18.dp))
+
+                    Text(
+                        text = "Personal Note",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    OutlinedTextField(
+                        value = noteDraft,
+                        onValueChange = { noteDraft = it },
+                        placeholder = { Text("Write a note, thought, or reflection...") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        maxLines = 4
+                    )
+
+                    Spacer(modifier = Modifier.height(18.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Button(
+                            onClick = {
+                                onRemoveBookmark(bm.id)
+                                showBookmarkDetailModal = false
+                                Toast.makeText(context, "Highlight removed", Toast.LENGTH_SHORT).show()
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.errorContainer,
+                                contentColor = MaterialTheme.colorScheme.onErrorContainer
+                            ),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = "Delete", modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Delete")
+                        }
+
+                        Button(
+                            onClick = {
+                                val updated = bm.copy(color = currentHighlightColor, note = noteDraft.trim())
+                                selectedBookmarkForModal = updated
+                                onUpdateBookmark(updated)
+                                showBookmarkDetailModal = false
+                                Toast.makeText(context, "Note saved", Toast.LENGTH_SHORT).show()
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.secondary,
+                                contentColor = MaterialTheme.colorScheme.onSecondary
+                            ),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("Save Note")
+                        }
+                    }
+                }
+            }
+        }
+
+        // Floating Assistant Orb (movable, long-press voice assistant, smart inward arc, drag-to-delete bin)
+        if (showFloatingAssistant && !isFullscreen) {
+            FloatingAssistantOrb(
+                readingMode = readingMode,
+                onToggleReadingMode = {
+                    val nextMode = if (readingMode == ReadingMode.SCROLL) ReadingMode.PAGED else ReadingMode.SCROLL
+                    onModeChange(nextMode)
+                },
+                isTtsPlaying = isTtsSpeaking,
+                onToggleTts = {
+                    if (isTtsSpeaking) {
+                        ttsRef.value?.stop()
+                        isTtsSpeaking = false
+                    } else {
+                        speakNextPara.value()
+                    }
+                },
+                onOpenToc = { showTocSheet = true },
+                onOpenNote = onOpenBookmarks,
+                onOpenSettings = onOpenAppearance,
+                onStartVoiceListening = {
+                    val hasPerm = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                    if (hasPerm) {
+                        startVoiceAssistant()
+                    } else {
+                        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    }
+                },
+                onDismissOrb = {
+                    onToggleFloatingAssistant(false)
+                    Toast.makeText(context, "Assistant dismissed. Re-enable anytime from Settings.", Toast.LENGTH_SHORT).show()
+                },
+                isFullscreen = isFullscreen,
+                onToggleFullscreen = onToggleFullscreen,
+                orbActions = activeOrbActions,
+                voiceState = voiceState,
+                voiceQuery = voiceQuery,
+                voiceResponse = voiceResponse,
+                onDismissVoiceDialog = {
+                    voiceState = AssistantVoiceState.IDLE
+                    assistantService.stopListening()
+                },
+                onOpenAdvancedSettings = onOpenAdvancedSettings
+            )
+        }
+
+        // UNIFIED FLOATING BOTTOM DOCK: Progress Bar Extension + Navigation Bar with matching width (380.dp)
         AnimatedVisibility(
-            visible = showSelectionMenu,
+            visible = isUiVisible && voiceState == AssistantVoiceState.IDLE,
             enter = slideInVertically { it },
             exit = slideOutVertically { it },
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = if (isUiVisible) 56.dp else 16.dp, start = 16.dp, end = 16.dp)
+                .padding(start = 20.dp, end = 20.dp, bottom = progressBottomInset + 10.dp)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surface,
+                shadowElevation = 6.dp,
+                border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 380.dp)
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    // Top Progress Bar Extension: Clickable to expand/collapse the nav row
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onToggleNavBar() }
+                            .padding(horizontal = 14.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "${book.progress}%",
+                            fontFamily = FontFamily.SansSerif,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.secondary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        LinearProgressIndicator(
+                            progress = { (book.progress / 100f).coerceIn(0f, 1f) },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(2.5.dp)
+                                .clip(RoundedCornerShape(1.5.dp)),
+                            color = MaterialTheme.colorScheme.secondary,
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (book.readTimeLeft.isNotBlank()) book.readTimeLeft else activeChapterTitle,
+                            fontFamily = FontFamily.SansSerif,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Normal,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    // Expandable Navigation Row directly attached below progress bar
+                    AnimatedVisibility(
+                        visible = showNavBarInReader,
+                        enter = fadeIn() + expandVertically(),
+                        exit = fadeOut() + shrinkVertically()
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            HorizontalDivider(
+                                thickness = 0.5.dp,
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+                            )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(50.dp)
+                                    .padding(horizontal = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceEvenly,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                // 1. Library
+                                IconButton(onClick = onBackToLibrary) {
+                                    Icon(
+                                        imageVector = Icons.Default.AutoStories,
+                                        contentDescription = "Library",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                // 2. Table of Contents
+                                IconButton(onClick = { showTocSheet = true }) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.FormatListBulleted,
+                                        contentDescription = "Contents",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                // 3. Highlights & Bookmarks
+                                IconButton(onClick = onOpenBookmarks) {
+                                    Icon(
+                                        imageVector = Icons.Default.Bookmarks,
+                                        contentDescription = "Highlights",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                // 4. Appearance & Style
+                                IconButton(onClick = onOpenAppearance) {
+                                    Icon(
+                                        imageVector = Icons.Default.Tune,
+                                        contentDescription = "Appearance",
+                                        tint = MaterialTheme.colorScheme.secondary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Selection Menu Pill (Rendered strictly on top of bottom dock, zIndex = 200f)
+        val dockHeight = if (showNavBarInReader) 94.dp else 44.dp
+        val selectionMenuBottomPadding = if (isUiVisible) {
+            progressBottomInset + 10.dp + dockHeight + 14.dp
+        } else {
+            progressBottomInset + 20.dp
+        }
+
+        AnimatedVisibility(
+            visible = showSelectionMenu && selectedText.isNotBlank(),
+            enter = slideInVertically { it } + fadeIn(),
+            exit = slideOutVertically { it } + fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .zIndex(200f)
+                .padding(bottom = selectionMenuBottomPadding, start = 14.dp, end = 14.dp)
         ) {
             Card(
                 shape = RoundedCornerShape(24.dp),
@@ -947,6 +1643,7 @@ fun ReaderScreen(
                 elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
                 modifier = Modifier
                     .fillMaxWidth()
+                    .widthIn(max = 420.dp)
                     .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f), RoundedCornerShape(24.dp))
             ) {
                 Row(
@@ -997,6 +1694,30 @@ fun ReaderScreen(
                     }
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        // Note button: directly inspect or attach note
+                        IconButton(
+                            onClick = {
+                                showSelectionMenu = false
+                                val existing = activeBookmark
+                                if (existing != null) {
+                                    selectedBookmarkForModal = existing
+                                } else {
+                                    val mark = Bookmark(
+                                        bookTitle = book.title,
+                                        chapter = selectedChapterTitle.ifBlank { activeChapterTitle },
+                                        quote = selectedText,
+                                        color = HighlightColor.GOLD,
+                                        timestamp = "Just now"
+                                    )
+                                    onAddBookmark(selectedText, HighlightColor.GOLD)
+                                    selectedBookmarkForModal = mark
+                                }
+                                showBookmarkDetailModal = true
+                            }
+                        ) {
+                            Icon(Icons.Default.EditNote, contentDescription = "Add Note / Inspect", tint = MaterialTheme.colorScheme.secondary)
+                        }
+
                         if (activeBookmark != null) {
                             IconButton(
                                 onClick = {
@@ -1007,6 +1728,17 @@ fun ReaderScreen(
                             ) {
                                 Icon(Icons.Default.Delete, contentDescription = "Remove Highlight", tint = MaterialTheme.colorScheme.error)
                             }
+                        }
+
+                        IconButton(
+                            onClick = {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                clipboard.setPrimaryClip(ClipData.newPlainText("Selected text", selectedText))
+                                showSelectionMenu = false
+                                Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+                            }
+                        ) {
+                            Icon(Icons.Default.ContentCopy, contentDescription = "Copy Text")
                         }
 
                         IconButton(
@@ -1039,87 +1771,6 @@ fun ReaderScreen(
                         IconButton(onClick = { showSelectionMenu = false }) {
                             Icon(Icons.Default.Close, contentDescription = "Close Menu")
                         }
-                    }
-                }
-            }
-        }
-
-        // Floating Assistant Orb (movable, long-press voice assistant, single-tap radial wheel, drag-to-delete bin)
-        if (showFloatingAssistant && !isFullscreen) {
-            FloatingAssistantOrb(
-                isTtsPlaying = isTtsSpeaking,
-                onToggleTts = {
-                    if (isTtsSpeaking) {
-                        ttsRef.value?.stop()
-                        isTtsSpeaking = false
-                    } else {
-                        speakNextPara.value()
-                    }
-                },
-                onOpenToc = { showTocSheet = true },
-                onOpenNote = {
-                    onAddBookmark("Note at $activeChapterTitle", HighlightColor.GOLD)
-                    Toast.makeText(context, "Saved note at $activeChapterTitle", Toast.LENGTH_SHORT).show()
-                },
-                onOpenSettings = onOpenAppearance,
-                onStartVoiceListening = {
-                    val hasPerm = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-                    if (hasPerm) {
-                        startVoiceAssistant()
-                    } else {
-                        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                    }
-                },
-                onDismissOrb = {
-                    onToggleFloatingAssistant(false)
-                    Toast.makeText(context, "Assistant dismissed. Re-enable anytime from Settings.", Toast.LENGTH_SHORT).show()
-                },
-                voiceState = voiceState,
-                voiceQuery = voiceQuery,
-                voiceResponse = voiceResponse,
-                onDismissVoiceDialog = {
-                    voiceState = AssistantVoiceState.IDLE
-                    assistantService.stopListening()
-                }
-            )
-        }
-
-        // BOTTOM PROGRESS DOCK: Texts removed from bottom of menu as requested! Only sleek progress line remains.
-        AnimatedVisibility(
-            visible = isUiVisible,
-            enter = slideInVertically { it },
-            exit = slideOutVertically { it },
-            modifier = Modifier.align(Alignment.BottomCenter)
-        ) {
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onToggleNavBar() },
-                color = MaterialTheme.colorScheme.background
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .navigationBarsPadding()
-                ) {
-                    HorizontalDivider(
-                        thickness = 0.5.dp,
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
-                    )
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 10.dp)
-                    ) {
-                        LinearProgressIndicator(
-                            progress = { (book.progress / 100f).coerceIn(0f, 1f) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(3.dp)
-                                .clip(RoundedCornerShape(2.dp)),
-                            color = MaterialTheme.colorScheme.secondary,
-                            trackColor = MaterialTheme.colorScheme.surfaceVariant
-                        )
                     }
                 }
             }
