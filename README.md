@@ -1,4 +1,4 @@
-# Lumina (লুমিনা)
+# Lumina
 
 > **Minimalist, typography-focused Android EPUB reader built with Jetpack Compose & Material 3.**
 
