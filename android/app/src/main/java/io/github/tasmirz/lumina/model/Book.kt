@@ -1,5 +1,7 @@
 package io.github.tasmirz.lumina.model
 
+import io.github.tasmirz.lumina.data.AiProvider
+
 enum class HighlightColor(val colorValue: Long, val displayName: String) {
     GOLD(0xFFD4AF37, "Gold"),
     ROSE(0xFFE5B7B7, "Rose"),
@@ -200,3 +202,63 @@ data class BookLore(
     val isSpoiler: Boolean = false,
     val createdAt: Long = System.currentTimeMillis()
 )
+
+data class ReadingPosition(
+    val bookId: String = "",
+    val chapterIndex: Int = 0,
+    val pageIndex: Int = 0,
+    val scrollPos: Int = 0,
+    val progressPct: Int = 0
+)
+
+data class ReaderSettings(
+    val fontSize: Int = 18,
+    val readingMode: ReadingMode = ReadingMode.SCROLL,
+    val themeMode: ThemeMode = ThemeMode.WARM_PAPER,
+    val themeFamily: ThemeFamily = ThemeFamily.PAPER,
+    val themeVariant: ThemeVariant = ThemeVariant.LIGHT,
+    val backgroundTexture: BackgroundTexture = BackgroundTexture.NONE,
+    val customBgUri: String = "",
+    val orbActionItems: Set<OrbActionItem> = OrbActionItem.entries.toSet(),
+    val orbActionOrder: List<OrbActionItem> = OrbActionItem.entries.toList(),
+    val textAlignmentMode: TextAlignmentMode = TextAlignmentMode.JUSTIFY,
+    val letterSpacing: Float = 0.2f,
+    val typefaceMode: TypefaceMode = TypefaceMode.SERIF,
+    val lineHeightMultiplier: Float = 1.68f,
+    val paragraphSpacingMultiplier: Float = 1.2f,
+    val showFloatingAssistant: Boolean = true,
+    val horizontalPadding: Int = 20,
+    val verticalPadding: Int = 16,
+    val assistantOrbStyle: String = "EDGE_DOT",
+    val spoilerShield: Boolean = true,
+    val autoScrollSpeed: Float = 1.0f,
+    val disableAi: Boolean = false,
+    val disableTts: Boolean = false,
+    val disableStt: Boolean = false,
+    val autoStartMic: Boolean = true,
+    val enableFtsIndexing: Boolean = false,
+    val geminiApiKey: String = "",
+    val aiProvider: AiProvider = AiProvider.GEMINI,
+    val aiBaseUrl: String = "https://api.openai.com/v1",
+    val aiModel: String = "gemini-3.1-flash-lite",
+    val quickThemes: Set<ThemeFamily> = ThemeFamily.entries.toSet(),
+    val quickFonts: Set<TypefaceMode> = setOf(TypefaceMode.SERIF, TypefaceMode.SANS, TypefaceMode.GEORGIA),
+    val gestureDoubleTap: GestureAction = GestureAction.TOGGLE_AUTOSCROLL,
+    val gestureTripleTap: GestureAction = GestureAction.SUMMON_ORB,
+    val gestureSingleTap: GestureAction = GestureAction.TOGGLE_BARS,
+    val gestureTtsTap: GestureAction = GestureAction.TTS_READ_ALOUD,
+    val customBgColor: Long = 0xFF1C1917L,
+    val customTextColor: Long = 0xFFE7E5E4L,
+    val customAccentColor: Long = 0xFFD4AF37L,
+    val orbSize: OrbSize = OrbSize.NANO,
+    val orbMenuSize: OrbMenuSize = OrbMenuSize.MEDIUM,
+    val orbEdgeSnap: Boolean = true,
+    val orbPortraitX: Float = -1f,
+    val orbPortraitY: Float = -1f,
+    val orbLandscapeX: Float = -1f,
+    val orbLandscapeY: Float = -1f,
+    val orbColor: OrbColor = OrbColor.THEME,
+    val orbOpacity: Float = 0.85f,
+    val preferredLanguage: String = "auto"
+)
+

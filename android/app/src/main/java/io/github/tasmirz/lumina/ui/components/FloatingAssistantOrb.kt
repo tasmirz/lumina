@@ -272,26 +272,13 @@ fun FloatingAssistantOrb(
             ) {
                 // Build active action items based on user settings
                 val activeItems = mutableListOf<OrbAction>()
+                // 1. Primary Layer 1 Actions (Theme, TTS, Settings)
                 if (orbActions.contains(OrbActionItem.THEME_MODE)) {
                     activeItems.add(
                         OrbAction(
                             icon = if (isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
                             label = if (isDarkTheme) "Light Theme" else "Dark Theme",
                             action = { onToggleThemeMode(); isWheelExpanded = false }
-                        )
-                    )
-                }
-                if (orbActions.contains(OrbActionItem.READING_MODE)) {
-                    val (rmIcon, rmLabel) = when (readingMode) {
-                        ReadingMode.SCROLL -> Icons.Filled.SwapVert to "Continuous Scroll"
-                        ReadingMode.PAGED -> Icons.AutoMirrored.Filled.MenuBook to "Full Paged"
-                        ReadingMode.PAGED_SCROLL -> Icons.Filled.UnfoldMore to "Paged + Scroll"
-                    }
-                    activeItems.add(
-                        OrbAction(
-                            icon = rmIcon,
-                            label = rmLabel,
-                            action = { onToggleReadingMode(); isWheelExpanded = false }
                         )
                     )
                 }
@@ -304,12 +291,28 @@ fun FloatingAssistantOrb(
                         )
                     )
                 }
-                if (orbActions.contains(OrbActionItem.CHARACTERS)) {
+                if (orbActions.contains(OrbActionItem.SETTINGS)) {
                     activeItems.add(
                         OrbAction(
-                            icon = Icons.Default.Face,
-                            label = "Character Guide",
-                            action = { onOpenCharacters(); isWheelExpanded = false }
+                            icon = Icons.Outlined.Tune,
+                            label = "Appearance Settings",
+                            action = { onOpenSettings(); isWheelExpanded = false }
+                        )
+                    )
+                }
+
+                // 2. Outer Layer 2 Actions (Reading Mode, Fullscreen, Search, Voice, Characters, Notes)
+                if (orbActions.contains(OrbActionItem.READING_MODE)) {
+                    val (rmIcon, rmLabel) = when (readingMode) {
+                        ReadingMode.SCROLL -> Icons.Filled.SwapVert to "Continuous Scroll"
+                        ReadingMode.PAGED -> Icons.AutoMirrored.Filled.MenuBook to "Full Paged"
+                        ReadingMode.PAGED_SCROLL -> Icons.Filled.UnfoldMore to "Paged + Scroll"
+                    }
+                    activeItems.add(
+                        OrbAction(
+                            icon = rmIcon,
+                            label = rmLabel,
+                            action = { onToggleReadingMode(); isWheelExpanded = false }
                         )
                     )
                 }
@@ -340,21 +343,21 @@ fun FloatingAssistantOrb(
                         )
                     )
                 }
+                if (orbActions.contains(OrbActionItem.CHARACTERS)) {
+                    activeItems.add(
+                        OrbAction(
+                            icon = Icons.Default.Face,
+                            label = "Character Guide",
+                            action = { onOpenCharacters(); isWheelExpanded = false }
+                        )
+                    )
+                }
                 if (orbActions.contains(OrbActionItem.NOTE)) {
                     activeItems.add(
                         OrbAction(
                             icon = Icons.Outlined.EditNote,
                             label = "Notes & Highlights",
                             action = { onOpenNote(); isWheelExpanded = false }
-                        )
-                    )
-                }
-                if (orbActions.contains(OrbActionItem.SETTINGS)) {
-                    activeItems.add(
-                        OrbAction(
-                            icon = Icons.Outlined.Tune,
-                            label = "Appearance Settings",
-                            action = { onOpenSettings(); isWheelExpanded = false }
                         )
                     )
                 }
@@ -386,12 +389,14 @@ fun FloatingAssistantOrb(
                     val isFloating = !isAtEdge
 
                     // Split items into 2 concentric layers:
-                    // If <= 4 items, keep on single inner layer. Otherwise distribute harmoniously across 2 layers.
+                    // Layer 1 (inner) gets 2-3 primary actions. Layer 2 (outer) gets remaining specialized actions.
                     val (layer1Items, layer2Items) = when {
                         totalCount <= 4 -> Pair(activeItems, emptyList())
                         totalCount == 5 -> Pair(activeItems.take(2), activeItems.drop(2))
-                        totalCount <= 7 -> Pair(activeItems.take(3), activeItems.drop(3))
-                        else -> Pair(activeItems.take(4), activeItems.drop(4))
+                        totalCount == 6 -> Pair(activeItems.take(2), activeItems.drop(2))
+                        totalCount == 7 -> Pair(activeItems.take(3), activeItems.drop(3))
+                        totalCount == 8 -> Pair(activeItems.take(3), activeItems.drop(3))
+                        else -> Pair(activeItems.take(3), activeItems.drop(3)) // 3 inner, 6 outer
                     }
 
                     // Sizing and radius based on OrbMenuSize
@@ -402,10 +407,10 @@ fun FloatingAssistantOrb(
                     }
 
                     val innerRadiusPx = with(density) {
-                        if (isFloating) (56 * scaleFactor).dp.toPx() else (64 * scaleFactor).dp.toPx()
+                        if (isFloating) (58 * scaleFactor).dp.toPx() else (66 * scaleFactor).dp.toPx()
                     }
                     val outerRadiusPx = with(density) {
-                        if (isFloating) (96 * scaleFactor).dp.toPx() else (108 * scaleFactor).dp.toPx()
+                        if (isFloating) (104 * scaleFactor).dp.toPx() else (118 * scaleFactor).dp.toPx()
                     }
 
                     val innerItemSizeDp = (orbMenuSize.itemSizeDp + 2).dp
@@ -426,80 +431,77 @@ fun FloatingAssistantOrb(
                     }
                     val orbCenterX = currentOrbLeft + (normalOrbSizePx / 2f)
                     val orbCenterY = offsetY + (normalOrbSizePx / 2f)
-
                     val verticalFraction = (orbCenterY / screenHeightPx).coerceIn(0f, 1f)
+
+                    // Always fan as a 2-layered semicircle arc directed inward toward screen center
+                    val shouldFanRight = if (isAtEdge) isNearLeftEdge else (orbCenterX <= screenWidthPx / 2f)
 
                     // Calculate angles for Layer 1 and Layer 2
                     fun computeAngles(itemsCount: Int, isInner: Boolean): List<Double> {
                         if (itemsCount <= 0) return emptyList()
-                        return when {
-                            isFloating -> {
-                                // 360° concentric circles; interleave outer layer angles for balanced radial visual
-                                val step = (2.0 * Math.PI) / itemsCount
-                                val startOffset = if (isInner) -Math.PI / 2.0 else -Math.PI / 2.0 + (step / 2.0)
-                                (0 until itemsCount).map { i -> startOffset + (i * step) }
+                        return if (shouldFanRight) {
+                            // Semicircle arc fanning to the right (+X)
+                            val tiltDeg = when {
+                                verticalFraction < 0.28f -> (0.28f - verticalFraction) / 0.28f * 18.0
+                                verticalFraction > 0.72f -> (verticalFraction - 0.72f) / 0.28f * -18.0
+                                else -> 0.0
                             }
-                            isDockedOnLeft -> {
-                                // Semicircle arc fanning to the right (+X)
-                                val tiltDeg = when {
-                                    verticalFraction < 0.28f -> (0.28f - verticalFraction) / 0.28f * 18.0
-                                    verticalFraction > 0.72f -> (verticalFraction - 0.72f) / 0.28f * -18.0
-                                    else -> 0.0
+                            val effectiveCenter = 0.0 + Math.toRadians(tiltDeg)
+                            val spanDeg = if (isInner) {
+                                when (itemsCount) {
+                                    1 -> 0.0
+                                    2 -> 46.0
+                                    3 -> 82.0
+                                    4 -> 110.0
+                                    else -> 126.0
                                 }
-                                val effectiveCenter = 0.0 + Math.toRadians(tiltDeg)
-                                val spanDeg = if (isInner) {
-                                    when (itemsCount) {
-                                        1 -> 0.0
-                                        2 -> 42.0
-                                        3 -> 72.0
-                                        else -> 92.0
-                                    }
-                                } else {
-                                    when (itemsCount) {
-                                        1 -> 0.0
-                                        2 -> 50.0
-                                        3 -> 84.0
-                                        4 -> 114.0
-                                        5 -> 136.0
-                                        else -> 152.0
-                                    }
-                                }
-                                val spanRad = Math.toRadians(spanDeg)
-                                val step = if (itemsCount > 1) spanRad / (itemsCount - 1) else 0.0
-                                (0 until itemsCount).map { i ->
-                                    effectiveCenter - (spanRad / 2.0) + (i * step)
+                            } else {
+                                when (itemsCount) {
+                                    1 -> 0.0
+                                    2 -> 50.0
+                                    3 -> 84.0
+                                    4 -> 112.0
+                                    5 -> 136.0
+                                    6 -> 154.0
+                                    else -> 168.0
                                 }
                             }
-                            else -> {
-                                // Semicircle arc fanning to the left (-X)
-                                val tiltDeg = when {
-                                    verticalFraction < 0.28f -> (0.28f - verticalFraction) / 0.28f * -18.0
-                                    verticalFraction > 0.72f -> (verticalFraction - 0.72f) / 0.28f * 18.0
-                                    else -> 0.0
+                            val spanRad = Math.toRadians(spanDeg)
+                            val step = if (itemsCount > 1) spanRad / (itemsCount - 1) else 0.0
+                            (0 until itemsCount).map { i ->
+                                effectiveCenter - (spanRad / 2.0) + (i * step)
+                            }
+                        } else {
+                            // Semicircle arc fanning to the left (-X)
+                            val tiltDeg = when {
+                                verticalFraction < 0.28f -> (0.28f - verticalFraction) / 0.28f * -18.0
+                                verticalFraction > 0.72f -> (verticalFraction - 0.72f) / 0.28f * 18.0
+                                else -> 0.0
+                            }
+                            val effectiveCenter = Math.PI + Math.toRadians(tiltDeg)
+                            val spanDeg = if (isInner) {
+                                when (itemsCount) {
+                                    1 -> 0.0
+                                    2 -> 46.0
+                                    3 -> 82.0
+                                    4 -> 110.0
+                                    else -> 126.0
                                 }
-                                val effectiveCenter = Math.PI + Math.toRadians(tiltDeg)
-                                val spanDeg = if (isInner) {
-                                    when (itemsCount) {
-                                        1 -> 0.0
-                                        2 -> 42.0
-                                        3 -> 72.0
-                                        else -> 92.0
-                                    }
-                                } else {
-                                    when (itemsCount) {
-                                        1 -> 0.0
-                                        2 -> 50.0
-                                        3 -> 84.0
-                                        4 -> 114.0
-                                        5 -> 136.0
-                                        else -> 152.0
-                                    }
+                            } else {
+                                when (itemsCount) {
+                                    1 -> 0.0
+                                    2 -> 50.0
+                                    3 -> 84.0
+                                    4 -> 112.0
+                                    5 -> 136.0
+                                    6 -> 154.0
+                                    else -> 168.0
                                 }
-                                val spanRad = Math.toRadians(spanDeg)
-                                val step = if (itemsCount > 1) spanRad / (itemsCount - 1) else 0.0
-                                (0 until itemsCount).map { i ->
-                                    effectiveCenter + (spanRad / 2.0) - (i * step)
-                                }
+                            }
+                            val spanRad = Math.toRadians(spanDeg)
+                            val step = if (itemsCount > 1) spanRad / (itemsCount - 1) else 0.0
+                            (0 until itemsCount).map { i ->
+                                effectiveCenter + (spanRad / 2.0) - (i * step)
                             }
                         }
                     }

@@ -1,65 +1,119 @@
+<div align="center">
+
+<img src="assets/lumina_logo.svg" width="120" height="120" alt="Lumina Logo" /><br/>
+
 # Lumina
 
-> **Minimalist, typography-focused Android EPUB reader built with Jetpack Compose & Material 3.**
+**Minimalist, typography-first EPUB reader for Android crafted with Jetpack Compose & Material 3.**
 
-Lumina is designed for readers who value aesthetics, distraction-free typography, and a seamless reading experience. It features zero-clutter reading canvases, continuous vertical scrolling and paginated swipe modes, a native Text-to-Speech (TTS) floating reader, justified typography, instant dictionary lookups, quote citations, and a robust offline-first EPUB parsing engine with full cover and inline illustration support.
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/Platform-Android_7.0%2B_(API_24%2B)-green.svg)](https://developer.android.com)
+[![Kotlin](https://img.shields.io/badge/Kotlin-2.0+-purple.svg)](https://kotlinlang.org)
+[![Compose](https://img.shields.io/badge/Jetpack_Compose-Material_3-4285F4.svg)](https://developer.android.com/jetpack/compose)
+[![F-Droid](https://img.shields.io/badge/F--Droid-Compliant-3DDC84.svg)](metadata/io.github.tasmirz.lumina.yml)
+[![Offline-First](https://img.shields.io/badge/Privacy-100%25_Offline--First-success.svg)](#-privacy--offline-first-guarantee)
+
+<p align="center">
+  <a href="#-features">Features</a> •
+  <a href="#-architecture--tech-stack">Architecture</a> •
+  <a href="#-getting-started">Getting Started</a> •
+  <a href="#-automation--tooling">Tooling</a> •
+  <a href="#-license">License</a>
+</p>
+
+</div>
+
+---
+
+## 🌟 Overview
+
+**Lumina** is an artisanal digital reading space designed for book lovers who value typography, fluid 60/120 FPS performance, and distraction-free immersion. 
+
+Built from the ground up in modern **Kotlin** and **Jetpack Compose**, Lumina pairs a zero-dependency streaming EPUB engine with hardware-accelerated text rendering, an embedded SQLite FTS5 full-text search index, rich custom theming, and an optional spoiler-proof AI companion.
+
+Lumina is strictly **100% free, open source, and offline-first**—zero ads, zero tracking, zero mandatory accounts, and zero proprietary analytics.
 
 ---
 
 ## ✨ Features
 
-- **📖 Dual Reading Engines**:
-  - **Continuous Scroll Mode**: Smooth vertical scroll across all chapters with dynamic header/footer auto-hide.
-  - **Paged Mode**: Horizontal swipe pagination with touch navigation zones and page transitions.
+### 📖 Dual Reading Engines
+- **Continuous Scroll Mode**: Seamless vertical scroll across full book spine with dynamic header/footer auto-hide.
+- **Paged Horizontal Mode**: Physical-book style swipe pagination with page turn animations, notch/edge-inset safe margins, and touch-zone navigation.
+- **Hands-Free Auto-Scroll**: Double-tap to activate smooth, continuous auto-scrolling with adjustable speed controls.
+- **Interactive Scrubbing**: Bottom progress scrubber and chapter markers with instant persistent location saves.
 
-- **🔮 Floating AI & Voice Assistant Orb**:
-  - **Draggable & Dismissible**: Freely movable anywhere on screen with automatic screen-edge clamping and drag-to-trash drop zone at the bottom to dismiss. Can be re-enabled anytime from Reading Settings.
-  - **Radial Action Wheel (Single Tap)**: 4 instant quick actions (Play/Pause TTS, Add Note/Bookmark, Open TOC, Reading Theme/Settings).
-  - **Voice Assistant (Long Press)**: Pulsing voice animation powered by Android SpeechRecognizer. Supports voice navigation ("go to chapter 3", "next chapter"), TTS control, notes, and Gemini 2.5 Flash Q&A.
-  - **Spoiler-Proof Contextual AI**: Uses book context up to your current reading position only—guaranteed no spoilers beyond where you are.
+### 🎨 Typography & Custom Themes
+- **Curated Dual-Font Hierarchy**: Editorial Serif for literary immersion paired with a modern Sans-Serif for interface chrome.
+- **Justified Book Layouts**: Fully justified text rendering with hyphenation and balanced paragraph margins.
+- **Drop Caps**: Elegant opening paragraph typography on chapter beginnings.
+- **Theme Builder & CSS Variables**: Built-in Light, Warm Parchment, Dark, and OLED Black modes. Create custom color palettes or import/export standard CSS (`:root`) theme variables and custom background wallpapers.
+- **Granular Formatting**: Full control over font size, line spacing, letter spacing, paragraph spacing, and horizontal/vertical margins.
 
-- **🎧 Natural Text-to-Speech (TTS)**:
-  - Enhanced neural voice selection with calibrated calm pacing (0.95x) for human-like reading cadence.
-  - Active spoken paragraph highlighting and smooth auto-advance.
+### 🔍 Lightning-Fast Offline Search (FTS5)
+- **Embedded SQLite FTS5 Engine**: Instant full-text search across entire books and full library catalogs.
+- **Scene & Dialogue Indexing**: Locate passages, quotes, or character names in milliseconds with zero network connectivity.
+- **Context Snippets**: Keyword-matched results display surround context with instant jump-to-paragraph navigation.
 
-- **🎨 Typography & Precision Text Selection**:
-  - **Granular Selection**: Drag handles for word-level and line-level selection without whole-paragraph touch interception.
-  - **Justified Text Formatting**: Books format with clean, justified margins replicating physical book layouts.
-  - **Drop Caps**: Elegant opening paragraph typography for every section.
-  - **Curated Typefaces**: Focused two-font architecture (Editorial Serif for prose, Modern Sans for UI controls).
-  - **Adjustable Display**: Dynamic font size scaling and line-height tuning.
-  - **Themes**: Warm Paper (Parchment), Pure White, and OLED Night mode.
+### 🔮 Floating Assistant Orb & Action Palette
+- **Adaptive Docking**: Non-intrusive floating orb with configurable edge dock sizing (`NANO`, `MINI`, `COMPACT`, `DEFAULT`, `LARGE`), edge snapping, and drag-to-dismiss drop zone.
+- **Radial Action Wheel**: Single-tap quick wheel to toggle Text-to-Speech, create bookmarks/notes, switch themes, or open reading settings.
+- **Voice Control**: Powered by Android's `SpeechRecognizer` for hands-free chapter navigation and playback commands.
 
-- **📑 Table of Contents (TOC) & Navigation**:
-  - Comprehensive EPUB 2 (`toc.ncx`) and EPUB 3 (`nav.xhtml`) navigation extraction.
-  - Dedicated Table of Contents modal sheet with reading progress and instant chapter jumps.
+### 🤖 Spoiler-Proof AI Story Assistant (Optional)
+- **Contextual Book Intelligence**: Connect your own Gemini or OpenAI API key for character summaries, scene recaps, and literary explanations.
+- **Anti-Spoiler Shield**: Context windows are strictly constrained to text up to your current reading position—guaranteeing zero future plot spoilers.
+- **Zero-Telephony Isolation**: Completely disablable via a single master switch for 100% offline isolation.
 
-- **🖼️ Cover & Inline Image Support**:
-  - Multi-tier cover extraction (EPUB 3 `cover-image`, OPF metadata, `<guide>` references, cover XHTML pages, and SVG images).
-  - Inline chapter illustrations rendered with asynchronous decoding and out-of-memory safe downsampling.
+### 🎧 Natural Text-to-Speech (TTS)
+- **Calibrated Cadence**: Neural voice selection tuned with a calm, natural reading pace (0.95x).
+- **Spoken Sentence Highlighting**: Dynamic visual focus tracking on currently spoken paragraphs with automatic viewport advancement.
 
-- **🌐 Curated Public Catalogs & EPUB Import**:
-  - Direct EPUB import from device storage.
-  - Search and download classic public-domain literature from **Standard Ebooks**, **Project Gutenberg**, **Internet Archive**, and **Open Library**.
-  - **Clean Gallery & Long-Press Context Menu**: Clutter-free cards without accidental delete buttons. Long-press any book card to open a full context sheet (Share EPUB, Book Details & Reading Stats, Reset Progress to 0%, or Delete with confirmation).
+### ✍️ Precision Selection, Notes & Scholarly Citations
+- **Sub-Paragraph Selection**: Word-level and sentence-level drag handles for smooth, granular text selection.
+- **Multi-Color Highlighting**: Color-coded annotations (Gold, Rose, Sage) with personal marginalia notes.
+- **Scholarly Citation Generator**: One-tap formatted bibliographic citations (author, book title, chapter title, and timestamp).
+- **Instant Dictionary**: Built-in word definition lookups, phonetics, and offline fallback dictionaries.
 
-- **✍️ Highlights, Citations & Dictionary**:
-  - Multi-color quote highlighting (Gold, Rose, Sage).
-  - Formatted scholarly citation generator (author, book title, chapter, timestamp).
-  - Instant word definition lookup with phonetic pronunciations and offline fallback.
+### 📚 Library Management & Curated Catalogs
+- **Offline Library**: Import any DRM-free `.epub` file directly from local storage.
+- **Curated Public Catalogs**: Search and download classic public-domain literature directly from **Standard Ebooks**, **Project Gutenberg**, **Internet Archive**, and **Open Library**.
+- **Context Sheets**: Long-press any book card to inspect reading statistics, share EPUBs, reset progress, or manage storage.
+- **Unified Backup & Restore**: Export and import your entire library database, reading positions, highlights, bookmarks, notes, and custom themes into a single JSON file.
 
 ---
 
 ## 🛠️ Architecture & Tech Stack
 
-- **Language**: Kotlin 2.0+
-- **UI Framework**: Jetpack Compose with Material 3
-- **Design System**: Strict two-font hierarchy, fluid animations, custom gesture listeners, edge-to-edge support
-- **State Management**: Kotlin Coroutines & `StateFlow`
-- **Audio/Speech**: Android `TextToSpeech` API with `UtteranceProgressListener`
-- **EPUB Engine**: Custom zero-dependency streaming zip/XML/XHTML parser (`EpubParser`)
-- **Image Pipeline**: Memory-efficient asynchronous bitmap decoder with LRU caching and safe bounds downsampling
-- **Build System**: Gradle Version Catalogs (`libs.versions.toml`)
+Lumina adheres to clean architecture principles and strict Unidirectional Data Flow (UDF):
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                   Jetpack Compose UI                    │
+│   (LibraryScreen, ReaderScreen, FloatingAssistantOrb)   │
+└───────────────────────────▲─────────────────────────────┘
+                            │ StateFlow / User Actions
+┌───────────────────────────┴─────────────────────────────┐
+│                     BookRepository                      │
+│   (Central coordinator for library, state & settings)   │
+└─────────────▲─────────────────────────────▲─────────────┘
+              │                             │
+┌─────────────┴─────────────┐ ┌─────────────┴─────────────┐
+│    LuminaDatabaseHelper   │ │        EpubParser         │
+│  (SQLite + FTS5 Storage)  │ │  (Streaming XML / Zip)    │
+└───────────────────────────┘ └───────────────────────────┘
+```
+
+| Layer | Technologies / Implementation |
+| :--- | :--- |
+| **Language** | Kotlin 2.0+ with Kotlin Coroutines & `StateFlow` |
+| **UI Framework** | Jetpack Compose + Material 3 (Design Tokens & Color Schemes) |
+| **EPUB Engine** | Zero-dependency streaming XML / XHTML ZIP parser (`EpubParser`) |
+| **Search Engine** | Android embedded SQLite **FTS5** (Full-Text Search) virtual tables |
+| **Caching Pipeline**| Two-tier LRU memory cache (`PageCache` & `AnnotatedTextCache`) |
+| **Speech / TTS** | Android `TextToSpeech` with `UtteranceProgressListener` |
+| **Storage / DB** | SQLite (`LuminaDatabaseHelper`) + Private app storage (`context.filesDir/epubs/`) |
+| **Build System** | Gradle Version Catalogs (`libs.versions.toml`) |
 
 ---
 
@@ -71,24 +125,31 @@ Lumina is designed for readers who value aesthetics, distraction-free typography
 │   ├── app/
 │   │   ├── src/
 │   │   │   ├── main/
-│   │   │   │   ├── java/org/protidhoni/lumina/
-│   │   │   │   │   ├── data/            # EPUB parser, repositories, dictionary & online services
-│   │   │   │   │   ├── model/           # Book, Chapter, Bookmark, and Theme data models
+│   │   │   │   ├── java/io/github/tasmirz/lumina/
+│   │   │   │   │   ├── data/            # EPUB parser, repositories, database & online catalogs
+│   │   │   │   │   │   └── db/          # SQLite schema, FTS5 virtual tables, migrations
+│   │   │   │   │   ├── model/           # Book, Chapter, Bookmark, Theme & Settings data models
 │   │   │   │   │   ├── theme/           # Color schemes, typography tokens, Material 3 theme
 │   │   │   │   │   ├── ui/
-│   │   │   │   │   │   ├── components/  # Sheets, TOC, BookCoverImage, AsyncImageBitmap
-│   │   │   │   │   │   ├── library/     # Library home grid & book cards
-│   │   │   │   │   │   └── reader/      # Reader screen, TTS widget, gestures, header & dock
+│   │   │   │   │   │   ├── components/  # Sheets, TOC, dialogs, book cover decoders
+│   │   │   │   │   │   ├── library/     # Library home grid, catalogs & book cards
+│   │   │   │   │   │   ├── reader/      # Reader canvas, TTS engine, gestures, floating orb
+│   │   │   │   │   │   └── settings/    # Theme builder, appearance & advanced settings
+│   │   │   │   │   ├── util/            # PageCache, text pagination, citation generator
 │   │   │   │   │   └── MainActivity.kt  # Root activity & navigation coordinator
-│   │   │   │   ├── res/                 # App launcher icons, strings, styles
+│   │   │   │   ├── res/                 # Vector drawables, fonts, launcher icons, strings
 │   │   │   │   └── AndroidManifest.xml
-│   │   │   └── test/                    # Unit tests for EPUB parser and citations
+│   │   │   └── test/                    # Comprehensive JVM unit tests
 │   │   └── build.gradle.kts
 │   ├── gradle/
 │   │   └── libs.versions.toml
 │   └── settings.gradle.kts
-├── stich-design/                        # Web design prototypes & interactive mockups
-├── .gitignore
+├── metadata/                            # F-Droid submission metadata
+├── docs/                                # Technical specifications and documentation
+├── fastlane/                            # Fastlane store metadata and changelogs
+├── justfile                             # Automation command runner
+├── CONTRIBUTING.md                      # Developer contribution guidelines
+├── LICENSE                              # GNU Affero General Public License v3.0
 └── README.md
 ```
 
@@ -98,46 +159,75 @@ Lumina is designed for readers who value aesthetics, distraction-free typography
 
 ### Prerequisites
 
-- **JDK**: Java 17 or higher
+- **JDK**: Java 17 or Java 21
 - **Android SDK**: Compile SDK 36, Target SDK 36, Min SDK 24 (Android 7.0+)
-- **Android Studio**: Ladybug / Meerkat or compatible command-line tools
+- **Android Studio**: Ladybug / Meerkat or compatible CLI tools
+- **Task Runner (Optional)**: [`just`](https://github.com/casey/just) for automation recipes
 
-### Building & Running
+### Building from Source
 
 1. **Clone the repository**:
    ```bash
    git clone https://github.com/tasmirz/lumina.git
-   cd lumina/android
+   cd lumina
    ```
 
 2. **Assemble Debug APK**:
    ```bash
-   ./gradlew assembleDebug
+   cd android && ./gradlew assembleDebug
    ```
-   The built APK will be located at:
-   `app/build/outputs/apk/debug/app-debug.apk`
+   The generated APK will be located at:
+   `android/app/build/outputs/apk/debug/app-debug.apk`
 
 3. **Run Unit Tests**:
    ```bash
-   ./gradlew testDebugUnitTest
+   cd android && ./gradlew testDebugUnitTest
    ```
 
-4. **Install onto a connected device or emulator**:
+4. **Install onto connected device**:
    ```bash
-   ./gradlew installDebug
+   cd android && ./gradlew installDebug
    ```
 
 ---
 
-## 📄 Application Metadata
+## ⚡ Automation & Tooling (`justfile`)
 
-- **Application ID**: `org.protidhoni.lumina`
-- **Target Platform**: Android (Phone & Tablet)
-- **Permissions**:
-  - `android.permission.INTERNET` (for dictionary queries, online catalog downloads, and cover thumbnails)
+For streamlined development, a `justfile` is included at the repository root:
+
+| Command | Description |
+| :--- | :--- |
+| `just build` | Assembles the debug APK |
+| `just build-release` | Assembles the signed release APK |
+| `just test` | Runs all JVM unit tests |
+| `just install` | Installs the latest debug APK onto a connected ADB device |
+| `just run` / `just launch` | Launches Lumina on the active device |
+| `just all` | Builds, installs, and launches in a single step |
+| `just reload` | Fast incremental rebuild, install, and restart with state preserved |
+| `just hot` | Activates Compose HotSwan port forwarding for live UI reloads |
+| `just ss <name>` | Takes a high-resolution screenshot and saves it to `debug/<name>.png` |
+| `just logs` | Attaches to `adb logcat` filtered to the Lumina process |
+
+---
+
+## 🔒 Privacy & Offline-First Guarantee
+
+- **Zero Trackers**: No third-party analytics, crash beacons, or advertising SDKs.
+- **Local Storage**: All EPUBs, reading statistics, annotations, bookmarks, and search indices remain on your device in private app storage.
+- **No Mandatory Online Services**: All features (including dictionary lookups and full-text search) operate completely offline. AI features require an explicitly provided user API key and can be completely turned off.
+- **Permission Transparency**:
+  - `android.permission.INTERNET`: Required only for downloading public-domain books from open catalogs, dictionary queries, and user-initiated AI API requests.
+
+---
+
+## 🤝 Contributing
+
+We welcome contributions from the open-source community! Please review our [CONTRIBUTING.md](CONTRIBUTING.md) guide for details on code style, Jetpack Compose performance standards, commit formatting, and pull request procedures.
 
 ---
 
 ## 📜 License
 
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+Lumina is free software: you can redistribute it and/or modify it under the terms of the **GNU Affero General Public License** as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+See the [LICENSE](LICENSE) file for the full license text.

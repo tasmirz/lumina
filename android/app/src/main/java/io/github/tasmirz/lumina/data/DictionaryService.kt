@@ -1,6 +1,7 @@
 package io.github.tasmirz.lumina.data
 
 import io.github.tasmirz.lumina.model.WordDefinition
+import io.github.tasmirz.lumina.util.SimpleLruCache
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -10,6 +11,8 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 object DictionaryService {
+
+    private val cache = SimpleLruCache<String, WordDefinition>(256)
 
     suspend fun lookup(rawQuery: String): WordDefinition = withContext(Dispatchers.IO) {
         val cleanWord = rawQuery.trim().split("\\s+".toRegex())[0]
@@ -26,12 +29,17 @@ object DictionaryService {
             )
         }
 
+        val cached = cache.get(cleanWord)
+        if (cached != null) {
+            return@withContext cached
+        }
+
         try {
             val url = URL("https://api.dictionaryapi.dev/api/v2/entries/en/$cleanWord")
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
-                connectTimeout = 4000
-                readTimeout = 4000
+                connectTimeout = 2000
+                readTimeout = 2000
                 setRequestProperty("Accept", "application/json")
             }
 
@@ -56,13 +64,15 @@ object DictionaryService {
                             val definition = firstDef.optString("definition", "Definition available.")
                             val example = firstDef.optString("example", "")
 
-                            return@withContext WordDefinition(
+                            val result = WordDefinition(
                                 word = word.replaceFirstChar { it.uppercase() },
                                 phonetic = phonetic,
                                 partOfSpeech = partOfSpeech,
                                 definition = definition,
                                 example = example
                             )
+                            cache.put(cleanWord, result)
+                            return@withContext result
                         }
                     }
                 }
@@ -72,12 +82,14 @@ object DictionaryService {
         }
 
         // Offline / Fallback definition
-        WordDefinition(
+        val fallback = WordDefinition(
             word = cleanWord.replaceFirstChar { it.uppercase() },
             phonetic = "/$cleanWord/",
             partOfSpeech = "word in text",
             definition = "Contextual reference from active reading: \"$rawQuery\".",
             example = "From Lumina Reader library"
         )
+        cache.put(cleanWord, fallback)
+        fallback
     }
 }

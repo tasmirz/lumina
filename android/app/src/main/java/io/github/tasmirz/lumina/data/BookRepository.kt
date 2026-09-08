@@ -16,6 +16,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 import io.github.tasmirz.lumina.data.db.LuminaDatabaseHelper
+import io.github.tasmirz.lumina.util.PageCache
+import io.github.tasmirz.lumina.util.SimpleLruCache
 
 class BookRepository(private val context: Context) {
 
@@ -26,6 +28,26 @@ class BookRepository(private val context: Context) {
 
     private val repoScope = CoroutineScope(Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
     private var readingPositionSaveJob: kotlinx.coroutines.Job? = null
+
+    private val chapterCache = SimpleLruCache<String, List<Chapter>>(8)
+
+    private val _readingPosition = MutableStateFlow(
+        ReadingPosition(
+            bookId = prefs.getString("active_book_id", "") ?: "",
+            chapterIndex = 0,
+            pageIndex = 0,
+            scrollPos = 0,
+            progressPct = 0
+        )
+    )
+    val readingPosition: StateFlow<ReadingPosition> = _readingPosition.asStateFlow()
+
+    private val _readerSettings = MutableStateFlow(loadInitialSettingsFromPrefs())
+    val readerSettings: StateFlow<ReaderSettings> = _readerSettings.asStateFlow()
+
+    private fun updateReaderSettings(transform: (ReaderSettings) -> ReaderSettings) {
+        _readerSettings.value = transform(_readerSettings.value)
+    }
 
     private val _books = MutableStateFlow<List<Book>>(emptyList())
     val books: StateFlow<List<Book>> = _books.asStateFlow()
@@ -78,7 +100,10 @@ class BookRepository(private val context: Context) {
     private val _disableStt = MutableStateFlow(prefs.getBoolean("disable_stt", false))
     val disableStt: StateFlow<Boolean> = _disableStt.asStateFlow()
 
-    private val _enableFtsIndexing = MutableStateFlow(prefs.getBoolean("enable_fts_indexing", true))
+    private val _autoStartMic = MutableStateFlow(prefs.getBoolean("auto_start_mic", true))
+    val autoStartMic: StateFlow<Boolean> = _autoStartMic.asStateFlow()
+
+    private val _enableFtsIndexing = MutableStateFlow(prefs.getBoolean("enable_fts_indexing", false))
     val enableFtsIndexing: StateFlow<Boolean> = _enableFtsIndexing.asStateFlow()
 
     // Preferences
@@ -274,6 +299,122 @@ class BookRepository(private val context: Context) {
     )
     val gestureTtsTap: StateFlow<GestureAction> = _gestureTtsTap.asStateFlow()
 
+    private fun loadInitialSettingsFromPrefs(): ReaderSettings {
+        return ReaderSettings(
+            fontSize = prefs.getInt("font_size", 18),
+            readingMode = try { ReadingMode.valueOf(prefs.getString("reading_mode", ReadingMode.SCROLL.name) ?: ReadingMode.SCROLL.name) } catch (_: Exception) { ReadingMode.SCROLL },
+            themeMode = try { ThemeMode.valueOf(prefs.getString("theme_mode", ThemeMode.WARM_PAPER.name) ?: ThemeMode.WARM_PAPER.name) } catch (_: Exception) { ThemeMode.WARM_PAPER },
+            themeFamily = try { ThemeFamily.valueOf(prefs.getString("theme_family", ThemeFamily.PAPER.name) ?: ThemeFamily.PAPER.name) } catch (_: Exception) { ThemeFamily.PAPER },
+            themeVariant = try { ThemeVariant.valueOf(prefs.getString("theme_variant", ThemeVariant.LIGHT.name) ?: ThemeVariant.LIGHT.name) } catch (_: Exception) { ThemeVariant.LIGHT },
+            typefaceMode = try { TypefaceMode.valueOf(prefs.getString("typeface_mode", TypefaceMode.SERIF.name) ?: TypefaceMode.SERIF.name) } catch (_: Exception) { TypefaceMode.SERIF },
+            lineHeightMultiplier = prefs.getFloat("line_height", 1.68f),
+            paragraphSpacingMultiplier = prefs.getFloat("paragraph_spacing", 1.2f),
+            textAlignmentMode = try { TextAlignmentMode.valueOf(prefs.getString("text_alignment_mode", TextAlignmentMode.JUSTIFY.name) ?: TextAlignmentMode.JUSTIFY.name) } catch (_: Exception) { TextAlignmentMode.JUSTIFY },
+            letterSpacing = prefs.getFloat("letter_spacing", 0.2f),
+            horizontalPadding = prefs.getInt("horizontal_padding", 20),
+            verticalPadding = prefs.getInt("vertical_padding", 16),
+            showFloatingAssistant = prefs.getBoolean("show_floating_assistant", true),
+            orbSize = try { OrbSize.valueOf(prefs.getString("orb_size", OrbSize.NANO.name) ?: OrbSize.NANO.name) } catch (_: Exception) { OrbSize.NANO },
+            orbMenuSize = try { OrbMenuSize.valueOf(prefs.getString("orb_menu_size", OrbMenuSize.MEDIUM.name) ?: OrbMenuSize.MEDIUM.name) } catch (_: Exception) { OrbMenuSize.MEDIUM },
+            orbEdgeSnap = prefs.getBoolean("orb_edge_snap", true),
+            orbPortraitX = prefs.getFloat("orb_pos_x_portrait", -1f),
+            orbPortraitY = prefs.getFloat("orb_pos_y_portrait", -1f),
+            orbLandscapeX = prefs.getFloat("orb_pos_x_landscape", -1f),
+            orbLandscapeY = prefs.getFloat("orb_pos_y_landscape", -1f),
+            orbColor = try { OrbColor.valueOf(prefs.getString("orb_color", OrbColor.THEME.name) ?: OrbColor.THEME.name) } catch (_: Exception) { OrbColor.THEME },
+            orbOpacity = prefs.getFloat("orb_opacity", 0.85f),
+            backgroundTexture = try { BackgroundTexture.valueOf(prefs.getString("background_texture", BackgroundTexture.NONE.name) ?: BackgroundTexture.NONE.name) } catch (_: Exception) { BackgroundTexture.NONE },
+            customBgUri = prefs.getString("custom_bg_uri", "") ?: "",
+            customBgColor = prefs.getLong("custom_bg_color", 0xFF1C1917L),
+            customTextColor = prefs.getLong("custom_text_color", 0xFFE7E5E4L),
+            customAccentColor = prefs.getLong("custom_accent_color", 0xFFD4AF37L),
+            orbActionItems = prefs.getStringSet("orb_action_items", null)?.mapNotNull { name ->
+                try { OrbActionItem.valueOf(name) } catch (_: Exception) { null }
+            }?.takeIf { it.size >= 8 }?.toSet() ?: OrbActionItem.entries.toSet(),
+            quickThemes = prefs.getStringSet("quick_themes", null)?.mapNotNull {
+                try { ThemeFamily.valueOf(it) } catch (_: Exception) { null }
+            }?.toSet() ?: ThemeFamily.entries.toSet(),
+            quickFonts = prefs.getStringSet("quick_fonts", null)?.mapNotNull {
+                try { TypefaceMode.valueOf(it) } catch (_: Exception) { null }
+            }?.toSet() ?: setOf(TypefaceMode.SERIF, TypefaceMode.SANS, TypefaceMode.GEORGIA),
+            orbActionOrder = prefs.getString("orb_action_order", null)?.split(",")?.mapNotNull { name ->
+                try { OrbActionItem.valueOf(name) } catch (_: Exception) { null }
+            }?.let { savedList ->
+                val set = savedList.toSet()
+                savedList + OrbActionItem.entries.filter { it !in set }
+            } ?: OrbActionItem.entries.toList(),
+            autoScrollSpeed = prefs.getFloat("auto_scroll_speed", 1.0f),
+            disableAi = prefs.getBoolean("disable_ai", false),
+            disableTts = prefs.getBoolean("disable_tts", false),
+            disableStt = prefs.getBoolean("disable_stt", false),
+            autoStartMic = prefs.getBoolean("auto_start_mic", true),
+            enableFtsIndexing = prefs.getBoolean("enable_fts_indexing", false),
+            spoilerShield = prefs.getBoolean("spoiler_shield", true),
+            gestureDoubleTap = try { GestureAction.valueOf(prefs.getString("gesture_double_tap", GestureAction.TOGGLE_AUTOSCROLL.name) ?: GestureAction.TOGGLE_AUTOSCROLL.name) } catch (_: Exception) { GestureAction.TOGGLE_AUTOSCROLL },
+            gestureTripleTap = try { GestureAction.valueOf(prefs.getString("gesture_triple_tap", GestureAction.SUMMON_ORB.name) ?: GestureAction.SUMMON_ORB.name) } catch (_: Exception) { GestureAction.SUMMON_ORB },
+            gestureSingleTap = try { GestureAction.valueOf(prefs.getString("gesture_single_tap", GestureAction.TOGGLE_BARS.name) ?: GestureAction.TOGGLE_BARS.name) } catch (_: Exception) { GestureAction.TOGGLE_BARS },
+            gestureTtsTap = try { GestureAction.valueOf(prefs.getString("gesture_tts_tap", GestureAction.TTS_READ_ALOUD.name) ?: GestureAction.TTS_READ_ALOUD.name) } catch (_: Exception) { GestureAction.TTS_READ_ALOUD },
+            geminiApiKey = prefs.getString("gemini_api_key", "") ?: "",
+            aiProvider = try { AiProvider.valueOf(prefs.getString("ai_provider", AiProvider.GEMINI.name) ?: AiProvider.GEMINI.name) } catch (_: Exception) { AiProvider.GEMINI },
+            aiBaseUrl = prefs.getString("ai_base_url", "https://api.openai.com/v1") ?: "https://api.openai.com/v1",
+            aiModel = prefs.getString("ai_model", null).let { if (it.isNullOrBlank()) "gemini-3.1-flash-lite" else it },
+            assistantOrbStyle = prefs.getString("assistant_orb_style", "EDGE_DOT") ?: "EDGE_DOT",
+            preferredLanguage = prefs.getString("preferred_language", "auto") ?: "auto"
+        )
+    }
+
+    fun getChaptersForBook(bookId: String): List<Chapter> {
+        val cached = chapterCache.get(bookId)
+        if (cached != null) return cached
+        val fromDb = dbHelper.getAllChaptersForBook(bookId)
+        if (fromDb.isNotEmpty()) {
+            chapterCache.put(bookId, fromDb)
+        }
+        return fromDb
+    }
+
+    fun getChapter(bookId: String, chapterIndex: Int): Chapter? {
+        val cached = chapterCache.get(bookId)
+        if (cached != null) {
+            return cached.getOrNull(chapterIndex)
+        }
+        return dbHelper.getChapter(bookId, chapterIndex)
+    }
+
+    fun getChapterCount(bookId: String): Int {
+        val cached = chapterCache.get(bookId)
+        if (cached != null) return cached.size
+        return dbHelper.getChapterCount(bookId)
+    }
+
+    fun precomputePagesProgressively(
+        book: Book,
+        fontSize: Int,
+        isLandscape: Boolean,
+        isStrictPaged: Boolean,
+        activeChapterIndex: Int = 0,
+        onActiveChapterReady: ((List<Pair<String, String>>) -> Unit)? = null,
+        onAllPagesReady: ((List<Pair<String, String>>) -> Unit)? = null
+    ) {
+        repoScope.launch(Dispatchers.Default) {
+            val chapters = if (book.chapters.isNotEmpty()) book.chapters else getChaptersForBook(book.id)
+            if (chapters.isEmpty()) return@launch
+            val allPages = PageCache.getOrComputeAsync(
+                bookId = book.id,
+                chapters = chapters,
+                fontSize = fontSize,
+                isLandscape = isLandscape,
+                isStrictPaged = isStrictPaged,
+                dbHelper = dbHelper,
+                activeChapterIndex = activeChapterIndex,
+                onActiveChapterReady = { activePages ->
+                    onActiveChapterReady?.invoke(activePages)
+                }
+            )
+            onAllPagesReady?.invoke(allPages)
+        }
+    }
+
     init {
         repoScope.launch(Dispatchers.IO) {
             val loadedBooks = loadAllBooks()
@@ -291,36 +432,33 @@ class BookRepository(private val context: Context) {
             try {
                 syncSettings()
             } catch (_: Exception) {}
-
-            // Pre-index active book if needed
-            val activeId = _activeBookId.value
-            val active = loadedBooks.find { it.id == activeId } ?: loadedBooks.firstOrNull()
-            if (active != null) {
-                indexBookIfNeeded(active)
-            }
         }
     }
 
     fun setGestureDoubleTap(action: GestureAction) {
         _gestureDoubleTap.value = action
+        updateReaderSettings { it.copy(gestureDoubleTap = action) }
         prefs.edit().putString("gesture_double_tap", action.name).apply()
         persistSettingToDb("gesture_double_tap", action.name)
     }
 
     fun setGestureTripleTap(action: GestureAction) {
         _gestureTripleTap.value = action
+        updateReaderSettings { it.copy(gestureTripleTap = action) }
         prefs.edit().putString("gesture_triple_tap", action.name).apply()
         persistSettingToDb("gesture_triple_tap", action.name)
     }
 
     fun setGestureSingleTap(action: GestureAction) {
         _gestureSingleTap.value = action
+        updateReaderSettings { it.copy(gestureSingleTap = action) }
         prefs.edit().putString("gesture_single_tap", action.name).apply()
         persistSettingToDb("gesture_single_tap", action.name)
     }
 
     fun setGestureTtsTap(action: GestureAction) {
         _gestureTtsTap.value = action
+        updateReaderSettings { it.copy(gestureTtsTap = action) }
         prefs.edit().putString("gesture_tts_tap", action.name).apply()
         persistSettingToDb("gesture_tts_tap", action.name)
     }
@@ -329,6 +467,7 @@ class BookRepository(private val context: Context) {
         _customBgColor.value = bg
         _customTextColor.value = text
         _customAccentColor.value = accent
+        updateReaderSettings { it.copy(customBgColor = bg, customTextColor = text, customAccentColor = accent) }
         prefs.edit()
             .putLong("custom_bg_color", bg)
             .putLong("custom_text_color", text)
@@ -341,44 +480,58 @@ class BookRepository(private val context: Context) {
 
     fun setHorizontalPadding(padding: Int) {
         _horizontalPadding.value = padding
+        updateReaderSettings { it.copy(horizontalPadding = padding) }
         prefs.edit().putInt("horizontal_padding", padding).apply()
         persistSettingToDb("horizontal_padding", padding.toString())
     }
 
     fun setVerticalPadding(padding: Int) {
         _verticalPadding.value = padding
+        updateReaderSettings { it.copy(verticalPadding = padding) }
         prefs.edit().putInt("vertical_padding", padding).apply()
         persistSettingToDb("vertical_padding", padding.toString())
     }
 
     fun setAssistantOrbStyle(style: String) {
         _assistantOrbStyle.value = style
+        updateReaderSettings { it.copy(assistantOrbStyle = style) }
         prefs.edit().putString("assistant_orb_style", style).apply()
         persistSettingToDb("assistant_orb_style", style)
     }
 
     fun setSpoilerShield(enabled: Boolean) {
         _spoilerShield.value = enabled
+        updateReaderSettings { it.copy(spoilerShield = enabled) }
         prefs.edit().putBoolean("spoiler_shield", enabled).apply()
         persistSettingToDb("spoiler_shield", enabled.toString())
     }
 
     fun setAutoScrollSpeed(speed: Float) {
         _autoScrollSpeed.value = speed
+        updateReaderSettings { it.copy(autoScrollSpeed = speed) }
         prefs.edit().putFloat("auto_scroll_speed", speed).apply()
         persistSettingToDb("auto_scroll_speed", speed.toString())
     }
 
     fun setDisableAi(disabled: Boolean) {
         _disableAi.value = disabled
+        updateReaderSettings { it.copy(disableAi = disabled) }
         prefs.edit().putBoolean("disable_ai", disabled).apply()
         persistSettingToDb("disable_ai", disabled.toString())
     }
 
     fun setDisableTts(disabled: Boolean) {
         _disableTts.value = disabled
+        updateReaderSettings { it.copy(disableTts = disabled) }
         prefs.edit().putBoolean("disable_tts", disabled).apply()
         persistSettingToDb("disable_tts", disabled.toString())
+    }
+
+    fun setAutoStartMic(enabled: Boolean) {
+        _autoStartMic.value = enabled
+        updateReaderSettings { it.copy(autoStartMic = enabled) }
+        prefs.edit().putBoolean("auto_start_mic", enabled).apply()
+        persistSettingToDb("auto_start_mic", enabled.toString())
     }
 
     fun exportUnifiedBackupJson(): String {
@@ -701,12 +854,14 @@ class BookRepository(private val context: Context) {
 
     fun setDisableStt(disabled: Boolean) {
         _disableStt.value = disabled
+        updateReaderSettings { it.copy(disableStt = disabled) }
         prefs.edit().putBoolean("disable_stt", disabled).apply()
         persistSettingToDb("disable_stt", disabled.toString())
     }
 
     fun setEnableFtsIndexing(enabled: Boolean) {
         _enableFtsIndexing.value = enabled
+        updateReaderSettings { it.copy(enableFtsIndexing = enabled) }
         prefs.edit().putBoolean("enable_fts_indexing", enabled).apply()
         persistSettingToDb("enable_fts_indexing", enabled.toString())
     }
@@ -818,6 +973,7 @@ class BookRepository(private val context: Context) {
 
     fun setPreferredLanguage(langCode: String) {
         _preferredLanguage.value = langCode
+        updateReaderSettings { it.copy(preferredLanguage = langCode) }
         prefs.edit().putString("preferred_language", langCode).apply()
         persistSettingToDb("preferred_language", langCode)
     }
@@ -902,18 +1058,21 @@ class BookRepository(private val context: Context) {
 
     fun setAiProvider(provider: AiProvider) {
         _aiProvider.value = provider
+        updateReaderSettings { it.copy(aiProvider = provider) }
         prefs.edit().putString("ai_provider", provider.name).apply()
         persistSettingToDb("ai_provider", provider.name)
     }
 
     fun setAiBaseUrl(url: String) {
         _aiBaseUrl.value = url
+        updateReaderSettings { it.copy(aiBaseUrl = url) }
         prefs.edit().putString("ai_base_url", url).apply()
         persistSettingToDb("ai_base_url", url)
     }
 
     fun setAiModel(model: String) {
         _aiModel.value = model
+        updateReaderSettings { it.copy(aiModel = model) }
         prefs.edit().putString("ai_model", model).apply()
         persistSettingToDb("ai_model", model)
     }
@@ -926,6 +1085,7 @@ class BookRepository(private val context: Context) {
             current.add(family)
         }
         _quickThemes.value = current
+        updateReaderSettings { it.copy(quickThemes = current) }
         prefs.edit().putStringSet("quick_themes", current.map { it.name }.toSet()).apply()
         persistSettingToDb("quick_themes", current.joinToString(",") { it.name })
     }
@@ -938,6 +1098,7 @@ class BookRepository(private val context: Context) {
             current.add(font)
         }
         _quickFonts.value = current
+        updateReaderSettings { it.copy(quickFonts = current) }
         prefs.edit().putStringSet("quick_fonts", current.map { it.name }.toSet()).apply()
         persistSettingToDb("quick_fonts", current.joinToString(",") { it.name })
     }
@@ -949,6 +1110,7 @@ class BookRepository(private val context: Context) {
             val item = list.removeAt(fromIndex)
             list.add(toIndex, item)
             _orbActionOrder.value = list
+            updateReaderSettings { it.copy(orbActionOrder = list) }
             prefs.edit().putString("orb_action_order", list.joinToString(",") { it.name }).apply()
             persistSettingToDb("orb_action_order", list.joinToString(",") { it.name })
         }
@@ -956,7 +1118,10 @@ class BookRepository(private val context: Context) {
 
     fun getActiveBook(): Book? {
         val id = _activeBookId.value
-        return _books.value.find { it.id == id } ?: _books.value.firstOrNull()
+        val book = _books.value.find { it.id == id } ?: _books.value.firstOrNull() ?: return null
+        if (book.chapters.isNotEmpty()) return book
+        val chaps = getChaptersForBook(book.id)
+        return if (chaps.isNotEmpty()) book.copy(chapters = chaps) else book
     }
 
     fun setActiveBook(bookId: String) {
@@ -968,34 +1133,25 @@ class BookRepository(private val context: Context) {
             if (it.id == bookId) it.copy(lastRead = "Just now") else it
         }
         _books.value = updated
-        _books.value.find { it.id == bookId }?.let { indexBookIfNeeded(it) }
+        repoScope.launch(Dispatchers.IO) {
+            getChaptersForBook(bookId)
+        }
     }
 
     fun updateReadingPosition(bookId: String, chapterIdx: Int, pageIdx: Int, scrollPos: Int, progressPct: Int) {
-        val currentBook = _books.value.find { it.id == bookId }
-        if (currentBook != null &&
-            currentBook.currentChapter == chapterIdx &&
-            currentBook.currentPage == pageIdx &&
-            currentBook.scrollPos == scrollPos &&
-            currentBook.progress == progressPct
+        val currentPos = _readingPosition.value
+        if (currentPos.bookId == bookId &&
+            currentPos.chapterIndex == chapterIdx &&
+            currentPos.pageIndex == pageIdx &&
+            currentPos.scrollPos == scrollPos &&
+            currentPos.progressPct == progressPct
         ) {
             return
         }
 
-        val updated = _books.value.map {
-            if (it.id == bookId) {
-                it.copy(
-                    currentChapter = chapterIdx,
-                    currentPage = pageIdx,
-                    scrollPos = scrollPos,
-                    progress = progressPct,
-                    lastRead = "Just now"
-                )
-            } else it
-        }
-        _books.value = updated
+        _readingPosition.value = ReadingPosition(bookId, chapterIdx, pageIdx, scrollPos, progressPct)
 
-        // Persist per book in prefs
+        // Persist per book in prefs immediately
         prefs.edit()
             .putInt("${bookId}_chapter", chapterIdx)
             .putInt("${bookId}_page", pageIdx)
@@ -1012,12 +1168,25 @@ class BookRepository(private val context: Context) {
             persistSettingToDb("read_till_${bookId}", clamped.toString())
         }
 
-        // Debounce SQLite reading progress updates to prevent database lock contention
+        // Debounce updating _books.value and SQLite reading progress updates to prevent database lock contention & UI recomposition storms
         readingPositionSaveJob?.cancel()
         readingPositionSaveJob = repoScope.launch {
             kotlinx.coroutines.delay(800)
             try {
-                val book = _books.value.find { it.id == bookId }
+                val updated = _books.value.map {
+                    if (it.id == bookId) {
+                        it.copy(
+                            currentChapter = chapterIdx,
+                            currentPage = pageIdx,
+                            scrollPos = scrollPos,
+                            progress = progressPct,
+                            lastRead = "Just now"
+                        )
+                    } else it
+                }
+                _books.value = updated
+
+                val book = updated.find { it.id == bookId }
                 if (book != null) {
                     dbHelper.updateReadingProgress(bookId, book.title, book.author, progressPct, "${100 - progressPct}m left")
                     dbHelper.updateBookProgress(bookId, chapterIdx, pageIdx, scrollPos, progressPct)
@@ -1041,18 +1210,21 @@ class BookRepository(private val context: Context) {
 
     fun setFontSize(size: Int) {
         _fontSize.value = size
+        updateReaderSettings { it.copy(fontSize = size) }
         prefs.edit().putInt("font_size", size).apply()
         persistSettingToDb("font_size", size.toString())
     }
 
     fun setReadingMode(mode: ReadingMode) {
         _readingMode.value = mode
+        updateReaderSettings { it.copy(readingMode = mode) }
         prefs.edit().putString("reading_mode", mode.name).apply()
         persistSettingToDb("reading_mode", mode.name)
     }
 
     fun setThemeMode(theme: ThemeMode) {
         _themeMode.value = theme
+        updateReaderSettings { it.copy(themeMode = theme) }
         prefs.edit().putString("theme_mode", theme.name).apply()
         persistSettingToDb("theme_mode", theme.name)
         when (theme) {
@@ -1073,30 +1245,35 @@ class BookRepository(private val context: Context) {
 
     fun setThemeFamily(family: ThemeFamily) {
         _themeFamily.value = family
+        updateReaderSettings { it.copy(themeFamily = family) }
         prefs.edit().putString("theme_family", family.name).apply()
         persistSettingToDb("theme_family", family.name)
     }
 
     fun setThemeVariant(variant: ThemeVariant) {
         _themeVariant.value = variant
+        updateReaderSettings { it.copy(themeVariant = variant) }
         prefs.edit().putString("theme_variant", variant.name).apply()
         persistSettingToDb("theme_variant", variant.name)
     }
 
     fun setBackgroundTexture(texture: BackgroundTexture) {
         _backgroundTexture.value = texture
+        updateReaderSettings { it.copy(backgroundTexture = texture) }
         prefs.edit().putString("background_texture", texture.name).apply()
         persistSettingToDb("background_texture", texture.name)
     }
 
     fun setCustomBgUri(uri: String) {
         _customBgUri.value = uri
+        updateReaderSettings { it.copy(customBgUri = uri) }
         prefs.edit().putString("custom_bg_uri", uri).apply()
         persistSettingToDb("custom_bg_uri", uri)
     }
 
     fun setOrbActionItems(items: Set<OrbActionItem>) {
         _orbActionItems.value = items
+        updateReaderSettings { it.copy(orbActionItems = items) }
         prefs.edit().putStringSet("orb_action_items", items.map { it.name }.toSet()).apply()
         persistSettingToDb("orb_action_items", items.joinToString(",") { it.name })
     }
@@ -1113,54 +1290,63 @@ class BookRepository(private val context: Context) {
 
     fun setTextAlignmentMode(alignment: TextAlignmentMode) {
         _textAlignmentMode.value = alignment
+        updateReaderSettings { it.copy(textAlignmentMode = alignment) }
         prefs.edit().putString("text_alignment_mode", alignment.name).apply()
         persistSettingToDb("text_alignment_mode", alignment.name)
     }
 
     fun setLetterSpacing(spacing: Float) {
         _letterSpacing.value = spacing
+        updateReaderSettings { it.copy(letterSpacing = spacing) }
         prefs.edit().putFloat("letter_spacing", spacing).apply()
         persistSettingToDb("letter_spacing", spacing.toString())
     }
 
     fun setTypefaceMode(typeface: TypefaceMode) {
         _typefaceMode.value = typeface
+        updateReaderSettings { it.copy(typefaceMode = typeface) }
         prefs.edit().putString("typeface_mode", typeface.name).apply()
         persistSettingToDb("typeface_mode", typeface.name)
     }
 
     fun setLineHeight(multiplier: Float) {
         _lineHeightMultiplier.value = multiplier
+        updateReaderSettings { it.copy(lineHeightMultiplier = multiplier) }
         prefs.edit().putFloat("line_height", multiplier).apply()
         persistSettingToDb("line_height", multiplier.toString())
     }
 
     fun setParagraphSpacing(multiplier: Float) {
         _paragraphSpacingMultiplier.value = multiplier
+        updateReaderSettings { it.copy(paragraphSpacingMultiplier = multiplier) }
         prefs.edit().putFloat("paragraph_spacing", multiplier).apply()
         persistSettingToDb("paragraph_spacing", multiplier.toString())
     }
 
     fun setShowFloatingAssistant(show: Boolean) {
         _showFloatingAssistant.value = show
+        updateReaderSettings { it.copy(showFloatingAssistant = show) }
         prefs.edit().putBoolean("show_floating_assistant", show).apply()
         persistSettingToDb("show_floating_assistant", show.toString())
     }
 
     fun setOrbSize(size: OrbSize) {
         _orbSize.value = size
+        updateReaderSettings { it.copy(orbSize = size) }
         prefs.edit().putString("orb_size", size.name).apply()
         persistSettingToDb("orb_size", size.name)
     }
 
     fun setOrbMenuSize(size: OrbMenuSize) {
         _orbMenuSize.value = size
+        updateReaderSettings { it.copy(orbMenuSize = size) }
         prefs.edit().putString("orb_menu_size", size.name).apply()
         persistSettingToDb("orb_menu_size", size.name)
     }
 
     fun setOrbEdgeSnap(snap: Boolean) {
         _orbEdgeSnap.value = snap
+        updateReaderSettings { it.copy(orbEdgeSnap = snap) }
         prefs.edit().putBoolean("orb_edge_snap", snap).apply()
         persistSettingToDb("orb_edge_snap", snap.toString())
     }
@@ -1169,12 +1355,14 @@ class BookRepository(private val context: Context) {
         if (isLandscape) {
             _orbLandscapeX.value = x
             _orbLandscapeY.value = y
+            updateReaderSettings { it.copy(orbLandscapeX = x, orbLandscapeY = y) }
             prefs.edit().putFloat("orb_pos_x_landscape", x).putFloat("orb_pos_y_landscape", y).apply()
             persistSettingToDb("orb_pos_x_landscape", x.toString())
             persistSettingToDb("orb_pos_y_landscape", y.toString())
         } else {
             _orbPortraitX.value = x
             _orbPortraitY.value = y
+            updateReaderSettings { it.copy(orbPortraitX = x, orbPortraitY = y) }
             prefs.edit().putFloat("orb_pos_x_portrait", x).putFloat("orb_pos_y_portrait", y).apply()
             persistSettingToDb("orb_pos_x_portrait", x.toString())
             persistSettingToDb("orb_pos_y_portrait", y.toString())
@@ -1183,18 +1371,21 @@ class BookRepository(private val context: Context) {
 
     fun setOrbColor(color: OrbColor) {
         _orbColor.value = color
+        updateReaderSettings { it.copy(orbColor = color) }
         prefs.edit().putString("orb_color", color.name).apply()
         persistSettingToDb("orb_color", color.name)
     }
 
     fun setOrbOpacity(opacity: Float) {
         _orbOpacity.value = opacity
+        updateReaderSettings { it.copy(orbOpacity = opacity) }
         prefs.edit().putFloat("orb_opacity", opacity).apply()
         persistSettingToDb("orb_opacity", opacity.toString())
     }
 
     fun setGeminiApiKey(key: String) {
         _geminiApiKey.value = key
+        updateReaderSettings { it.copy(geminiApiKey = key) }
         prefs.edit().putString("gemini_api_key", key).apply()
         persistSettingToDb("gemini_api_key", key)
     }
@@ -1272,28 +1463,39 @@ class BookRepository(private val context: Context) {
     fun getCharactersForBook(bookId: String): List<BookCharacter> {
         val cached = _characters.value[bookId]
         if (cached != null) return cached
+        dbHelper.deduplicateCharacters(bookId)
         val list = dbHelper.getCharacters(bookId)
         _characters.value = _characters.value + (bookId to list)
         return list
     }
 
     fun loadCharacters(bookId: String) {
-        repoScope.launch {
+        repoScope.launch(Dispatchers.IO) {
+            dbHelper.deduplicateCharacters(bookId)
             val list = dbHelper.getCharacters(bookId)
             _characters.value = _characters.value + (bookId to list)
         }
     }
 
     fun saveCharacter(character: BookCharacter) {
-        repoScope.launch {
+        repoScope.launch(Dispatchers.IO) {
             dbHelper.insertCharacter(character)
             val list = dbHelper.getCharacters(character.bookId)
             _characters.value = _characters.value + (character.bookId to list)
         }
     }
 
+    fun saveCharacters(bookId: String, newCharacters: List<BookCharacter>) {
+        repoScope.launch(Dispatchers.IO) {
+            dbHelper.saveCharacters(bookId, newCharacters)
+            dbHelper.deduplicateCharacters(bookId)
+            val list = dbHelper.getCharacters(bookId)
+            _characters.value = _characters.value + (bookId to list)
+        }
+    }
+
     fun deleteCharacter(id: Long, bookId: String) {
-        repoScope.launch {
+        repoScope.launch(Dispatchers.IO) {
             dbHelper.deleteCharacter(id)
             val list = dbHelper.getCharacters(bookId)
             _characters.value = _characters.value + (bookId to list)
@@ -1301,7 +1503,7 @@ class BookRepository(private val context: Context) {
     }
 
     fun clearCharacters(bookId: String) {
-        repoScope.launch {
+        repoScope.launch(Dispatchers.IO) {
             dbHelper.clearCharacters(bookId)
             _characters.value = _characters.value + (bookId to emptyList())
         }
@@ -1315,28 +1517,39 @@ class BookRepository(private val context: Context) {
     fun getLoreForBook(bookId: String): List<BookLore> {
         val cached = _lore.value[bookId]
         if (cached != null) return cached
+        dbHelper.deduplicateLore(bookId)
         val list = dbHelper.getLore(bookId)
         _lore.value = _lore.value + (bookId to list)
         return list
     }
 
     fun loadLore(bookId: String) {
-        repoScope.launch {
+        repoScope.launch(Dispatchers.IO) {
+            dbHelper.deduplicateLore(bookId)
             val list = dbHelper.getLore(bookId)
             _lore.value = _lore.value + (bookId to list)
         }
     }
 
     fun saveLore(loreItem: BookLore) {
-        repoScope.launch {
+        repoScope.launch(Dispatchers.IO) {
             dbHelper.insertLore(loreItem)
             val list = dbHelper.getLore(loreItem.bookId)
             _lore.value = _lore.value + (loreItem.bookId to list)
         }
     }
 
+    fun saveLoreList(bookId: String, newLoreList: List<BookLore>) {
+        repoScope.launch(Dispatchers.IO) {
+            dbHelper.saveLoreList(bookId, newLoreList)
+            dbHelper.deduplicateLore(bookId)
+            val list = dbHelper.getLore(bookId)
+            _lore.value = _lore.value + (bookId to list)
+        }
+    }
+
     fun deleteLore(id: Long, bookId: String) {
-        repoScope.launch {
+        repoScope.launch(Dispatchers.IO) {
             dbHelper.deleteLore(id)
             val list = dbHelper.getLore(bookId)
             _lore.value = _lore.value + (bookId to list)
@@ -1385,11 +1598,16 @@ class BookRepository(private val context: Context) {
 
         val updated = listOf(book) + _books.value.filterNot { it.id == book.id }
         _books.value = updated
+        if (book.chapters.isNotEmpty()) {
+            chapterCache.put(book.id, book.chapters)
+        }
         setActiveBook(book.id)
         dbHelper.insertOrUpdateBook(book, book.filePath, book.isDownloaded, book.downloadUrl, book.fileSize)
     }
 
     fun removeBook(bookId: String) {
+        chapterCache.remove(bookId)
+        PageCache.invalidate(bookId, dbHelper)
         val currentDeleted = prefs.getStringSet("deleted_book_ids", emptySet())?.toMutableSet() ?: mutableSetOf()
         currentDeleted.add(bookId)
         prefs.edit().putStringSet("deleted_book_ids", currentDeleted).apply()
@@ -1508,155 +1726,214 @@ class BookRepository(private val context: Context) {
     private fun syncSettings() {
         val dbSettings = dbHelper.getAllSettings()
         if (dbSettings.isNotEmpty()) {
-            dbSettings["font_size"]?.toIntOrNull()?.let { _fontSize.value = it }
+            var s = _readerSettings.value
+            dbSettings["font_size"]?.toIntOrNull()?.let { s = s.copy(fontSize = it) }
             dbSettings["reading_mode"]?.let {
-                try { _readingMode.value = ReadingMode.valueOf(it) } catch (_: Exception) {}
+                try { s = s.copy(readingMode = ReadingMode.valueOf(it)) } catch (_: Exception) {}
             }
             dbSettings["theme_mode"]?.let {
-                try { _themeMode.value = ThemeMode.valueOf(it) } catch (_: Exception) {}
+                try { s = s.copy(themeMode = ThemeMode.valueOf(it)) } catch (_: Exception) {}
             }
             dbSettings["typeface_mode"]?.let {
-                try { _typefaceMode.value = TypefaceMode.valueOf(it) } catch (_: Exception) {}
+                try { s = s.copy(typefaceMode = TypefaceMode.valueOf(it)) } catch (_: Exception) {}
             }
-            dbSettings["line_height"]?.toFloatOrNull()?.let { _lineHeightMultiplier.value = it }
-            dbSettings["paragraph_spacing"]?.toFloatOrNull()?.let { _paragraphSpacingMultiplier.value = it }
-            dbSettings["letter_spacing"]?.toFloatOrNull()?.let { _letterSpacing.value = it }
-            dbSettings["show_floating_assistant"]?.toBooleanStrictOrNull()?.let { _showFloatingAssistant.value = it }
+            dbSettings["line_height"]?.toFloatOrNull()?.let { s = s.copy(lineHeightMultiplier = it) }
+            dbSettings["paragraph_spacing"]?.toFloatOrNull()?.let { s = s.copy(paragraphSpacingMultiplier = it) }
+            dbSettings["letter_spacing"]?.toFloatOrNull()?.let { s = s.copy(letterSpacing = it) }
+            dbSettings["show_floating_assistant"]?.toBooleanStrictOrNull()?.let { s = s.copy(showFloatingAssistant = it) }
             dbSettings["orb_size"]?.let {
-                try { _orbSize.value = OrbSize.valueOf(it) } catch (_: Exception) {}
+                try { s = s.copy(orbSize = OrbSize.valueOf(it)) } catch (_: Exception) {}
             }
             dbSettings["orb_menu_size"]?.let {
-                try { _orbMenuSize.value = OrbMenuSize.valueOf(it) } catch (_: Exception) {}
+                try { s = s.copy(orbMenuSize = OrbMenuSize.valueOf(it)) } catch (_: Exception) {}
             }
-            dbSettings["orb_edge_snap"]?.toBooleanStrictOrNull()?.let { _orbEdgeSnap.value = it }
+            dbSettings["orb_edge_snap"]?.toBooleanStrictOrNull()?.let { s = s.copy(orbEdgeSnap = it) }
             dbSettings["orb_color"]?.let {
-                try { _orbColor.value = OrbColor.valueOf(it) } catch (_: Exception) {}
+                try { s = s.copy(orbColor = OrbColor.valueOf(it)) } catch (_: Exception) {}
             }
-            dbSettings["orb_opacity"]?.toFloatOrNull()?.let { _orbOpacity.value = it }
-            dbSettings["orb_pos_x_portrait"]?.toFloatOrNull()?.let { _orbPortraitX.value = it }
-            dbSettings["orb_pos_y_portrait"]?.toFloatOrNull()?.let { _orbPortraitY.value = it }
-            dbSettings["orb_pos_x_landscape"]?.toFloatOrNull()?.let { _orbLandscapeX.value = it }
-            dbSettings["orb_pos_y_landscape"]?.toFloatOrNull()?.let { _orbLandscapeY.value = it }
+            dbSettings["orb_opacity"]?.toFloatOrNull()?.let { s = s.copy(orbOpacity = it) }
+            dbSettings["orb_pos_x_portrait"]?.toFloatOrNull()?.let { s = s.copy(orbPortraitX = it) }
+            dbSettings["orb_pos_y_portrait"]?.toFloatOrNull()?.let { s = s.copy(orbPortraitY = it) }
+            dbSettings["orb_pos_x_landscape"]?.toFloatOrNull()?.let { s = s.copy(orbLandscapeX = it) }
+            dbSettings["orb_pos_y_landscape"]?.toFloatOrNull()?.let { s = s.copy(orbLandscapeY = it) }
             dbSettings["theme_family"]?.let {
-                try { _themeFamily.value = ThemeFamily.valueOf(it) } catch (_: Exception) {}
+                try { s = s.copy(themeFamily = ThemeFamily.valueOf(it)) } catch (_: Exception) {}
             }
             dbSettings["theme_variant"]?.let {
-                try { _themeVariant.value = ThemeVariant.valueOf(it) } catch (_: Exception) {}
+                try { s = s.copy(themeVariant = ThemeVariant.valueOf(it)) } catch (_: Exception) {}
             }
             dbSettings["background_texture"]?.let {
-                try { _backgroundTexture.value = BackgroundTexture.valueOf(it) } catch (_: Exception) {}
+                try { s = s.copy(backgroundTexture = BackgroundTexture.valueOf(it)) } catch (_: Exception) {}
             }
-            dbSettings["custom_bg_uri"]?.let { _customBgUri.value = it }
+            dbSettings["custom_bg_uri"]?.let { s = s.copy(customBgUri = it) }
             dbSettings["text_alignment_mode"]?.let {
-                try { _textAlignmentMode.value = TextAlignmentMode.valueOf(it) } catch (_: Exception) {}
+                try { s = s.copy(textAlignmentMode = TextAlignmentMode.valueOf(it)) } catch (_: Exception) {}
             }
-            dbSettings["horizontal_padding"]?.toIntOrNull()?.let { _horizontalPadding.value = it }
-            dbSettings["vertical_padding"]?.toIntOrNull()?.let { _verticalPadding.value = it }
-            dbSettings["assistant_orb_style"]?.let { _assistantOrbStyle.value = it }
-            dbSettings["spoiler_shield"]?.toBooleanStrictOrNull()?.let { _spoilerShield.value = it }
-            dbSettings["auto_scroll_speed"]?.toFloatOrNull()?.let { _autoScrollSpeed.value = it }
-            dbSettings["disable_ai"]?.toBooleanStrictOrNull()?.let { _disableAi.value = it }
-            dbSettings["disable_tts"]?.toBooleanStrictOrNull()?.let { _disableTts.value = it }
-            dbSettings["disable_stt"]?.toBooleanStrictOrNull()?.let { _disableStt.value = it }
-            dbSettings["enable_fts_indexing"]?.toBooleanStrictOrNull()?.let { _enableFtsIndexing.value = it }
+            dbSettings["horizontal_padding"]?.toIntOrNull()?.let { s = s.copy(horizontalPadding = it) }
+            dbSettings["vertical_padding"]?.toIntOrNull()?.let { s = s.copy(verticalPadding = it) }
+            dbSettings["assistant_orb_style"]?.let { s = s.copy(assistantOrbStyle = it) }
+            dbSettings["spoiler_shield"]?.toBooleanStrictOrNull()?.let { s = s.copy(spoilerShield = it) }
+            dbSettings["auto_scroll_speed"]?.toFloatOrNull()?.let { s = s.copy(autoScrollSpeed = it) }
+            dbSettings["disable_ai"]?.toBooleanStrictOrNull()?.let { s = s.copy(disableAi = it) }
+            dbSettings["disable_tts"]?.toBooleanStrictOrNull()?.let { s = s.copy(disableTts = it) }
+            dbSettings["disable_stt"]?.toBooleanStrictOrNull()?.let { s = s.copy(disableStt = it) }
+            dbSettings["auto_start_mic"]?.toBooleanStrictOrNull()?.let { s = s.copy(autoStartMic = it) }
+            dbSettings["enable_fts_indexing"]?.toBooleanStrictOrNull()?.let { s = s.copy(enableFtsIndexing = it) }
             dbSettings["gesture_double_tap"]?.let {
-                try { _gestureDoubleTap.value = GestureAction.valueOf(it) } catch (_: Exception) {}
+                try { s = s.copy(gestureDoubleTap = GestureAction.valueOf(it)) } catch (_: Exception) {}
             }
             dbSettings["gesture_triple_tap"]?.let {
-                try { _gestureTripleTap.value = GestureAction.valueOf(it) } catch (_: Exception) {}
+                try { s = s.copy(gestureTripleTap = GestureAction.valueOf(it)) } catch (_: Exception) {}
             }
             dbSettings["gesture_single_tap"]?.let {
-                try { _gestureSingleTap.value = GestureAction.valueOf(it) } catch (_: Exception) {}
+                try { s = s.copy(gestureSingleTap = GestureAction.valueOf(it)) } catch (_: Exception) {}
             }
             dbSettings["gesture_tts_tap"]?.let {
-                try { _gestureTtsTap.value = GestureAction.valueOf(it) } catch (_: Exception) {}
+                try { s = s.copy(gestureTtsTap = GestureAction.valueOf(it)) } catch (_: Exception) {}
             }
-            dbSettings["custom_bg_color"]?.toLongOrNull()?.let { _customBgColor.value = it }
-            dbSettings["custom_text_color"]?.toLongOrNull()?.let { _customTextColor.value = it }
-            dbSettings["custom_accent_color"]?.toLongOrNull()?.let { _customAccentColor.value = it }
+            dbSettings["custom_bg_color"]?.toLongOrNull()?.let { s = s.copy(customBgColor = it) }
+            dbSettings["custom_text_color"]?.toLongOrNull()?.let { s = s.copy(customTextColor = it) }
+            dbSettings["custom_accent_color"]?.toLongOrNull()?.let { s = s.copy(customAccentColor = it) }
             dbSettings["orb_action_items"]?.split(",")?.mapNotNull { name ->
                 try { OrbActionItem.valueOf(name.trim()) } catch (_: Exception) { null }
-            }?.takeIf { it.isNotEmpty() }?.toSet()?.let { _orbActionItems.value = it }
+            }?.takeIf { it.isNotEmpty() }?.toSet()?.let { s = s.copy(orbActionItems = it) }
             dbSettings["orb_action_order"]?.split(",")?.mapNotNull { name ->
                 try { OrbActionItem.valueOf(name.trim()) } catch (_: Exception) { null }
-            }?.takeIf { it.isNotEmpty() }?.let { _orbActionOrder.value = it }
+            }?.takeIf { it.isNotEmpty() }?.let { s = s.copy(orbActionOrder = it) }
             dbSettings["quick_themes"]?.split(",")?.mapNotNull { name ->
                 try { ThemeFamily.valueOf(name.trim()) } catch (_: Exception) { null }
-            }?.takeIf { it.isNotEmpty() }?.toSet()?.let { _quickThemes.value = it }
+            }?.takeIf { it.isNotEmpty() }?.toSet()?.let { s = s.copy(quickThemes = it) }
             dbSettings["quick_fonts"]?.split(",")?.mapNotNull { name ->
                 try { TypefaceMode.valueOf(name.trim()) } catch (_: Exception) { null }
-            }?.takeIf { it.isNotEmpty() }?.toSet()?.let { _quickFonts.value = it }
+            }?.takeIf { it.isNotEmpty() }?.toSet()?.let { s = s.copy(quickFonts = it) }
             dbSettings["ai_provider"]?.let {
-                try { _aiProvider.value = AiProvider.valueOf(it) } catch (_: Exception) {}
+                try { s = s.copy(aiProvider = AiProvider.valueOf(it)) } catch (_: Exception) {}
             }
-            dbSettings["ai_model"]?.let { if (it.isNotBlank()) _aiModel.value = it }
-            dbSettings["ai_base_url"]?.let { if (it.isNotBlank()) _aiBaseUrl.value = it }
+            dbSettings["ai_model"]?.let { if (it.isNotBlank()) s = s.copy(aiModel = it) }
+            dbSettings["ai_base_url"]?.let { if (it.isNotBlank()) s = s.copy(aiBaseUrl = it) }
             dbSettings["gemini_api_key"]?.let { dbKey ->
                 if (dbKey.isNotBlank()) {
-                    _geminiApiKey.value = dbKey
+                    s = s.copy(geminiApiKey = dbKey)
                     prefs.edit().putString("gemini_api_key", dbKey).apply()
                 } else {
                     val prefsKey = prefs.getString("gemini_api_key", "") ?: ""
                     if (prefsKey.isNotBlank()) {
-                        _geminiApiKey.value = prefsKey
+                        s = s.copy(geminiApiKey = prefsKey)
                         persistSettingToDb("gemini_api_key", prefsKey)
                     }
                 }
             } ?: run {
                 val prefsKey = prefs.getString("gemini_api_key", "") ?: ""
                 if (prefsKey.isNotBlank()) {
-                    _geminiApiKey.value = prefsKey
+                    s = s.copy(geminiApiKey = prefsKey)
                     persistSettingToDb("gemini_api_key", prefsKey)
                 }
             }
-        }
 
-        // Sync current state into SQLite
-        persistSettingToDb("font_size", _fontSize.value.toString())
-        persistSettingToDb("reading_mode", _readingMode.value.name)
-        persistSettingToDb("theme_mode", _themeMode.value.name)
-        persistSettingToDb("typeface_mode", _typefaceMode.value.name)
-        persistSettingToDb("line_height", _lineHeightMultiplier.value.toString())
-        persistSettingToDb("paragraph_spacing", _paragraphSpacingMultiplier.value.toString())
-        persistSettingToDb("letter_spacing", _letterSpacing.value.toString())
-        persistSettingToDb("show_floating_assistant", _showFloatingAssistant.value.toString())
-        persistSettingToDb("orb_size", _orbSize.value.name)
-        persistSettingToDb("orb_menu_size", _orbMenuSize.value.name)
-        persistSettingToDb("orb_edge_snap", _orbEdgeSnap.value.toString())
-        persistSettingToDb("orb_color", _orbColor.value.name)
-        persistSettingToDb("orb_opacity", _orbOpacity.value.toString())
-        persistSettingToDb("orb_pos_x_portrait", _orbPortraitX.value.toString())
-        persistSettingToDb("orb_pos_y_portrait", _orbPortraitY.value.toString())
-        persistSettingToDb("orb_pos_x_landscape", _orbLandscapeX.value.toString())
-        persistSettingToDb("orb_pos_y_landscape", _orbLandscapeY.value.toString())
-        persistSettingToDb("theme_family", _themeFamily.value.name)
-        persistSettingToDb("theme_variant", _themeVariant.value.name)
-        persistSettingToDb("background_texture", _backgroundTexture.value.name)
-        persistSettingToDb("custom_bg_uri", _customBgUri.value)
-        persistSettingToDb("text_alignment_mode", _textAlignmentMode.value.name)
-        persistSettingToDb("horizontal_padding", _horizontalPadding.value.toString())
-        persistSettingToDb("vertical_padding", _verticalPadding.value.toString())
-        persistSettingToDb("assistant_orb_style", _assistantOrbStyle.value)
-        persistSettingToDb("spoiler_shield", _spoilerShield.value.toString())
-        persistSettingToDb("auto_scroll_speed", _autoScrollSpeed.value.toString())
-        persistSettingToDb("disable_ai", _disableAi.value.toString())
-        persistSettingToDb("disable_tts", _disableTts.value.toString())
-        persistSettingToDb("disable_stt", _disableStt.value.toString())
-        persistSettingToDb("enable_fts_indexing", _enableFtsIndexing.value.toString())
-        persistSettingToDb("gesture_double_tap", _gestureDoubleTap.value.name)
-        persistSettingToDb("gesture_triple_tap", _gestureTripleTap.value.name)
-        persistSettingToDb("gesture_single_tap", _gestureSingleTap.value.name)
-        persistSettingToDb("gesture_tts_tap", _gestureTtsTap.value.name)
-        persistSettingToDb("custom_bg_color", _customBgColor.value.toString())
-        persistSettingToDb("custom_text_color", _customTextColor.value.toString())
-        persistSettingToDb("custom_accent_color", _customAccentColor.value.toString())
-        persistSettingToDb("orb_action_items", _orbActionItems.value.joinToString(",") { it.name })
-        persistSettingToDb("orb_action_order", _orbActionOrder.value.joinToString(",") { it.name })
-        persistSettingToDb("quick_themes", _quickThemes.value.joinToString(",") { it.name })
-        persistSettingToDb("quick_fonts", _quickFonts.value.joinToString(",") { it.name })
-        persistSettingToDb("ai_provider", _aiProvider.value.name)
-        persistSettingToDb("ai_model", _aiModel.value)
-        persistSettingToDb("ai_base_url", _aiBaseUrl.value)
-        persistSettingToDb("gemini_api_key", _geminiApiKey.value)
+            // Atomic update to readerSettings Flow
+            _readerSettings.value = s
+
+            // Also keep individual StateFlows in sync
+            _fontSize.value = s.fontSize
+            _readingMode.value = s.readingMode
+            _themeMode.value = s.themeMode
+            _typefaceMode.value = s.typefaceMode
+            _lineHeightMultiplier.value = s.lineHeightMultiplier
+            _paragraphSpacingMultiplier.value = s.paragraphSpacingMultiplier
+            _letterSpacing.value = s.letterSpacing
+            _showFloatingAssistant.value = s.showFloatingAssistant
+            _orbSize.value = s.orbSize
+            _orbMenuSize.value = s.orbMenuSize
+            _orbEdgeSnap.value = s.orbEdgeSnap
+            _orbColor.value = s.orbColor
+            _orbOpacity.value = s.orbOpacity
+            _orbPortraitX.value = s.orbPortraitX
+            _orbPortraitY.value = s.orbPortraitY
+            _orbLandscapeX.value = s.orbLandscapeX
+            _orbLandscapeY.value = s.orbLandscapeY
+            _themeFamily.value = s.themeFamily
+            _themeVariant.value = s.themeVariant
+            _backgroundTexture.value = s.backgroundTexture
+            _customBgUri.value = s.customBgUri
+            _textAlignmentMode.value = s.textAlignmentMode
+            _horizontalPadding.value = s.horizontalPadding
+            _verticalPadding.value = s.verticalPadding
+            _assistantOrbStyle.value = s.assistantOrbStyle
+            _spoilerShield.value = s.spoilerShield
+            _autoScrollSpeed.value = s.autoScrollSpeed
+            _disableAi.value = s.disableAi
+            _disableTts.value = s.disableTts
+            _disableStt.value = s.disableStt
+            _autoStartMic.value = s.autoStartMic
+            _enableFtsIndexing.value = s.enableFtsIndexing
+            _gestureDoubleTap.value = s.gestureDoubleTap
+            _gestureTripleTap.value = s.gestureTripleTap
+            _gestureSingleTap.value = s.gestureSingleTap
+            _gestureTtsTap.value = s.gestureTtsTap
+            _customBgColor.value = s.customBgColor
+            _customTextColor.value = s.customTextColor
+            _customAccentColor.value = s.customAccentColor
+            _orbActionItems.value = s.orbActionItems
+            _orbActionOrder.value = s.orbActionOrder
+            _quickThemes.value = s.quickThemes
+            _quickFonts.value = s.quickFonts
+            _aiProvider.value = s.aiProvider
+            _aiModel.value = s.aiModel
+            _aiBaseUrl.value = s.aiBaseUrl
+            _geminiApiKey.value = s.geminiApiKey
+        } else {
+            // Initial seed into SQLite in a single transaction
+            val s = _readerSettings.value
+            val initialMap = mapOf(
+                "font_size" to s.fontSize.toString(),
+                "reading_mode" to s.readingMode.name,
+                "theme_mode" to s.themeMode.name,
+                "typeface_mode" to s.typefaceMode.name,
+                "line_height" to s.lineHeightMultiplier.toString(),
+                "paragraph_spacing" to s.paragraphSpacingMultiplier.toString(),
+                "letter_spacing" to s.letterSpacing.toString(),
+                "show_floating_assistant" to s.showFloatingAssistant.toString(),
+                "orb_size" to s.orbSize.name,
+                "orb_menu_size" to s.orbMenuSize.name,
+                "orb_edge_snap" to s.orbEdgeSnap.toString(),
+                "orb_color" to s.orbColor.name,
+                "orb_opacity" to s.orbOpacity.toString(),
+                "orb_pos_x_portrait" to s.orbPortraitX.toString(),
+                "orb_pos_y_portrait" to s.orbPortraitY.toString(),
+                "orb_pos_x_landscape" to s.orbLandscapeX.toString(),
+                "orb_pos_y_landscape" to s.orbLandscapeY.toString(),
+                "theme_family" to s.themeFamily.name,
+                "theme_variant" to s.themeVariant.name,
+                "background_texture" to s.backgroundTexture.name,
+                "custom_bg_uri" to s.customBgUri,
+                "text_alignment_mode" to s.textAlignmentMode.name,
+                "horizontal_padding" to s.horizontalPadding.toString(),
+                "vertical_padding" to s.verticalPadding.toString(),
+                "assistant_orb_style" to s.assistantOrbStyle,
+                "spoiler_shield" to s.spoilerShield.toString(),
+                "auto_scroll_speed" to s.autoScrollSpeed.toString(),
+                "disable_ai" to s.disableAi.toString(),
+                "disable_tts" to s.disableTts.toString(),
+                "disable_stt" to s.disableStt.toString(),
+                "auto_start_mic" to s.autoStartMic.toString(),
+                "enable_fts_indexing" to s.enableFtsIndexing.toString(),
+                "gesture_double_tap" to s.gestureDoubleTap.name,
+                "gesture_triple_tap" to s.gestureTripleTap.name,
+                "gesture_single_tap" to s.gestureSingleTap.name,
+                "gesture_tts_tap" to s.gestureTtsTap.name,
+                "custom_bg_color" to s.customBgColor.toString(),
+                "custom_text_color" to s.customTextColor.toString(),
+                "custom_accent_color" to s.customAccentColor.toString(),
+                "orb_action_items" to s.orbActionItems.joinToString(",") { it.name },
+                "orb_action_order" to s.orbActionOrder.joinToString(",") { it.name },
+                "quick_themes" to s.quickThemes.joinToString(",") { it.name },
+                "quick_fonts" to s.quickFonts.joinToString(",") { it.name },
+                "ai_provider" to s.aiProvider.name,
+                "ai_model" to s.aiModel,
+                "ai_base_url" to s.aiBaseUrl,
+                "gemini_api_key" to s.geminiApiKey
+            )
+            dbHelper.setSettings(initialMap)
+        }
     }
 }

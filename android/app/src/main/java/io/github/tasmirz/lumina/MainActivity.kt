@@ -57,7 +57,9 @@ import io.github.tasmirz.lumina.ui.components.DictionarySheet
 import io.github.tasmirz.lumina.ui.library.LibraryScreen
 import io.github.tasmirz.lumina.ui.reader.ReaderScreen
 import io.github.tasmirz.lumina.ui.settings.AdvancedSettingsScreen
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 import android.view.ActionMode
@@ -127,37 +129,39 @@ class MainActivity : ComponentActivity() {
         val bookRepository = BookRepository(applicationContext)
 
         setContent {
+            val readerSettings by bookRepository.readerSettings.collectAsStateWithLifecycle()
             val books by bookRepository.books.collectAsStateWithLifecycle()
             val activeBookId by bookRepository.activeBookId.collectAsStateWithLifecycle()
             val activeBook = books.find { it.id == activeBookId } ?: books.firstOrNull() ?: bookRepository.getActiveBook()
             val bookmarks by bookRepository.bookmarks.collectAsStateWithLifecycle()
-            val readingMode by bookRepository.readingMode.collectAsStateWithLifecycle()
-            val themeMode by bookRepository.themeMode.collectAsStateWithLifecycle()
-            val themeFamily by bookRepository.themeFamily.collectAsStateWithLifecycle()
-            val themeVariant by bookRepository.themeVariant.collectAsStateWithLifecycle()
-            val backgroundTexture by bookRepository.backgroundTexture.collectAsStateWithLifecycle()
-            val customBgUri by bookRepository.customBgUri.collectAsStateWithLifecycle()
-            val orbActionItems by bookRepository.orbActionItems.collectAsStateWithLifecycle()
-            val textAlignment by bookRepository.textAlignmentMode.collectAsStateWithLifecycle()
-            val letterSpacing by bookRepository.letterSpacing.collectAsStateWithLifecycle()
-            val fontSize by bookRepository.fontSize.collectAsStateWithLifecycle()
-            val typeface by bookRepository.typefaceMode.collectAsStateWithLifecycle()
-            val lineHeight by bookRepository.lineHeightMultiplier.collectAsStateWithLifecycle()
-            val paragraphSpacing by bookRepository.paragraphSpacingMultiplier.collectAsStateWithLifecycle()
-            val showFloatingAssistant by bookRepository.showFloatingAssistant.collectAsStateWithLifecycle()
-            val orbSize by bookRepository.orbSize.collectAsStateWithLifecycle()
-            val orbMenuSize by bookRepository.orbMenuSize.collectAsStateWithLifecycle()
-            val orbColor by bookRepository.orbColor.collectAsStateWithLifecycle()
-            val geminiApiKey by bookRepository.geminiApiKey.collectAsStateWithLifecycle()
-            val quickThemes by bookRepository.quickThemes.collectAsStateWithLifecycle()
-            val quickFonts by bookRepository.quickFonts.collectAsStateWithLifecycle()
-            val orbActionOrder by bookRepository.orbActionOrder.collectAsStateWithLifecycle()
-            val aiProvider by bookRepository.aiProvider.collectAsStateWithLifecycle()
-            val aiBaseUrl by bookRepository.aiBaseUrl.collectAsStateWithLifecycle()
-            val aiModel by bookRepository.aiModel.collectAsStateWithLifecycle()
             val wishlistBooks by bookRepository.wishlistBooks.collectAsStateWithLifecycle()
             val completedBookIds by bookRepository.completedBookIds.collectAsStateWithLifecycle()
-            val preferredLanguage by bookRepository.preferredLanguage.collectAsStateWithLifecycle()
+
+            val readingMode = readerSettings.readingMode
+            val themeMode = readerSettings.themeMode
+            val themeFamily = readerSettings.themeFamily
+            val themeVariant = readerSettings.themeVariant
+            val backgroundTexture = readerSettings.backgroundTexture
+            val customBgUri = readerSettings.customBgUri
+            val orbActionItems = readerSettings.orbActionItems
+            val textAlignment = readerSettings.textAlignmentMode
+            val letterSpacing = readerSettings.letterSpacing
+            val fontSize = readerSettings.fontSize
+            val typeface = readerSettings.typefaceMode
+            val lineHeight = readerSettings.lineHeightMultiplier
+            val paragraphSpacing = readerSettings.paragraphSpacingMultiplier
+            val showFloatingAssistant = readerSettings.showFloatingAssistant
+            val orbSize = readerSettings.orbSize
+            val orbMenuSize = readerSettings.orbMenuSize
+            val orbColor = readerSettings.orbColor
+            val geminiApiKey = readerSettings.geminiApiKey
+            val quickThemes = readerSettings.quickThemes
+            val quickFonts = readerSettings.quickFonts
+            val orbActionOrder = readerSettings.orbActionOrder
+            val aiProvider = readerSettings.aiProvider
+            val aiBaseUrl = readerSettings.aiBaseUrl
+            val aiModel = readerSettings.aiModel
+            val preferredLanguage = readerSettings.preferredLanguage
 
             var currentTab by rememberSaveable {
                 mutableStateOf(
@@ -274,10 +278,28 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                             ScreenTab.READER -> {
-                                if (activeBook != null) {
-                                    // Stabilize book reference during active reader session to isolate scrolling
-                                    // progress updates from triggering full ReaderScreen tree recompositions.
-                                    val readerBook = remember(activeBook.id) { activeBook }
+                                var readerBookWithChapters by remember(activeBook?.id) {
+                                    mutableStateOf(
+                                        if (activeBook?.chapters?.isNotEmpty() == true) activeBook else null
+                                    )
+                                }
+                                LaunchedEffect(activeBook?.id) {
+                                    if (activeBook != null) {
+                                        if (activeBook.chapters.isNotEmpty()) {
+                                            readerBookWithChapters = activeBook
+                                        } else {
+                                            val chaps = withContext(Dispatchers.IO) {
+                                                bookRepository.getChaptersForBook(activeBook.id)
+                                            }
+                                            readerBookWithChapters = activeBook.copy(chapters = chaps)
+                                        }
+                                    } else {
+                                        readerBookWithChapters = null
+                                    }
+                                }
+
+                                if (readerBookWithChapters != null) {
+                                    val readerBook = readerBookWithChapters!!
                                     ReaderScreen(
                                         book = readerBook,
                                         bookmarks = bookmarks,

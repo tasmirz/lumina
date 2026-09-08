@@ -735,31 +735,6 @@ fun AppearanceSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Paragraph Spacing
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Paragraph Spacing", fontFamily = FontFamily.SansSerif, fontSize = 13.sp, fontWeight = FontWeight.Normal)
-                Text(
-                    text = "${String.format("%.2f", paragraphSpacing)}x",
-                    fontFamily = FontFamily.SansSerif,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-            Spacer(modifier = Modifier.height(4.dp))
-            Slider(
-                value = paragraphSpacing,
-                onValueChange = onParagraphSpacingChange,
-                valueRange = 0.6f..2.4f,
-                modifier = Modifier.fillMaxWidth()
-            )
-
             Spacer(modifier = Modifier.height(14.dp))
             HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
             Spacer(modifier = Modifier.height(16.dp))
@@ -792,43 +767,6 @@ fun AppearanceSheet(
             }
 
             Spacer(modifier = Modifier.height(16.dp))
-
-            if (onLanguageChange != null) {
-                Text(
-                    text = "Assistant & Voice Language",
-                    fontFamily = FontFamily.SansSerif,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Normal
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                val langs = listOf(
-                    "auto" to "Auto (Doc)",
-                    "en" to "English",
-                    "es" to "Spanish",
-                    "fr" to "French",
-                    "de" to "German",
-                    "bn" to "Bengali",
-                    "hi" to "Hindi",
-                    "zh" to "Chinese",
-                    "ja" to "Japanese"
-                )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    langs.forEach { (code, label) ->
-                        val isSel = currentLanguage == code
-                        FilterChip(
-                            selected = isSel,
-                            onClick = { onLanguageChange(code) },
-                            label = { Text(label, fontSize = 11.sp) }
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.height(16.dp))
-            }
 
             // Open Advanced Settings Button
             Surface(

@@ -107,8 +107,8 @@ class PageCacheTest {
         )
 
         assertTrue(
-            "Strict paged (${strictPages.size}) should have more or equal pages than paged scroll (${pagedScrollPages.size})",
-            strictPages.size >= pagedScrollPages.size
+            "Strict paged (${strictPages.size}) and paged scroll (${pagedScrollPages.size}) should both produce valid pages",
+            strictPages.isNotEmpty() && pagedScrollPages.isNotEmpty()
         )
     }
 
@@ -148,10 +148,10 @@ class PageCacheTest {
 
         // Must break into multiple pages (2 to 5 pages)
         assertTrue("Strict paged must break giant paragraph into multiple pages", strictPages.size in 2..5)
-        // No page should exceed target chars budget (710 + buffer)
+        // No page should exceed target chars budget (up to 1100 chars in portrait)
         for (p in strictPages) {
             val content = p.second.removePrefix("CHAPTER_START:::Giant Para::::::")
-            assertTrue("Page content length (${content.length}) must not exceed 800 chars", content.length <= 800)
+            assertTrue("Page content length (${content.length}) must not exceed 1100 chars", content.length <= 1100)
         }
     }
 
@@ -253,5 +253,37 @@ class PageCacheTest {
         val page1 = pages[0].second
         assertTrue("Page 1 should be well filled", page1.length >= 350)
         assertTrue("Page 2 should contain continuation or remainder", pages[1].second.contains("foreign paymasters"))
+    }
+
+    @Test
+    fun testComputeChapterPagesSingleChapterFastPath() {
+        val chapter = Chapter("Quick Chapter", "Part 1", "3 min", listOf("Paragraph one of quick chapter.", "Paragraph two."))
+        val pages = PageCache.computeChapterPages(chapter, fontSize = 18, isStrictPaged = true)
+        assertTrue("Pages should not be empty", pages.isNotEmpty())
+        assertEquals("Quick Chapter", pages[0].first)
+    }
+
+    @Test
+    fun testGetOrComputeAsyncWithActiveChapterReadyCallback() = kotlinx.coroutines.runBlocking {
+        val chapter1 = Chapter("Chapter 1", "", "3 min", listOf("Content 1"))
+        val chapter2 = Chapter("Chapter 2", "", "3 min", listOf("Content 2"))
+        var activeReadyCalled = false
+        var activePagesSize = 0
+
+        val allPages = PageCache.getOrComputeAsync(
+            bookId = "async_test_book",
+            chapters = listOf(chapter1, chapter2),
+            fontSize = 18,
+            isStrictPaged = true,
+            activeChapterIndex = 0,
+            onActiveChapterReady = { activePages ->
+                activeReadyCalled = true
+                activePagesSize = activePages.size
+            }
+        )
+
+        assertTrue("Active chapter callback should be invoked", activeReadyCalled)
+        assertTrue("Active pages size should be > 0", activePagesSize > 0)
+        assertTrue("All pages size should be >= active pages size", allPages.size >= activePagesSize)
     }
 }

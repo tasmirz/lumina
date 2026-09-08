@@ -147,14 +147,20 @@ fun AdvancedSettingsScreen(
     val paragraphSpacingState = repository?.paragraphSpacingMultiplier?.collectAsState(initial = 1.2f)
     val paragraphSpacing = paragraphSpacingState?.value ?: 1.2f
 
+    val preferredLanguageState = repository?.preferredLanguage?.collectAsState(initial = "auto")
+    val preferredLanguage = preferredLanguageState?.value ?: "auto"
+
     val disableTtsState = repository?.disableTts?.collectAsState(initial = false)
     val disableTts = disableTtsState?.value ?: false
 
     val disableSttState = repository?.disableStt?.collectAsState(initial = false)
     val disableStt = disableSttState?.value ?: false
 
-    val enableFtsIndexingState = repository?.enableFtsIndexing?.collectAsState(initial = true)
-    val enableFtsIndexing = enableFtsIndexingState?.value ?: true
+    val autoStartMicState = repository?.autoStartMic?.collectAsState(initial = true)
+    val autoStartMic = autoStartMicState?.value ?: true
+
+    val enableFtsIndexingState = repository?.enableFtsIndexing?.collectAsState(initial = false)
+    val enableFtsIndexing = enableFtsIndexingState?.value ?: false
 
     var ftsIndexCount by remember { mutableIntStateOf(0) }
     var imageCacheSizeBytes by remember { mutableLongStateOf(0L) }
@@ -1882,6 +1888,47 @@ fun AdvancedSettingsScreen(
                                 )
                             }
 
+                            if (!disableStt) {
+                                HorizontalDivider(
+                                    modifier = Modifier.padding(vertical = 12.dp),
+                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+                                )
+
+                                // Auto-start Microphone in Assistant Mode
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(
+                                                imageVector = Icons.Outlined.Mic,
+                                                contentDescription = null,
+                                                tint = if (autoStartMic) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = "Auto-Start Microphone",
+                                                fontWeight = FontWeight.Medium,
+                                                fontSize = 12.5.sp
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = "Automatically listen when opening the Assistant or Voice action. When off, tap the mic button to speak.",
+                                            fontSize = 10.5.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Switch(
+                                        checked = autoStartMic,
+                                        onCheckedChange = { repository?.setAutoStartMic(it) }
+                                    )
+                                }
+                            }
+
                             HorizontalDivider(
                                 modifier = Modifier.padding(vertical = 12.dp),
                                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
@@ -1919,6 +1966,52 @@ fun AdvancedSettingsScreen(
                                     checked = spoilerShield,
                                     onCheckedChange = { repository?.setSpoilerShield(it) }
                                 )
+                            }
+
+                            HorizontalDivider(
+                                modifier = Modifier.padding(vertical = 12.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+                            )
+
+                            // Assistant & Voice Language Selector
+                            Text(
+                                text = "Assistant & Voice Language",
+                                fontFamily = FontFamily.SansSerif,
+                                fontWeight = FontWeight.Medium,
+                                fontSize = 12.5.sp
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "Select default language for AI summaries, speech-to-text, and voice responses.",
+                                fontSize = 10.5.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            val langs = listOf(
+                                "auto" to "Auto (Doc)",
+                                "en" to "English",
+                                "es" to "Spanish",
+                                "fr" to "French",
+                                "de" to "German",
+                                "bn" to "Bengali",
+                                "hi" to "Hindi",
+                                "zh" to "Chinese",
+                                "ja" to "Japanese"
+                            )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                langs.forEach { (code, label) ->
+                                    val isSel = preferredLanguage == code
+                                    FilterChip(
+                                        selected = isSel,
+                                        onClick = { repository?.setPreferredLanguage(code) },
+                                        label = { Text(label, fontSize = 11.sp) }
+                                    )
+                                }
                             }
                         }
 
@@ -2009,25 +2102,23 @@ fun AdvancedSettingsScreen(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     val isIndexing by (repository?.isIndexingActive?.collectAsState() ?: remember { mutableStateOf(false) })
-                                    if (ftsIndexCount == 0) {
-                                        Button(
-                                            onClick = {
-                                                val active = repository?.getActiveBook()
-                                                if (active != null) {
-                                                    repository.indexEntireBookNow(active) { count ->
-                                                        ftsIndexCount = repository.getFtsIndexCount()
-                                                        Toast.makeText(context, "Indexed $count paragraphs", Toast.LENGTH_SHORT).show()
-                                                    }
-                                                } else {
-                                                    Toast.makeText(context, "No active book to index", Toast.LENGTH_SHORT).show()
+                                    Button(
+                                        onClick = {
+                                            val active = repository?.getActiveBook()
+                                            if (active != null) {
+                                                repository.indexEntireBookNow(active) { count ->
+                                                    ftsIndexCount = repository.getFtsIndexCount()
+                                                    Toast.makeText(context, "Indexed $count paragraphs", Toast.LENGTH_SHORT).show()
                                                 }
-                                            },
-                                            enabled = !isIndexing,
-                                            shape = RoundedCornerShape(6.dp),
-                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                                        ) {
-                                            Text(if (isIndexing) "Indexing..." else "Index Now", fontSize = 10.5.sp)
-                                        }
+                                            } else {
+                                                Toast.makeText(context, "No active book to index", Toast.LENGTH_SHORT).show()
+                                            }
+                                        },
+                                        enabled = !isIndexing,
+                                        shape = RoundedCornerShape(6.dp),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(if (isIndexing) "Indexing..." else if (ftsIndexCount == 0) "Index Now" else "Re-Index", fontSize = 10.5.sp)
                                     }
                                     OutlinedButton(
                                         onClick = {

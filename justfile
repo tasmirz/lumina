@@ -22,12 +22,20 @@ test:
 install:
     adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 
+# Install release APK on the connected device
+install-release:
+    adb install -r android/app/build/outputs/apk/release/app-release.apk
+
 # Launch Lumina on the connected phone
 run:
     adb shell am start -n io.github.tasmirz.lumina/.MainActivity
 
 # Alias to launch the app
 launch: run
+
+# Install and launch release APK on the phone
+run-release: install-release run
+launch-release: run-release
 
 # Stop the running application
 stop:
@@ -55,8 +63,12 @@ ss +args="screenshot":
 # Full screenshot alias
 screenshot +args="screenshot": (ss args)
 
-# Build, install and launch in one command
+# Build, install and launch debug APK in one command
 all: build install run
+
+# Build, install and launch release APK in one command
+release: build-release install-release run
+all-release: release
 
 # Initialize ADB port forwarding for Compose HotSwan (port 8600)
 hotswan:

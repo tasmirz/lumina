@@ -281,8 +281,12 @@ fun CharacterGuideSheet(
                                     currentPageIndex = book.currentPage
                                 )
                                 if (result.characters.isNotEmpty() || result.lore.isNotEmpty()) {
-                                    result.characters.forEach { repository.saveCharacter(it) }
-                                    result.lore.forEach { repository.saveLore(it) }
+                                    if (result.characters.isNotEmpty()) {
+                                        repository.saveCharacters(book.id, result.characters)
+                                    }
+                                    if (result.lore.isNotEmpty()) {
+                                        repository.saveLoreList(book.id, result.lore)
+                                    }
                                     repository.updateCharacterCheckpoint(book.id, currentChapterIndex, book.currentPage + 1)
                                     Toast.makeText(
                                         context,

@@ -1,7 +1,10 @@
 package io.github.tasmirz.lumina.util
 
 import androidx.compose.ui.text.AnnotatedString
+import io.github.tasmirz.lumina.data.db.LuminaDatabaseHelper
 import io.github.tasmirz.lumina.model.Chapter
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * High-performance, thread-safe LRU cache using standard LinkedHashMap.
@@ -40,12 +43,87 @@ object PageCache {
         chapters: List<Chapter>,
         fontSize: Int,
         isLandscape: Boolean = false,
-        isStrictPaged: Boolean = false
+        isStrictPaged: Boolean = false,
+        dbHelper: LuminaDatabaseHelper? = null
     ): List<Pair<String, String>> {
-        val key = "v12_${bookId}_${chapters.size}_${fontSize}_${if (isLandscape) "land" else "port"}_${if (isStrictPaged) "strict" else "scroll"}"
+        val key = "v14_${bookId}_${chapters.size}_${fontSize}_${if (isLandscape) "land" else "port"}_${if (isStrictPaged) "strict" else "scroll"}"
         val cached = cache.get(key)
         if (cached != null) return cached
 
+        if (dbHelper != null) {
+            val fromDb = dbHelper.getPageCache(key)
+            if (fromDb != null && fromDb.isNotEmpty()) {
+                cache.put(key, fromDb)
+                return fromDb
+            }
+        }
+
+        val list = computePages(chapters, fontSize, isLandscape, isStrictPaged)
+        cache.put(key, list)
+        if (dbHelper != null && list.isNotEmpty()) {
+            dbHelper.savePageCache(key, bookId, -1, list)
+        }
+        return list
+    }
+
+    fun computeChapterPages(
+        chapter: Chapter,
+        fontSize: Int,
+        isLandscape: Boolean = false,
+        isStrictPaged: Boolean = false
+    ): List<Pair<String, String>> {
+        return computePages(listOf(chapter), fontSize, isLandscape, isStrictPaged)
+    }
+
+    suspend fun getOrComputeAsync(
+        bookId: String,
+        chapters: List<Chapter>,
+        fontSize: Int,
+        isLandscape: Boolean = false,
+        isStrictPaged: Boolean = false,
+        dbHelper: LuminaDatabaseHelper? = null,
+        activeChapterIndex: Int = 0,
+        onActiveChapterReady: ((List<Pair<String, String>>) -> Unit)? = null
+    ): List<Pair<String, String>> = withContext(Dispatchers.Default) {
+        val key = "v14_${bookId}_${chapters.size}_${fontSize}_${if (isLandscape) "land" else "port"}_${if (isStrictPaged) "strict" else "scroll"}"
+        val cached = cache.get(key)
+        if (cached != null) {
+            onActiveChapterReady?.invoke(cached)
+            return@withContext cached
+        }
+
+        if (dbHelper != null) {
+            val fromDb = dbHelper.getPageCache(key)
+            if (fromDb != null && fromDb.isNotEmpty()) {
+                cache.put(key, fromDb)
+                onActiveChapterReady?.invoke(fromDb)
+                return@withContext fromDb
+            }
+        }
+
+        // Fast path: compute active chapter first for immediate UI rendering
+        if (onActiveChapterReady != null && activeChapterIndex in chapters.indices) {
+            val activeChapter = chapters[activeChapterIndex]
+            val activePages = computeChapterPages(activeChapter, fontSize, isLandscape, isStrictPaged)
+            if (activePages.isNotEmpty()) {
+                onActiveChapterReady(activePages)
+            }
+        }
+
+        val list = computePages(chapters, fontSize, isLandscape, isStrictPaged)
+        cache.put(key, list)
+        if (dbHelper != null && list.isNotEmpty()) {
+            dbHelper.savePageCache(key, bookId, -1, list)
+        }
+        return@withContext list
+    }
+
+    fun computePages(
+        chapters: List<Chapter>,
+        fontSize: Int,
+        isLandscape: Boolean = false,
+        isStrictPaged: Boolean = false
+    ): List<Pair<String, String>> {
         val list = mutableListOf<Pair<String, String>>()
 
         if (isStrictPaged) {
@@ -54,38 +132,38 @@ object PageCache {
             // ═════════════════════════════════════════════════════════════════
             val (charsPerLine, maxLines) = if (isLandscape) {
                 when {
-                    fontSize <= 13 -> Pair(78, 12)
-                    fontSize <= 14 -> Pair(72, 11)
-                    fontSize <= 15 -> Pair(68, 10)
-                    fontSize <= 16 -> Pair(64, 10)
-                    fontSize <= 17 -> Pair(60, 9)
-                    fontSize <= 18 -> Pair(56, 9)
-                    fontSize <= 20 -> Pair(50, 8)
-                    fontSize <= 22 -> Pair(44, 8)
-                    fontSize <= 24 -> Pair(38, 7)
-                    else -> Pair(34, 7)
+                    fontSize <= 13 -> Pair(78, 11)
+                    fontSize <= 14 -> Pair(72, 10)
+                    fontSize <= 15 -> Pair(68, 9)
+                    fontSize <= 16 -> Pair(64, 9)
+                    fontSize <= 17 -> Pair(60, 8)
+                    fontSize <= 18 -> Pair(56, 8)
+                    fontSize <= 20 -> Pair(50, 7)
+                    fontSize <= 22 -> Pair(44, 7)
+                    fontSize <= 24 -> Pair(38, 6)
+                    else -> Pair(34, 6)
                 }
             } else {
                 when {
-                    fontSize <= 13 -> Pair(46, 25)
-                    fontSize <= 14 -> Pair(43, 23)
-                    fontSize <= 15 -> Pair(41, 21)
-                    fontSize <= 16 -> Pair(39, 20)
-                    fontSize <= 17 -> Pair(37, 19)
-                    fontSize <= 18 -> Pair(36, 18)
-                    fontSize <= 19 -> Pair(34, 17)
-                    fontSize <= 20 -> Pair(32, 17)
-                    fontSize <= 21 -> Pair(30, 16)
-                    fontSize <= 23 -> Pair(28, 15)
-                    fontSize <= 25 -> Pair(25, 14)
-                    else -> Pair(22, 13)
+                    fontSize <= 13 -> Pair(46, 23)
+                    fontSize <= 14 -> Pair(43, 21)
+                    fontSize <= 15 -> Pair(41, 20)
+                    fontSize <= 16 -> Pair(39, 19)
+                    fontSize <= 17 -> Pair(37, 18)
+                    fontSize <= 18 -> Pair(36, 17)
+                    fontSize <= 19 -> Pair(34, 16)
+                    fontSize <= 20 -> Pair(32, 15)
+                    fontSize <= 21 -> Pair(30, 14)
+                    fontSize <= 23 -> Pair(28, 13)
+                    fontSize <= 25 -> Pair(25, 12)
+                    else -> Pair(22, 11)
                 }
             }
 
             val headerLinesCost = if (isLandscape) 3 else when {
-                fontSize <= 14 -> 6
-                fontSize <= 18 -> 5
-                else -> 4
+                fontSize <= 14 -> 8
+                fontSize <= 18 -> 7
+                else -> 6
             }
 
             chapters.forEach { chap ->
@@ -279,7 +357,6 @@ object PageCache {
             }
         }
 
-        cache.put(key, list)
         return list
     }
 
@@ -493,13 +570,14 @@ object PageCache {
         return if (sentences.isEmpty()) listOf(text) else sentences
     }
 
-    fun invalidate(bookId: String) {
+    fun invalidate(bookId: String, dbHelper: LuminaDatabaseHelper? = null) {
         val snapshot = cache.snapshot()
         for (k in snapshot.keys) {
             if (k.contains(bookId)) {
                 cache.remove(k)
             }
         }
+        dbHelper?.clearPageCacheForBook(bookId)
     }
 
     fun clear() {
