@@ -38,7 +38,7 @@ object OnlineEpubService {
             title = "Pride and Prejudice",
             author = "Jane Austen",
             coverUrl = "https://standardebooks.org/ebooks/jane-austen/pride-and-prejudice/downloads/cover-thumbnail.jpg",
-            epubDownloadUrl = "https://standardebooks.org/ebooks/jane-austen/pride-and-prejudice/downloads/jane-austen_pride-and-prejudice.epub",
+            epubDownloadUrl = "https://standardebooks.org/ebooks/jane-austen/pride-and-prejudice/downloads/jane-austen_pride-and-prejudice.epub?source=download",
             source = OnlineCatalogSource.STANDARD_EBOOKS,
             downloadCount = 120000,
             tag = "NOVEL"
@@ -48,7 +48,7 @@ object OnlineEpubService {
             title = "Frankenstein",
             author = "Mary Wollstonecraft Shelley",
             coverUrl = "https://standardebooks.org/ebooks/mary-shelley/frankenstein/downloads/cover-thumbnail.jpg",
-            epubDownloadUrl = "https://standardebooks.org/ebooks/mary-shelley/frankenstein/downloads/mary-shelley_frankenstein.epub",
+            epubDownloadUrl = "https://standardebooks.org/ebooks/mary-shelley/frankenstein/downloads/mary-shelley_frankenstein.epub?source=download",
             source = OnlineCatalogSource.STANDARD_EBOOKS,
             downloadCount = 95000,
             tag = "GOTHIC"
@@ -58,7 +58,7 @@ object OnlineEpubService {
             title = "The Picture of Dorian Gray",
             author = "Oscar Wilde",
             coverUrl = "https://standardebooks.org/ebooks/oscar-wilde/the-picture-of-dorian-gray/downloads/cover-thumbnail.jpg",
-            epubDownloadUrl = "https://standardebooks.org/ebooks/oscar-wilde/the-picture-of-dorian-gray/downloads/oscar-wilde_the-picture-of-dorian-gray.epub",
+            epubDownloadUrl = "https://standardebooks.org/ebooks/oscar-wilde/the-picture-of-dorian-gray/downloads/oscar-wilde_the-picture-of-dorian-gray.epub?source=download",
             source = OnlineCatalogSource.STANDARD_EBOOKS,
             downloadCount = 88000,
             tag = "CLASSIC"
@@ -68,7 +68,7 @@ object OnlineEpubService {
             title = "Moby Dick; Or, The Whale",
             author = "Herman Melville",
             coverUrl = "https://standardebooks.org/ebooks/herman-melville/moby-dick/downloads/cover-thumbnail.jpg",
-            epubDownloadUrl = "https://standardebooks.org/ebooks/herman-melville/moby-dick/downloads/herman-melville_moby-dick.epub",
+            epubDownloadUrl = "https://standardebooks.org/ebooks/herman-melville/moby-dick/downloads/herman-melville_moby-dick.epub?source=download",
             source = OnlineCatalogSource.STANDARD_EBOOKS,
             downloadCount = 74000,
             tag = "ADVENTURE"
@@ -330,15 +330,19 @@ object OnlineEpubService {
 
     suspend fun downloadEpubStream(downloadUrl: String): InputStream? = withContext(Dispatchers.IO) {
         try {
-            var currentUrl = downloadUrl
+            var currentUrl = downloadUrl.trim()
+            if (currentUrl.contains("standardebooks.org") && !currentUrl.contains("source=download") && currentUrl.endsWith(".epub")) {
+                currentUrl = if (currentUrl.contains("?")) "$currentUrl&source=download" else "$currentUrl?source=download"
+            }
             var redirects = 0
             while (redirects < 6) {
                 val url = URL(currentUrl)
                 val conn = (url.openConnection() as HttpURLConnection).apply {
                     instanceFollowRedirects = true
                     connectTimeout = 12000
-                    readTimeout = 18000
+                    readTimeout = 20000
                     setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
+                    setRequestProperty("Accept", "application/epub+zip,application/octet-stream,*/*")
                 }
                 val code = conn.responseCode
                 if (code in 300..399) {
@@ -346,6 +350,19 @@ object OnlineEpubService {
                     currentUrl = if (location.startsWith("http")) location else URL(url, location).toString()
                     redirects++
                 } else if (code == 200) {
+                    val contentType = conn.contentType ?: ""
+                    // Handle Standard Ebooks "Your Download Has Started!" intermediate HTML meta-refresh
+                    if (contentType.contains("html", ignoreCase = true) || contentType.contains("xhtml", ignoreCase = true)) {
+                        val htmlBody = conn.inputStream.bufferedReader().use { it.readText() }
+                        val refreshMatch = Regex("""meta[^>]+url=([^"'>\s]+)""", RegexOption.IGNORE_CASE).find(htmlBody)
+                        val targetHref = refreshMatch?.groupValues?.getOrNull(1)
+                            ?: Regex("""href="([^"]+\.epub(\?source=download)?)"""", RegexOption.IGNORE_CASE).find(htmlBody)?.groupValues?.getOrNull(1)
+                        if (!targetHref.isNullOrBlank()) {
+                            currentUrl = if (targetHref.startsWith("http")) targetHref else URL(url, targetHref).toString()
+                            redirects++
+                            continue
+                        }
+                    }
                     return@withContext conn.inputStream
                 } else {
                     break

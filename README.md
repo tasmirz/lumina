@@ -6,6 +6,8 @@
 
 **Minimalist, typography-first EPUB reader for Android crafted with Jetpack Compose & Material 3.**
 
+[![Latest Release](https://img.shields.io/github/v/release/tasmirz/lumina?color=blue&label=Latest%20Release)](https://github.com/tasmirz/lumina/releases/latest)
+[![Download APK](https://img.shields.io/badge/Download-Release%20APK%20(13%20MB)-brightgreen.svg?logo=android)](https://github.com/tasmirz/lumina/releases/latest)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Android_7.0%2B_(API_24%2B)-green.svg)](https://developer.android.com)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.0+-purple.svg)](https://kotlinlang.org)
@@ -14,14 +16,35 @@
 [![Offline-First](https://img.shields.io/badge/Privacy-100%25_Offline--First-success.svg)](#-privacy--offline-first-guarantee)
 
 <p align="center">
+  <a href="#-download--releases"><b>Download</b></a> •
   <a href="#-features">Features</a> •
   <a href="#-architecture--tech-stack">Architecture</a> •
   <a href="#-getting-started">Getting Started</a> •
   <a href="#-automation--tooling">Tooling</a> •
+  <a href="#-contributing">Contributing</a> •
   <a href="#-license">License</a>
 </p>
 
 </div>
+
+---
+
+## 📥 Download & Releases
+
+Get the latest production-ready release of Lumina for Android:
+
+| Distribution Channel | Target / File | Status |
+| :--- | :--- | :--- |
+| **GitHub Releases** | [**Download `app-release.apk`**](https://github.com/tasmirz/lumina/releases/latest) | 🟢 **v1.0.0 Latest** (~13 MB) |
+| **F-Droid Store** | *Submission pending* | 🟡 [Metadata Ready](metadata/io.github.tasmirz.lumina.yml) |
+| **Active Development** | [`dev` branch](https://github.com/tasmirz/lumina/tree/dev) | 🧪 Bleeding-Edge Commits |
+| **Stable Releases** | [`main` branch](https://github.com/tasmirz/lumina/tree/main) | 🏷️ Release Tags |
+
+### Quick Installation:
+1. Grab the latest signed APK: [**Download `app-release.apk`**](https://github.com/tasmirz/lumina/releases/latest).
+2. Open the file on your device (Android 7.0+ / API 24+).
+3. If prompted by Android, grant permission to *"Install from unknown sources"* for your browser or file manager.
+4. Enjoy a fast, private, distraction-free reading experience!
 
 ---
 

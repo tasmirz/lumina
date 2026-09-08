@@ -116,4 +116,24 @@ class EpubParserTest {
         assertEquals("fr", book.language)
         assertEquals("Le Petit Prince", book.title)
     }
+
+    @Test
+    fun testParseFrankenstein() {
+        val file = java.io.File("/tmp/epub_test/frankenstein.epub")
+        if (!file.exists()) return
+        val book = EpubParser.parseEpub(file.inputStream(), file.name)
+        println("Frankenstein chapters count: ${book.chapters.size}")
+        println("Frankenstein title: ${book.title}")
+        assertTrue("Chapters should not be empty", book.chapters.isNotEmpty())
+    }
+
+    @Test
+    fun testParsePride() {
+        val file = java.io.File("/tmp/epub_test/pride.epub")
+        if (!file.exists()) return
+        val book = EpubParser.parseEpub(file.inputStream(), file.name)
+        println("Pride chapters count: ${book.chapters.size}")
+        println("Pride title: ${book.title}")
+        assertTrue("Chapters should not be empty", book.chapters.isNotEmpty())
+    }
 }

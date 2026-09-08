@@ -194,8 +194,12 @@ cd android && ./gradlew testDebugUnitTest
 
 ## 🚀 Submitting a Pull Request
 
-1. **Create a Feature Branch**:
+Lumina uses `dev` as its primary integration and development branch, while `main` tracks tagged stable releases.
+
+1. **Create a Feature Branch (off `dev`)**:
    ```bash
+   git checkout dev
+   git pull origin dev
    git checkout -b feature/my-new-feature
    # or for bug fixes:
    git checkout -b fix/toc-scroll-jump

@@ -69,6 +69,7 @@ all: build install run
 # Build, install and launch release APK in one command
 release: build-release install-release run
 all-release: release
+all-rloease: release
 
 # Initialize ADB port forwarding for Compose HotSwan (port 8600)
 hotswan:

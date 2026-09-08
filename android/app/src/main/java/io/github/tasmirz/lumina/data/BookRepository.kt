@@ -97,6 +97,18 @@ class BookRepository(private val context: Context) {
     private val _disableTts = MutableStateFlow(prefs.getBoolean("disable_tts", false))
     val disableTts: StateFlow<Boolean> = _disableTts.asStateFlow()
 
+    private val _ttsEngine = MutableStateFlow(prefs.getString("tts_engine", "EDGE_NEURAL") ?: "EDGE_NEURAL")
+    val ttsEngine: StateFlow<String> = _ttsEngine.asStateFlow()
+
+    private val _ttsEdgeVoice = MutableStateFlow(prefs.getString("tts_edge_voice", "en-US-JennyNeural") ?: "en-US-JennyNeural")
+    val ttsEdgeVoice: StateFlow<String> = _ttsEdgeVoice.asStateFlow()
+
+    private val _ttsSpeed = MutableStateFlow(prefs.getFloat("tts_speed", 1.0f))
+    val ttsSpeed: StateFlow<Float> = _ttsSpeed.asStateFlow()
+
+    private val _ttsPitch = MutableStateFlow(prefs.getFloat("tts_pitch", 1.0f))
+    val ttsPitch: StateFlow<Float> = _ttsPitch.asStateFlow()
+
     private val _disableStt = MutableStateFlow(prefs.getBoolean("disable_stt", false))
     val disableStt: StateFlow<Boolean> = _disableStt.asStateFlow()
 
@@ -346,6 +358,10 @@ class BookRepository(private val context: Context) {
             autoScrollSpeed = prefs.getFloat("auto_scroll_speed", 1.0f),
             disableAi = prefs.getBoolean("disable_ai", false),
             disableTts = prefs.getBoolean("disable_tts", false),
+            ttsEngine = prefs.getString("tts_engine", "EDGE_NEURAL") ?: "EDGE_NEURAL",
+            ttsEdgeVoice = prefs.getString("tts_edge_voice", "en-US-JennyNeural") ?: "en-US-JennyNeural",
+            ttsSpeed = prefs.getFloat("tts_speed", 1.0f),
+            ttsPitch = prefs.getFloat("tts_pitch", 1.0f),
             disableStt = prefs.getBoolean("disable_stt", false),
             autoStartMic = prefs.getBoolean("auto_start_mic", true),
             enableFtsIndexing = prefs.getBoolean("enable_fts_indexing", false),
@@ -371,6 +387,17 @@ class BookRepository(private val context: Context) {
             chapterCache.put(bookId, fromDb)
         }
         return fromDb
+    }
+
+    fun getCachedChapters(bookId: String): List<Chapter>? {
+        return chapterCache.get(bookId) ?: dbHelper.getCachedChapters(bookId)
+    }
+
+    fun prefetchChapters(bookId: String) {
+        if (chapterCache.get(bookId) != null || dbHelper.getCachedChapters(bookId) != null) return
+        repoScope.launch(Dispatchers.IO) {
+            getChaptersForBook(bookId)
+        }
     }
 
     fun getChapter(bookId: String, chapterIndex: Int): Chapter? {
@@ -428,6 +455,18 @@ class BookRepository(private val context: Context) {
             _wishlistBooks.value = loadedWishlist
             _completedBookIds.value = loadedCompleted
             _customThemes.value = loadedThemes
+
+            try {
+                val curActiveId = _activeBookId.value.ifBlank { loadedBooks.firstOrNull()?.id ?: "" }
+                if (curActiveId.isNotBlank()) {
+                    val chaps = getChaptersForBook(curActiveId)
+                    if (chaps.isNotEmpty()) {
+                        _books.value = _books.value.map {
+                            if (it.id == curActiveId && it.chapters.isEmpty()) it.copy(chapters = chaps) else it
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
 
             try {
                 syncSettings()
@@ -511,6 +550,46 @@ class BookRepository(private val context: Context) {
         updateReaderSettings { it.copy(autoScrollSpeed = speed) }
         prefs.edit().putFloat("auto_scroll_speed", speed).apply()
         persistSettingToDb("auto_scroll_speed", speed.toString())
+    }
+
+    fun cycleAutoScrollSpeed(): Float {
+        val current = _autoScrollSpeed.value
+        val next = when {
+            current < 0.9f -> 1.0f
+            current < 1.4f -> 1.5f
+            current < 1.9f -> 2.0f
+            else -> 0.5f
+        }
+        setAutoScrollSpeed(next)
+        return next
+    }
+
+    fun setTtsEngine(engine: String) {
+        _ttsEngine.value = engine
+        updateReaderSettings { it.copy(ttsEngine = engine) }
+        prefs.edit().putString("tts_engine", engine).apply()
+        persistSettingToDb("tts_engine", engine)
+    }
+
+    fun setTtsEdgeVoice(voice: String) {
+        _ttsEdgeVoice.value = voice
+        updateReaderSettings { it.copy(ttsEdgeVoice = voice) }
+        prefs.edit().putString("tts_edge_voice", voice).apply()
+        persistSettingToDb("tts_edge_voice", voice)
+    }
+
+    fun setTtsSpeed(speed: Float) {
+        _ttsSpeed.value = speed
+        updateReaderSettings { it.copy(ttsSpeed = speed) }
+        prefs.edit().putFloat("tts_speed", speed).apply()
+        persistSettingToDb("tts_speed", speed.toString())
+    }
+
+    fun setTtsPitch(pitch: Float) {
+        _ttsPitch.value = pitch
+        updateReaderSettings { it.copy(ttsPitch = pitch) }
+        prefs.edit().putFloat("tts_pitch", pitch).apply()
+        persistSettingToDb("tts_pitch", pitch.toString())
     }
 
     fun setDisableAi(disabled: Boolean) {
@@ -1134,7 +1213,14 @@ class BookRepository(private val context: Context) {
         }
         _books.value = updated
         repoScope.launch(Dispatchers.IO) {
-            getChaptersForBook(bookId)
+            val chaps = getChaptersForBook(bookId)
+            if (chaps.isNotEmpty()) {
+                withContext(Dispatchers.Main) {
+                    _books.value = _books.value.map {
+                        if (it.id == bookId && it.chapters.isEmpty()) it.copy(chapters = chaps) else it
+                    }
+                }
+            }
         }
     }
 
@@ -1776,6 +1862,10 @@ class BookRepository(private val context: Context) {
             dbSettings["auto_scroll_speed"]?.toFloatOrNull()?.let { s = s.copy(autoScrollSpeed = it) }
             dbSettings["disable_ai"]?.toBooleanStrictOrNull()?.let { s = s.copy(disableAi = it) }
             dbSettings["disable_tts"]?.toBooleanStrictOrNull()?.let { s = s.copy(disableTts = it) }
+            dbSettings["tts_engine"]?.let { s = s.copy(ttsEngine = it) }
+            dbSettings["tts_edge_voice"]?.let { s = s.copy(ttsEdgeVoice = it) }
+            dbSettings["tts_speed"]?.toFloatOrNull()?.let { s = s.copy(ttsSpeed = it) }
+            dbSettings["tts_pitch"]?.toFloatOrNull()?.let { s = s.copy(ttsPitch = it) }
             dbSettings["disable_stt"]?.toBooleanStrictOrNull()?.let { s = s.copy(disableStt = it) }
             dbSettings["auto_start_mic"]?.toBooleanStrictOrNull()?.let { s = s.copy(autoStartMic = it) }
             dbSettings["enable_fts_indexing"]?.toBooleanStrictOrNull()?.let { s = s.copy(enableFtsIndexing = it) }
@@ -1863,6 +1953,10 @@ class BookRepository(private val context: Context) {
             _autoScrollSpeed.value = s.autoScrollSpeed
             _disableAi.value = s.disableAi
             _disableTts.value = s.disableTts
+            _ttsEngine.value = s.ttsEngine
+            _ttsEdgeVoice.value = s.ttsEdgeVoice
+            _ttsSpeed.value = s.ttsSpeed
+            _ttsPitch.value = s.ttsPitch
             _disableStt.value = s.disableStt
             _autoStartMic.value = s.autoStartMic
             _enableFtsIndexing.value = s.enableFtsIndexing
@@ -1914,6 +2008,10 @@ class BookRepository(private val context: Context) {
                 "auto_scroll_speed" to s.autoScrollSpeed.toString(),
                 "disable_ai" to s.disableAi.toString(),
                 "disable_tts" to s.disableTts.toString(),
+                "tts_engine" to s.ttsEngine,
+                "tts_edge_voice" to s.ttsEdgeVoice,
+                "tts_speed" to s.ttsSpeed.toString(),
+                "tts_pitch" to s.ttsPitch.toString(),
                 "disable_stt" to s.disableStt.toString(),
                 "auto_start_mic" to s.autoStartMic.toString(),
                 "enable_fts_indexing" to s.enableFtsIndexing.toString(),
