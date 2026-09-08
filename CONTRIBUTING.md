@@ -53,6 +53,7 @@ Please be kind, constructive, and respectful in all discussions, issues, and pul
 ```bash
 git clone https://github.com/tasmirz/lumina.git
 cd lumina
+git checkout dev
 
 # Run automated tests to verify your environment
 just test
@@ -194,7 +195,9 @@ cd android && ./gradlew testDebugUnitTest
 
 ## 🚀 Submitting a Pull Request
 
-Lumina uses `dev` as its primary integration and development branch, while `main` tracks tagged stable releases.
+> [!IMPORTANT]
+> **Always Target the `dev` Branch**
+> All pull requests must be opened against the **`dev`** branch (`base: dev`). The `main` branch is strictly reserved for tagged stable production releases. Any pull request opened directly against `main` will be asked to re-target `dev`.
 
 1. **Create a Feature Branch (off `dev`)**:
    ```bash
@@ -223,9 +226,10 @@ Lumina uses `dev` as its primary integration and development branch, while `main
 4. **Visual Verification**:
    If your change affects UI or layouts, take a screenshot via `just ss <name>` and attach it to your PR description.
 
-5. **Submit PR**:
-   - Provide a concise summary of the change.
+5. **Submit PR (Targeting `dev`)**:
+   - On GitHub, set the base branch to **`dev`** (`base: dev` ← `compare: feature/my-new-feature`).
+   - Provide a concise summary of the change, motivation, and context.
    - Link related issue(s).
-   - Confirm tests pass and no regression in scrolling or memory consumption.
+   - Confirm all local tests pass and no regressions in scrolling smoothness or memory consumption.
 
 Thank you for helping make Lumina the best reading experience on Android! 📚✨
