@@ -2,13 +2,14 @@ plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.compose.compiler)
   alias(libs.plugins.kotlin.serialization)
+  alias(libs.plugins.hotswan.compiler)
 }
 
 android {
-    namespace = "org.protidhoni.lumina"
+    namespace = "io.github.tasmirz.lumina"
     compileSdk = 36
     defaultConfig {
-        applicationId = "org.protidhoni.lumina"
+        applicationId = "io.github.tasmirz.lumina"
         minSdk = 24
         targetSdk = 36
         versionCode = 1

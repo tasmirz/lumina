@@ -1,0 +1,11 @@
+Lumina is a modern, lightweight, privacy-respecting EPUB reader for Android. Built entirely with Jetpack Compose and licensed under the GNU Affero General Public License v3.0 (AGPLv3), Lumina gives you complete control over your digital reading experience without ads, tracking, or proprietary bloat.
+
+Key Features:
+• **Offline Full-Text Search**: Instant search and scene indexing powered by Android's embedded SQLite FTS5 engine with zero network requirements and 0 MB install size penalty.
+• **Custom Theme Builder & CSS**: Design your own color palettes or import/export standard CSS variables (`:root`) and wallpapers to personalize your typography.
+• **Typography & Layout Control**: Fine-tune line spacing, letter spacing, font families, text justification, side margins, and vertical padding.
+• **Hands-Free Auto-Scroll & Gestures**: Double-tap for continuous auto-scrolling with adjustable speed, fluid edge controls, and gesture shortcuts.
+• **Text-to-Speech (TTS)**: Read aloud starting from any paragraph with quick-pause and continuous playback.
+• **AI Assistant Integration (Optional)**: Connect your own Gemini or OpenAI API key for story summaries, character analysis, and scene teleportation with an integrated Anti-Spoiler Shield.
+• **100% Offline Mode**: Master switches allow completely disabling AI and TTS features for zero-play support and offline isolation.
+• **Unified Backup & Export**: Export your complete library progress, settings, bookmarks, highlights, notes, and custom themes to a single JSON file.

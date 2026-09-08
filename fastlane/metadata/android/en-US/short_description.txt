@@ -1,0 +1,1 @@
+Privacy-first EPUB reader with offline SQLite FTS5 and custom CSS themes.

@@ -24,32 +24,60 @@ install:
 
 # Launch Lumina on the connected phone
 run:
-    adb shell am start -n org.protidhoni.lumina/.MainActivity
+    adb shell am start -n io.github.tasmirz.lumina/.MainActivity
 
 # Alias to launch the app
 launch: run
 
 # Stop the running application
 stop:
-    adb shell am force-stop org.protidhoni.lumina
+    adb shell am force-stop io.github.tasmirz.lumina
 
 # Restart the application on the phone
 restart: stop run
 
 # Capture a screenshot from the device (saved in debug/ directory)
-ss name="screenshot.png":
-    @mkdir -p debug
+# Supports multi-word names without quotes e.g. `just ss settings reading controls`
+ss +args="screenshot":
+    #!/usr/bin/env bash
+    set -e
+    mkdir -p debug
+    raw="{{args}}"
+    clean="${raw// /_}"
+    if [[ "$clean" != *.png ]]; then
+        clean="${clean}.png"
+    fi
     adb shell screencap -p /sdcard/lumina_temp_ss.png
-    adb pull /sdcard/lumina_temp_ss.png debug/{{name}}
+    adb pull /sdcard/lumina_temp_ss.png "debug/$clean"
     adb shell rm /sdcard/lumina_temp_ss.png
-    @echo "Screenshot saved to debug/{{name}}"
+    echo "Screenshot saved to debug/$clean"
 
 # Full screenshot alias
-screenshot name="screenshot.png": (ss name)
+screenshot +args="screenshot": (ss args)
 
 # Build, install and launch in one command
 all: build install run
 
+# Initialize ADB port forwarding for Compose HotSwan (port 8600)
+hotswan:
+    adb forward tcp:8600 tcp:8600
+    @echo "🔥 Compose HotSwan port forwarding active (tcp:8600 -> tcp:8600)"
+    @echo "Instant Compose hot reload enabled on device without app restarts"
+
+# Hot reload: incremental build, install, launch, and activate Compose HotSwan
+hot: reload hotswan
+
+# Hot reload alias
+hot-reload: hot
+
+# Fast incremental rebuild, install, and restart via Gradle & ADB (no Python)
+reload:
+    cd android && ./gradlew assembleDebug --build-cache --parallel
+    adb install -r -d android/app/build/outputs/apk/debug/app-debug.apk
+    adb shell am start -n io.github.tasmirz.lumina/.MainActivity -S
+
 # Stream Logcat output for the Lumina app process
 logs:
-    adb logcat --pid="$$(adb shell pidof -s org.protidhoni.lumina)"
+    adb logcat --pid="$$(adb shell pidof -s io.github.tasmirz.lumina)"
+
+

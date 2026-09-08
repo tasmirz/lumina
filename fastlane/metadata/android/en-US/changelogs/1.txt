@@ -1,0 +1,6 @@
+Initial release of Lumina EPUB Reader v1.0.
+• Complete EPUB reader engine with continuous scroll and paged modes.
+• Offline SQLite FTS5 full-text scene search.
+• Custom CSS theme builder and import/export.
+• Hands-free auto-scrolling with double-tap activation.
+• AGPLv3 copyleft open source release.

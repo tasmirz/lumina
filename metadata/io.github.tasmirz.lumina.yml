@@ -1,0 +1,37 @@
+Categories:
+  - Reading
+License: AGPL-3.0-or-later
+SourceCode: https://github.com/tasmirz/lumina
+IssueTracker: https://github.com/tasmirz/lumina/issues
+
+Summary: Privacy-first EPUB reader with offline FTS5 and custom CSS themes
+Description: |-
+  Lumina is a modern, lightweight, privacy-respecting EPUB reader for Android.
+  Built entirely with Jetpack Compose and licensed under the GNU Affero General
+  Public License v3.0 (AGPLv3), Lumina gives you complete control over your
+  digital reading experience without ads, tracking, or proprietary bloat.
+
+  Features:
+  * Embedded SQLite FTS5 offline full-text search and scene indexing.
+  * Custom Theme Builder with CSS import/export and background wallpapers.
+  * Deep typography controls (fonts, line height, letter spacing, alignment).
+  * Hands-free auto-scrolling with double-tap activation.
+  * Text-to-Speech (TTS) reading engine.
+  * Optional AI story assistant with Anti-Spoiler Shield.
+  * Unified single-file JSON backup for settings, library, and notes.
+
+RepoType: git
+Repo: https://github.com/tasmirz/lumina.git
+
+Builds:
+  - versionName: '1.0'
+    versionCode: 1
+    commit: v1.0
+    subdir: android
+    gradle:
+      - yes
+
+AutoUpdateMode: Version
+UpdateCheckMode: Tags
+CurrentVersion: '1.0'
+CurrentVersionCode: 1
