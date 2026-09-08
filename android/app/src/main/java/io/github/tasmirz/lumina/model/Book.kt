@@ -127,7 +127,7 @@ data class Book(
     val id: String,
     val title: String,
     val author: String,
-    val coverUrl: String,
+    val coverUrl: String = "",
     var lastRead: String = "Just now",
     var progress: Int = 0,
     var readTimeLeft: String = "15m left",
@@ -140,7 +140,8 @@ data class Book(
     var downloadUrl: String = "",
     var fileSize: Long = 0L,
     var characterCheckpointChapter: Int = 0,
-    var characterCheckpointPage: Int = 0
+    var characterCheckpointPage: Int = 0,
+    var language: String = "en"
 )
 
 data class WordDefinition(
@@ -183,6 +184,19 @@ data class BookCharacter(
     val firstAppearanceChapter: String = "",
     val summary: String,
     val keyEvents: String = "",
+    val aliases: List<String> = emptyList(),
+    val isSpoiler: Boolean = false,
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+data class BookLore(
+    val id: Long = 0,
+    val bookId: String,
+    val title: String,
+    val category: String = "World",
+    val firstAppearanceChapter: String = "",
+    val description: String,
+    val keyFacts: String = "",
     val isSpoiler: Boolean = false,
     val createdAt: Long = System.currentTimeMillis()
 )

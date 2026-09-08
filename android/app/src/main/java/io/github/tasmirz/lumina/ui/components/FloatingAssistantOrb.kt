@@ -62,6 +62,8 @@ import kotlin.math.sin
 
 import androidx.compose.material.icons.filled.UnfoldMore
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalView
+import android.view.HapticFeedbackConstants
 
 enum class AssistantVoiceState {
     IDLE,
@@ -112,6 +114,7 @@ fun FloatingAssistantOrb(
     onSavePosition: (x: Float, y: Float, isLandscape: Boolean) -> Unit = { _, _, _ -> },
     modifier: Modifier = Modifier
 ) {
+    val view = LocalView.current
     val density = LocalDensity.current
     val config = LocalConfiguration.current
     val isLandscape = config.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
@@ -133,20 +136,25 @@ fun FloatingAssistantOrb(
     val dockedHeightDp = orbSize.dockedHeight.dp
     val normalOrbSizeDp = (44 * scale).dp
     val normalOrbSizePx = with(density) { normalOrbSizeDp.toPx() }
+    val dockedWidthPx = with(density) { dockedWidthDp.toPx() }
+    val dockedHeightPx = with(density) { dockedHeightDp.toPx() }
 
-    // Initial position: docked safely on edge within height bounds and outside cutout
-    val defaultDockedWidthPx = with(density) { dockedWidthDp.toPx() }
-    val defaultDockedHeightPx = with(density) { dockedHeightDp.toPx() }
+    val minDockX = cutoutLeftPx
+    val maxDockRightX = (screenWidthPx - dockedWidthPx - cutoutRightPx).coerceAtLeast(minDockX)
+    val maxFloatingX = (screenWidthPx - normalOrbSizePx - cutoutRightPx).coerceAtLeast(minDockX)
+    val edgeSnapZonePx = with(density) { 56.dp.toPx() }
+
+    // Initial position: default to edge dock on right unless user placed elsewhere
     var offsetX by remember {
         mutableFloatStateOf(
-            if (savedX >= 0f) savedX else (screenWidthPx - defaultDockedWidthPx - cutoutRightPx).coerceAtLeast(cutoutLeftPx)
+            if (savedX >= 0f) savedX else maxDockRightX
         )
     }
     var offsetY by remember {
         val initialY = if (savedY >= 0f) savedY else {
             (screenHeightPx * 0.70f).coerceIn(
                 maxOf(screenHeightPx * 0.15f, cutoutTopPx),
-                minOf(screenHeightPx * 0.85f - defaultDockedHeightPx, screenHeightPx - cutoutBottomPx - defaultDockedHeightPx).coerceAtLeast(screenHeightPx * 0.15f)
+                minOf(screenHeightPx * 0.85f - dockedHeightPx, screenHeightPx - cutoutBottomPx - dockedHeightPx).coerceAtLeast(screenHeightPx * 0.15f)
             )
         }
         mutableFloatStateOf(initialY)
@@ -156,8 +164,12 @@ fun FloatingAssistantOrb(
     var isOverBin by remember { mutableStateOf(false) }
     var isWheelExpanded by remember { mutableStateOf(false) }
 
-    val isDocked = orbEdgeSnap && !isDragging && !isWheelExpanded && voiceState == AssistantVoiceState.IDLE
+    // Edge docked state: true only when orb is resting right on the margin
     val isNearLeftEdge = offsetX < screenWidthPx / 2f
+    val isSnappedToLeft = kotlin.math.abs(offsetX - minDockX) < 4f
+    val isSnappedToRight = kotlin.math.abs(offsetX - maxDockRightX) < 4f
+    val isAtEdge = isSnappedToLeft || isSnappedToRight
+    val isDocked = orbEdgeSnap && isAtEdge && !isDragging && !isWheelExpanded && voiceState == AssistantVoiceState.IDLE
 
     val currentWidthDp by animateDpAsState(
         targetValue = if (isDocked) dockedWidthDp else normalOrbSizeDp,
@@ -167,32 +179,31 @@ fun FloatingAssistantOrb(
     val currentHeightDp by animateDpAsState(
         targetValue = if (isDocked) dockedHeightDp else normalOrbSizeDp,
         animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "orbHeight"
     )
 
     val orbWidthPx = with(density) { currentWidthDp.toPx() }
     val orbHeightPx = with(density) { currentHeightDp.toPx() }
 
-    // Re-clamp position on orientation, saved coordinates, or screen size changes so the orb is never lost or under the notch
+    // Re-clamp position on orientation, saved coordinates, or screen size changes
     LaunchedEffect(savedX, savedY, screenWidthPx, screenHeightPx, orbEdgeSnap, isLandscape) {
-        val minX = cutoutLeftPx
-        val maxX = (screenWidthPx - orbWidthPx - cutoutRightPx).coerceAtLeast(minX)
         val minY = maxOf(screenHeightPx * 0.15f, cutoutTopPx)
-        val maxY = minOf(screenHeightPx * 0.85f - orbHeightPx, screenHeightPx - cutoutBottomPx - orbHeightPx).coerceAtLeast(minY)
+        val maxY = minOf(screenHeightPx * 0.85f - dockedHeightPx, screenHeightPx - cutoutBottomPx - dockedHeightPx).coerceAtLeast(minY)
 
-        if (savedX >= 0f && savedY >= 0f) {
-            offsetY = savedY.coerceIn(minY, maxY)
-            if (orbEdgeSnap) {
-                offsetX = if (savedX < screenWidthPx / 2f) minX else maxX
+        offsetY = offsetY.coerceIn(minY, maxY)
+
+        if (savedX >= 0f) {
+            val wasDockedOnLeft = kotlin.math.abs(savedX - minDockX) < 14f
+            val wasDockedOnRight = savedX > screenWidthPx * 0.65f && kotlin.math.abs(savedX - maxDockRightX) < 60f
+            if (orbEdgeSnap && wasDockedOnLeft) {
+                offsetX = minDockX
+            } else if (orbEdgeSnap && wasDockedOnRight) {
+                offsetX = maxDockRightX
             } else {
-                offsetX = savedX.coerceIn(minX, maxX)
+                offsetX = savedX.coerceIn(minDockX, maxFloatingX)
             }
         } else {
-            offsetY = offsetY.coerceIn(minY, maxY)
-            if (orbEdgeSnap) {
-                offsetX = if (isNearLeftEdge) minX else maxX
-            } else {
-                offsetX = offsetX.coerceIn(minX, maxX)
-            }
+            offsetX = if (isNearLeftEdge) minDockX else maxDockRightX
         }
     }
 
@@ -366,213 +377,208 @@ fun FloatingAssistantOrb(
                     )
                 }
 
-                // Adaptive layout:
-                // If 1..5 items in total: single tier (1st layer) with custom angular span & enlarged buttons
-                // If 6..9 items in total: 2 tiers (Tier 1: 3 core items, Tier 2: 3..6 items with distinct scaling)
-                val tier1Items = if (activeItems.size <= 5) activeItems else activeItems.take(3)
-                val tier2Items = if (activeItems.size <= 5) emptyList() else activeItems.drop(3).take(minOf(6, activeItems.size - 3))
-                val tier3Items = if (activeItems.size <= 5) emptyList() else activeItems.drop(9)
+                // Harmonious 2-Layered Concentric Circles Palette Layout
+                // Both Layer 1 (inner) and Layer 2 (outer) share the EXACT same center and concentric curvature!
+                val totalCount = activeItems.size
+                if (totalCount > 0) {
+                    val isDockedOnLeft = isAtEdge && isNearLeftEdge
+                    val isDockedOnRight = isAtEdge && !isNearLeftEdge
+                    val isFloating = !isAtEdge
 
-                val minDockXForMenu = cutoutLeftPx
-                val maxDockXForMenu = (screenWidthPx - with(density) { dockedWidthDp.toPx() } - cutoutRightPx).coerceAtLeast(minDockXForMenu)
-                val currentOrbX = if (isDragging) offsetX else (if (orbEdgeSnap) (if (offsetX < screenWidthPx / 2f) minDockXForMenu else maxDockXForMenu) else offsetX)
-                val currentOrbY = offsetY
-                val orbCenterX = currentOrbX + with(density) { (if (isDocked) dockedWidthDp / 2f else normalOrbSizeDp / 2f).toPx() }
-                val orbCenterY = currentOrbY + with(density) { (if (isDocked) dockedHeightDp / 2f else normalOrbSizeDp / 2f).toPx() }
-                val isRightSide = orbCenterX > (screenWidthPx / 2f)
-
-                val verticalFraction = (orbCenterY / screenHeightPx).coerceIn(0f, 1f)
-
-                // Dynamically tilt arc away from screen edges so items never break or collide with status bar or bottom dock
-                val tiltDeg = when {
-                    verticalFraction < 0.30f -> (0.30f - verticalFraction) / 0.30f * 28.0 // Tilt downward into screen
-                    verticalFraction > 0.70f -> (verticalFraction - 0.70f) / 0.30f * 28.0 // Tilt upward into screen
-                    else -> 0.0
-                }
-                // Screen coordinates: positive rotation is clockwise (downward), negative is counter-clockwise (upward)
-                val centerAngle = if (isRightSide) {
-                    if (verticalFraction < 0.35f) Math.PI - Math.toRadians(tiltDeg)
-                    else Math.PI + Math.toRadians(tiltDeg)
-                } else {
-                    if (verticalFraction < 0.35f) 0.0 + Math.toRadians(tiltDeg)
-                    else 0.0 - Math.toRadians(tiltDeg)
-                }
-
-                val radiusScale = 1.0f // Never shrink radius in landscape so buttons don't compress
-                val innerRadius = with(density) { ((orbMenuSize.innerRadiusDp + 18) * radiusScale).dp.toPx() }
-                val middleRadiusExpand = if (tier2Items.size == 6) 24 else 18
-                val middleRadius = with(density) { ((orbMenuSize.outerRadiusDp + middleRadiusExpand) * radiusScale).dp.toPx() }
-                val outerRadius = with(density) { ((orbMenuSize.outerRadiusDp + 64) * radiusScale).dp.toPx() }
-
-                val innerItemSizeDp = (orbMenuSize.itemSizeDp + 4).dp
-                val innerItemSizePx = with(density) { innerItemSizeDp.toPx() }
-                val innerIconSize = (orbMenuSize.iconSizeDp + 2).dp
-                val middleItemSizeDp = orbMenuSize.itemSizeDp.dp
-                val middleItemSizePx = with(density) { middleItemSizeDp.toPx() }
-                val outerItemSizeDp = orbMenuSize.itemSizeDp.dp
-                val outerItemSizePx = with(density) { outerItemSizeDp.toPx() }
-                val menuIconSize = orbMenuSize.iconSizeDp.dp
-
-                // Uncompressed bounds in landscape: allow arc to fan inward without squishing buttons together
-                val innerMinYBound = if (isLandscape) -with(density) { 16.dp.toPx() } else with(density) { 36.dp.toPx() }
-                val innerMaxYBound = if (isLandscape) screenHeightPx + with(density) { 16.dp.toPx() } - innerItemSizePx else screenHeightPx - innerItemSizePx - with(density) { 48.dp.toPx() }
-
-                val middleMinYBound = if (isLandscape) -with(density) { 20.dp.toPx() } else with(density) { 36.dp.toPx() }
-                val middleMaxYBound = if (isLandscape) screenHeightPx + with(density) { 20.dp.toPx() } - middleItemSizePx else screenHeightPx - middleItemSizePx - with(density) { 48.dp.toPx() }
-
-                val outerMinYBound = if (isLandscape) -with(density) { 24.dp.toPx() } else with(density) { 36.dp.toPx() }
-                val outerMaxYBound = if (isLandscape) screenHeightPx + with(density) { 24.dp.toPx() } - outerItemSizePx else screenHeightPx - outerItemSizePx - with(density) { 48.dp.toPx() }
-
-                // 1. Tier 1: Inner Ring Placement (1..5 items when total <= 5, or 3 items when total >= 6)
-                val innerSpanDeg = when (tier1Items.size) {
-                    1 -> 0.0
-                    2 -> 38.0
-                    3 -> 66.0
-                    4 -> 88.0
-                    else -> 106.0
-                }
-                val innerSpanRad = Math.toRadians(innerSpanDeg)
-                val innerStep = if (tier1Items.size > 1) innerSpanRad / (tier1Items.size - 1) else 0.0
-
-                tier1Items.forEachIndexed { index, item ->
-                    val angle = if (isRightSide) {
-                        centerAngle + (innerSpanRad / 2.0) - (index * innerStep)
-                    } else {
-                        centerAngle - (innerSpanRad / 2.0) + (index * innerStep)
+                    // Split items into 2 concentric layers:
+                    // If <= 4 items, keep on single inner layer. Otherwise distribute harmoniously across 2 layers.
+                    val (layer1Items, layer2Items) = when {
+                        totalCount <= 4 -> Pair(activeItems, emptyList())
+                        totalCount == 5 -> Pair(activeItems.take(2), activeItems.drop(2))
+                        totalCount <= 7 -> Pair(activeItems.take(3), activeItems.drop(3))
+                        else -> Pair(activeItems.take(4), activeItems.drop(4))
                     }
-                    val itemX = (orbCenterX + (innerRadius * cos(angle)).toFloat() - (innerItemSizePx / 2f))
-                        .coerceIn(with(density) { 8.dp.toPx() }, screenWidthPx - innerItemSizePx - with(density) { 8.dp.toPx() })
-                    val itemY = (orbCenterY + (innerRadius * sin(angle)).toFloat() - (innerItemSizePx / 2f))
-                        .coerceIn(innerMinYBound, innerMaxYBound)
 
-                    Box(
-                        modifier = Modifier
-                            .offset { IntOffset(itemX.roundToInt(), itemY.roundToInt()) }
-                            .size(innerItemSizeDp)
-                            .shadow(4.dp, CircleShape)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.95f))
-                            .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f), CircleShape)
-                            .clickable { item.action() },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = item.icon,
-                            contentDescription = item.label,
-                            modifier = Modifier.size(innerIconSize),
-                            tint = MaterialTheme.colorScheme.primary
-                        )
+                    // Sizing and radius based on OrbMenuSize
+                    val scaleFactor = when (orbMenuSize) {
+                        OrbMenuSize.COMPACT -> 0.85f
+                        OrbMenuSize.MEDIUM -> 1.0f
+                        OrbMenuSize.LARGE -> 1.15f
                     }
-                }
 
-                // 2. Tier 2: Middle Ring Placement (1..5 items vs 6 items have different scaling)
-                val middleSpanDeg = when (tier2Items.size) {
-                    1 -> 0.0
-                    2 -> 34.0
-                    3 -> 56.0
-                    4 -> 76.0
-                    5 -> 94.0
-                    else -> 118.0
-                }
-                val middleSpanRad = Math.toRadians(middleSpanDeg)
-                val middleStep = if (tier2Items.size > 1) middleSpanRad / (tier2Items.size - 1) else 0.0
-
-                val tier2Angles = (0 until tier2Items.size).map { index ->
-                    if (isRightSide) {
-                        centerAngle + (middleSpanRad / 2.0) - (index * middleStep)
-                    } else {
-                        centerAngle - (middleSpanRad / 2.0) + (index * middleStep)
+                    val innerRadiusPx = with(density) {
+                        if (isFloating) (56 * scaleFactor).dp.toPx() else (64 * scaleFactor).dp.toPx()
                     }
-                }
-
-                tier2Items.forEachIndexed { index, item ->
-                    val angle = tier2Angles[index]
-                    val itemX = (orbCenterX + (middleRadius * cos(angle)).toFloat() - (middleItemSizePx / 2f))
-                        .coerceIn(with(density) { 8.dp.toPx() }, screenWidthPx - middleItemSizePx - with(density) { 8.dp.toPx() })
-                    val itemY = (orbCenterY + (middleRadius * sin(angle)).toFloat() - (middleItemSizePx / 2f))
-                        .coerceIn(middleMinYBound, middleMaxYBound)
-
-                    Box(
-                        modifier = Modifier
-                            .offset { IntOffset(itemX.roundToInt(), itemY.roundToInt()) }
-                            .size(middleItemSizeDp)
-                            .shadow(5.dp, CircleShape)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.95f))
-                            .border(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.45f), CircleShape)
-                            .clickable { item.action() },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = item.icon,
-                            contentDescription = item.label,
-                            modifier = Modifier.size(menuIconSize),
-                            tint = MaterialTheme.colorScheme.secondary
-                        )
+                    val outerRadiusPx = with(density) {
+                        if (isFloating) (96 * scaleFactor).dp.toPx() else (108 * scaleFactor).dp.toPx()
                     }
-                }
 
-                // 3. Tier 3: Outer Ring Placement — Centered in the angular gaps between Tier 2 items
-                if (tier3Items.isNotEmpty()) {
-                    val gapAngles = if (tier2Angles.size >= 2) {
-                        (0 until tier2Angles.size - 1).map { i ->
-                            (tier2Angles[i] + tier2Angles[i + 1]) / 2.0
+                    val innerItemSizeDp = (orbMenuSize.itemSizeDp + 2).dp
+                    val innerIconSizeDp = (orbMenuSize.iconSizeDp + 1).dp
+                    val innerItemSizePx = with(density) { innerItemSizeDp.toPx() }
+
+                    val outerItemSizeDp = (orbMenuSize.itemSizeDp - 2).dp.coerceAtLeast(28.dp)
+                    val outerIconSizeDp = orbMenuSize.iconSizeDp.dp
+                    val outerItemSizePx = with(density) { outerItemSizeDp.toPx() }
+
+                    // Exact center of the expanded circular orb
+                    val currentOrbLeft = if (isDragging) offsetX else {
+                        if (isAtEdge) {
+                            if (isNearLeftEdge) minDockX else maxFloatingX
+                        } else {
+                            offsetX
                         }
-                    } else emptyList()
+                    }
+                    val orbCenterX = currentOrbLeft + (normalOrbSizePx / 2f)
+                    val orbCenterY = offsetY + (normalOrbSizePx / 2f)
 
-                    val tier3Angles: List<Double> = when {
-                        gapAngles.isNotEmpty() && tier3Items.size <= gapAngles.size -> {
-                            if (tier3Items.size == gapAngles.size) {
-                                gapAngles
-                            } else if (tier3Items.size == 1) {
-                                listOf(gapAngles[gapAngles.size / 2])
-                            } else {
-                                listOf(gapAngles.first(), gapAngles.last())
+                    val verticalFraction = (orbCenterY / screenHeightPx).coerceIn(0f, 1f)
+
+                    // Calculate angles for Layer 1 and Layer 2
+                    fun computeAngles(itemsCount: Int, isInner: Boolean): List<Double> {
+                        if (itemsCount <= 0) return emptyList()
+                        return when {
+                            isFloating -> {
+                                // 360° concentric circles; interleave outer layer angles for balanced radial visual
+                                val step = (2.0 * Math.PI) / itemsCount
+                                val startOffset = if (isInner) -Math.PI / 2.0 else -Math.PI / 2.0 + (step / 2.0)
+                                (0 until itemsCount).map { i -> startOffset + (i * step) }
                             }
-                        }
-                        else -> {
-                            val tier3SpanDeg = when (tier3Items.size) {
-                                1 -> 0.0
-                                2 -> 50.0
-                                3 -> 78.0
-                                4 -> 98.0
-                                else -> 116.0
-                            }
-                            val tier3SpanRad = Math.toRadians(tier3SpanDeg)
-                            val tier3Step = if (tier3Items.size > 1) tier3SpanRad / (tier3Items.size - 1) else 0.0
-                            (0 until tier3Items.size).map { index ->
-                                if (isRightSide) {
-                                    centerAngle + (tier3SpanRad / 2.0) - (index * tier3Step)
+                            isDockedOnLeft -> {
+                                // Semicircle arc fanning to the right (+X)
+                                val tiltDeg = when {
+                                    verticalFraction < 0.28f -> (0.28f - verticalFraction) / 0.28f * 18.0
+                                    verticalFraction > 0.72f -> (verticalFraction - 0.72f) / 0.28f * -18.0
+                                    else -> 0.0
+                                }
+                                val effectiveCenter = 0.0 + Math.toRadians(tiltDeg)
+                                val spanDeg = if (isInner) {
+                                    when (itemsCount) {
+                                        1 -> 0.0
+                                        2 -> 42.0
+                                        3 -> 72.0
+                                        else -> 92.0
+                                    }
                                 } else {
-                                    centerAngle - (tier3SpanRad / 2.0) + (index * tier3Step)
+                                    when (itemsCount) {
+                                        1 -> 0.0
+                                        2 -> 50.0
+                                        3 -> 84.0
+                                        4 -> 114.0
+                                        5 -> 136.0
+                                        else -> 152.0
+                                    }
+                                }
+                                val spanRad = Math.toRadians(spanDeg)
+                                val step = if (itemsCount > 1) spanRad / (itemsCount - 1) else 0.0
+                                (0 until itemsCount).map { i ->
+                                    effectiveCenter - (spanRad / 2.0) + (i * step)
+                                }
+                            }
+                            else -> {
+                                // Semicircle arc fanning to the left (-X)
+                                val tiltDeg = when {
+                                    verticalFraction < 0.28f -> (0.28f - verticalFraction) / 0.28f * -18.0
+                                    verticalFraction > 0.72f -> (verticalFraction - 0.72f) / 0.28f * 18.0
+                                    else -> 0.0
+                                }
+                                val effectiveCenter = Math.PI + Math.toRadians(tiltDeg)
+                                val spanDeg = if (isInner) {
+                                    when (itemsCount) {
+                                        1 -> 0.0
+                                        2 -> 42.0
+                                        3 -> 72.0
+                                        else -> 92.0
+                                    }
+                                } else {
+                                    when (itemsCount) {
+                                        1 -> 0.0
+                                        2 -> 50.0
+                                        3 -> 84.0
+                                        4 -> 114.0
+                                        5 -> 136.0
+                                        else -> 152.0
+                                    }
+                                }
+                                val spanRad = Math.toRadians(spanDeg)
+                                val step = if (itemsCount > 1) spanRad / (itemsCount - 1) else 0.0
+                                (0 until itemsCount).map { i ->
+                                    effectiveCenter + (spanRad / 2.0) - (i * step)
                                 }
                             }
                         }
                     }
 
-                    tier3Items.forEachIndexed { index, item ->
-                        val angle = tier3Angles.getOrElse(index) { centerAngle }
-                        val itemX = (orbCenterX + (outerRadius * cos(angle)).toFloat() - (outerItemSizePx / 2f))
-                            .coerceIn(with(density) { 8.dp.toPx() }, screenWidthPx - outerItemSizePx - with(density) { 8.dp.toPx() })
-                        val itemY = (orbCenterY + (outerRadius * sin(angle)).toFloat() - (outerItemSizePx / 2f))
-                            .coerceIn(outerMinYBound, outerMaxYBound)
+                    val layer1Angles = computeAngles(layer1Items.size, isInner = true)
+                    val layer2Angles = computeAngles(layer2Items.size, isInner = false)
+
+                    // Render Layer 1 (Inner Concentric Circle)
+                    layer1Items.forEachIndexed { index, item ->
+                        val angle = layer1Angles.getOrElse(index) { 0.0 }
+                        val rawItemX = orbCenterX + (innerRadiusPx * cos(angle)).toFloat() - (innerItemSizePx / 2f)
+                        val rawItemY = orbCenterY + (innerRadiusPx * sin(angle)).toFloat() - (innerItemSizePx / 2f)
+
+                        val minXBound = cutoutLeftPx + with(density) { 6.dp.toPx() }
+                        val maxXBound = screenWidthPx - innerItemSizePx - cutoutRightPx - with(density) { 6.dp.toPx() }
+                        val minYBound = if (isLandscape) -with(density) { 8.dp.toPx() } else cutoutTopPx + with(density) { 8.dp.toPx() }
+                        val maxYBound = if (isLandscape) screenHeightPx + with(density) { 8.dp.toPx() } - innerItemSizePx else screenHeightPx - innerItemSizePx - cutoutBottomPx - with(density) { 12.dp.toPx() }
+
+                        val itemX = rawItemX.coerceIn(minXBound, maxXBound)
+                        val itemY = rawItemY.coerceIn(minYBound, maxYBound)
 
                         Box(
                             modifier = Modifier
                                 .offset { IntOffset(itemX.roundToInt(), itemY.roundToInt()) }
-                                .size(outerItemSizeDp)
-                                .shadow(6.dp, CircleShape)
+                                .size(innerItemSizeDp)
+                                .shadow(elevation = 5.dp, shape = CircleShape)
                                 .clip(CircleShape)
                                 .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.95f))
-                                .border(1.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.45f), CircleShape)
+                                .border(
+                                    width = 1.2.dp,
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                                    shape = CircleShape
+                                )
                                 .clickable { item.action() },
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = item.icon,
                                 contentDescription = item.label,
-                                modifier = Modifier.size(menuIconSize),
-                                tint = MaterialTheme.colorScheme.tertiary
+                                modifier = Modifier.size(innerIconSizeDp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+
+                    // Render Layer 2 (Outer Concentric Circle)
+                    layer2Items.forEachIndexed { index, item ->
+                        val angle = layer2Angles.getOrElse(index) { 0.0 }
+                        val rawItemX = orbCenterX + (outerRadiusPx * cos(angle)).toFloat() - (outerItemSizePx / 2f)
+                        val rawItemY = orbCenterY + (outerRadiusPx * sin(angle)).toFloat() - (outerItemSizePx / 2f)
+
+                        val minXBound = cutoutLeftPx + with(density) { 6.dp.toPx() }
+                        val maxXBound = screenWidthPx - outerItemSizePx - cutoutRightPx - with(density) { 6.dp.toPx() }
+                        val minYBound = if (isLandscape) -with(density) { 8.dp.toPx() } else cutoutTopPx + with(density) { 8.dp.toPx() }
+                        val maxYBound = if (isLandscape) screenHeightPx + with(density) { 8.dp.toPx() } - outerItemSizePx else screenHeightPx - outerItemSizePx - cutoutBottomPx - with(density) { 12.dp.toPx() }
+
+                        val itemX = rawItemX.coerceIn(minXBound, maxXBound)
+                        val itemY = rawItemY.coerceIn(minYBound, maxYBound)
+
+                        Box(
+                            modifier = Modifier
+                                .offset { IntOffset(itemX.roundToInt(), itemY.roundToInt()) }
+                                .size(outerItemSizeDp)
+                                .shadow(elevation = 4.dp, shape = CircleShape)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.95f))
+                                .border(
+                                    width = 1.dp,
+                                    color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.45f),
+                                    shape = CircleShape
+                                )
+                                .clickable { item.action() },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = item.icon,
+                                contentDescription = item.label,
+                                modifier = Modifier.size(outerIconSizeDp),
+                                tint = MaterialTheme.colorScheme.secondary
                             )
                         }
                     }
@@ -580,13 +586,13 @@ fun FloatingAssistantOrb(
             }
         }
 
-        val minDockX = cutoutLeftPx
-        val maxDockX = (screenWidthPx - orbWidthPx - cutoutRightPx).coerceAtLeast(minDockX)
         val minDockY = maxOf(screenHeightPx * 0.15f, cutoutTopPx)
         val maxDockY = minOf(screenHeightPx * 0.85f - orbHeightPx, screenHeightPx - cutoutBottomPx - orbHeightPx).coerceAtLeast(minDockY)
 
         val currentMinDockX by rememberUpdatedState(minDockX)
-        val currentMaxDockX by rememberUpdatedState(maxDockX)
+        val currentMaxDockRightX by rememberUpdatedState(maxDockRightX)
+        val currentMaxFloatingX by rememberUpdatedState(maxFloatingX)
+        val currentEdgeSnapZonePx by rememberUpdatedState(edgeSnapZonePx)
         val currentMinDockY by rememberUpdatedState(minDockY)
         val currentMaxDockY by rememberUpdatedState(maxDockY)
         val currentScreenWidthPx by rememberUpdatedState(screenWidthPx)
@@ -598,7 +604,13 @@ fun FloatingAssistantOrb(
         val currentOrbHeightPx by rememberUpdatedState(orbHeightPx)
 
         val animatedX by animateFloatAsState(
-            targetValue = if (isDragging) offsetX else (if (orbEdgeSnap) (if (isNearLeftEdge) minDockX else maxDockX) else offsetX),
+            targetValue = if (isDragging) offsetX else {
+                if (isAtEdge) {
+                    if (isNearLeftEdge) minDockX else (if (isWheelExpanded) maxFloatingX else maxDockRightX)
+                } else {
+                    offsetX
+                }
+            },
             animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
             label = "orbX"
         )
@@ -661,13 +673,18 @@ fun FloatingAssistantOrb(
                             isDragging = false
                             if (isOverBin) {
                                 onDismissOrb()
-                            } else if (currentOrbEdgeSnap) {
-                                // Snap to nearest safe edge outside cutout in active orientation
-                                offsetX = if (offsetX < currentScreenWidthPx / 2f) currentMinDockX else currentMaxDockX
-                                onSavePosition(offsetX, offsetY, currentIsLandscape)
                             } else {
-                                // Free floating within cutout-safe bounds
-                                offsetX = offsetX.coerceIn(currentMinDockX, currentMaxDockX)
+                                val distToLeft = offsetX - currentMinDockX
+                                val distToRight = currentMaxDockRightX - offsetX
+                                val isCloseToEdge = distToLeft < currentEdgeSnapZonePx || distToRight < currentEdgeSnapZonePx
+
+                                if (currentOrbEdgeSnap && isCloseToEdge) {
+                                    view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                    offsetX = if (distToLeft < distToRight) currentMinDockX else currentMaxDockRightX
+                                } else {
+                                    // Stays floating anywhere user drops it in full round form!
+                                    offsetX = offsetX.coerceIn(currentMinDockX, currentMaxFloatingX)
+                                }
                                 onSavePosition(offsetX, offsetY, currentIsLandscape)
                             }
                             isOverBin = false
@@ -678,7 +695,7 @@ fun FloatingAssistantOrb(
                         },
                         onDrag = { change, dragAmount ->
                             change.consume()
-                            val newX = (offsetX + dragAmount.x).coerceIn(currentMinDockX, currentMaxDockX)
+                            val newX = (offsetX + dragAmount.x).coerceIn(currentMinDockX, currentMaxDockRightX)
                             val newY = (offsetY + dragAmount.y).coerceIn(currentMinDockY, currentMaxDockY)
                             offsetX = newX
                             offsetY = newY

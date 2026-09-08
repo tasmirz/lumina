@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 import java.io.File
 import org.json.JSONArray
@@ -26,23 +27,32 @@ class BookRepository(private val context: Context) {
     private val repoScope = CoroutineScope(Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
     private var readingPositionSaveJob: kotlinx.coroutines.Job? = null
 
-    private val _books = MutableStateFlow<List<Book>>(loadAllBooks())
+    private val _books = MutableStateFlow<List<Book>>(emptyList())
     val books: StateFlow<List<Book>> = _books.asStateFlow()
 
     private val _activeBookId = MutableStateFlow(prefs.getString("active_book_id", "") ?: "")
     val activeBookId: StateFlow<String> = _activeBookId.asStateFlow()
 
-    private val _bookmarks = MutableStateFlow<List<Bookmark>>(loadPersistedBookmarks())
+    private val _bookmarks = MutableStateFlow<List<Bookmark>>(emptyList())
     val bookmarks: StateFlow<List<Bookmark>> = _bookmarks.asStateFlow()
 
-    private val _wishlistBooks = MutableStateFlow<List<WishlistBook>>(dbHelper.getAllWishlist())
+    private val _wishlistBooks = MutableStateFlow<List<WishlistBook>>(emptyList())
     val wishlistBooks: StateFlow<List<WishlistBook>> = _wishlistBooks.asStateFlow()
 
-    private val _completedBookIds = MutableStateFlow<Set<String>>(try { dbHelper.getAllCompletedBookIds() } catch (_: Exception) { emptySet() })
+    private val _completedBookIds = MutableStateFlow<Set<String>>(emptySet())
     val completedBookIds: StateFlow<Set<String>> = _completedBookIds.asStateFlow()
 
-    private val _customThemes = MutableStateFlow<List<CustomThemeData>>(try { dbHelper.getAllCustomThemes() } catch (_: Exception) { emptyList() })
+    private val _customThemes = MutableStateFlow<List<CustomThemeData>>(emptyList())
     val customThemes: StateFlow<List<CustomThemeData>> = _customThemes.asStateFlow()
+
+    private val _isIndexingActive = MutableStateFlow(false)
+    val isIndexingActive: StateFlow<Boolean> = _isIndexingActive.asStateFlow()
+
+    private val _indexingProgress = MutableStateFlow("")
+    val indexingProgress: StateFlow<String> = _indexingProgress.asStateFlow()
+
+    private val _preferredLanguage = MutableStateFlow(prefs.getString("preferred_language", "auto") ?: "auto")
+    val preferredLanguage: StateFlow<String> = _preferredLanguage.asStateFlow()
 
     private val _horizontalPadding = MutableStateFlow(prefs.getInt("horizontal_padding", 20))
     val horizontalPadding: StateFlow<Int> = _horizontalPadding.asStateFlow()
@@ -224,6 +234,9 @@ class BookRepository(private val context: Context) {
     )
     val aiModel: StateFlow<String> = _aiModel.asStateFlow()
 
+    private val _readTillMap = MutableStateFlow<Map<String, Int>>(emptyMap())
+    val readTillMap: StateFlow<Map<String, Int>> = _readTillMap.asStateFlow()
+
     private val _customBgColor = MutableStateFlow(prefs.getLong("custom_bg_color", 0xFF1C1917L))
     val customBgColor: StateFlow<Long> = _customBgColor.asStateFlow()
 
@@ -262,9 +275,30 @@ class BookRepository(private val context: Context) {
     val gestureTtsTap: StateFlow<GestureAction> = _gestureTtsTap.asStateFlow()
 
     init {
-        try {
-            syncSettings()
-        } catch (_: Exception) {}
+        repoScope.launch(Dispatchers.IO) {
+            val loadedBooks = loadAllBooks()
+            val loadedBookmarks = loadPersistedBookmarks()
+            val loadedWishlist = try { dbHelper.getAllWishlist() } catch (_: Exception) { emptyList() }
+            val loadedCompleted = try { dbHelper.getAllCompletedBookIds() } catch (_: Exception) { emptySet() }
+            val loadedThemes = try { dbHelper.getAllCustomThemes() } catch (_: Exception) { emptyList() }
+
+            _books.value = loadedBooks
+            _bookmarks.value = loadedBookmarks
+            _wishlistBooks.value = loadedWishlist
+            _completedBookIds.value = loadedCompleted
+            _customThemes.value = loadedThemes
+
+            try {
+                syncSettings()
+            } catch (_: Exception) {}
+
+            // Pre-index active book if needed
+            val activeId = _activeBookId.value
+            val active = loadedBooks.find { it.id == activeId } ?: loadedBooks.firstOrNull()
+            if (active != null) {
+                indexBookIfNeeded(active)
+            }
+        }
     }
 
     fun setGestureDoubleTap(action: GestureAction) {
@@ -654,6 +688,10 @@ class BookRepository(private val context: Context) {
     }
 
     fun searchScenes(bookId: String, query: String): List<SceneMatch> {
+        val book = _books.value.find { it.id == bookId }
+        if (book != null && !dbHelper.isBookFtsIndexed(bookId) && book.chapters.isNotEmpty()) {
+            dbHelper.indexEntireBook(bookId, book.chapters)
+        }
         return dbHelper.searchScenes(bookId, query)
     }
 
@@ -690,7 +728,12 @@ class BookRepository(private val context: Context) {
                 }
                 return size
             }
-            dirSize(context.cacheDir)
+            var total = dirSize(context.cacheDir)
+            val coversDir = File(context.filesDir, "covers")
+            if (coversDir.exists()) total += dirSize(coversDir)
+            val booksDir = File(context.filesDir, "books")
+            if (booksDir.exists()) total += dirSize(booksDir)
+            total
         } catch (_: Exception) {
             0L
         }
@@ -700,6 +743,11 @@ class BookRepository(private val context: Context) {
         try {
             context.cacheDir.deleteRecursively()
             context.cacheDir.mkdirs()
+            val coversDir = File(context.filesDir, "covers")
+            if (coversDir.exists()) {
+                coversDir.deleteRecursively()
+                coversDir.mkdirs()
+            }
         } catch (_: Exception) {}
     }
 
@@ -735,12 +783,120 @@ class BookRepository(private val context: Context) {
 
     fun indexBookIfNeeded(book: Book) {
         if (!_enableFtsIndexing.value) return
-        if (!dbHelper.isBookIndexed(book.id) && book.chapters.isNotEmpty()) {
-            Thread {
-                for ((idx, ch) in book.chapters.withIndex()) {
-                    dbHelper.indexChapterParagraphs(book.id, idx, ch.title, ch.paragraphs)
+        if (book.chapters.isEmpty()) return
+        repoScope.launch(Dispatchers.IO) {
+            if (dbHelper.isBookFtsIndexed(book.id)) return@launch
+            try {
+                _isIndexingActive.value = true
+                _indexingProgress.value = "Indexing ${book.title}..."
+                val count = dbHelper.indexEntireBook(book.id, book.chapters)
+                _indexingProgress.value = "Indexed $count paragraphs"
+            } catch (_: Exception) {
+                _indexingProgress.value = "Indexing failed"
+            } finally {
+                _isIndexingActive.value = false
+            }
+        }
+    }
+
+    fun indexEntireBookNow(book: Book, onComplete: ((Int) -> Unit)? = null) {
+        repoScope.launch(Dispatchers.IO) {
+            _isIndexingActive.value = true
+            _indexingProgress.value = "Indexing ${book.title}..."
+            try {
+                val count = dbHelper.indexEntireBook(book.id, book.chapters)
+                _indexingProgress.value = "Indexed $count paragraphs"
+                withContext(Dispatchers.Main) {
+                    onComplete?.invoke(count)
                 }
-            }.start()
+            } catch (_: Exception) {
+            } finally {
+                _isIndexingActive.value = false
+            }
+        }
+    }
+
+    fun setPreferredLanguage(langCode: String) {
+        _preferredLanguage.value = langCode
+        prefs.edit().putString("preferred_language", langCode).apply()
+        persistSettingToDb("preferred_language", langCode)
+    }
+
+    fun getEffectiveLanguage(): String {
+        val pref = _preferredLanguage.value
+        if (pref.isNotBlank() && pref != "auto") return pref
+        return getActiveBook()?.language?.takeIf { it.isNotBlank() } ?: "en"
+    }
+
+    fun setReadingProgressPercent(bookId: String, percent: Int) {
+        val book = _books.value.find { it.id == bookId } ?: return
+        val totalChapters = book.chapters.size
+        if (totalChapters == 0) return
+        val clampedPercent = percent.coerceIn(0, 100)
+        val targetChapter = ((clampedPercent.toFloat() / 100f) * (totalChapters - 1)).toInt().coerceIn(0, totalChapters - 1)
+        updateReadingPosition(
+            bookId = bookId,
+            chapterIdx = targetChapter,
+            pageIdx = 0,
+            scrollPos = 0,
+            progressPct = clampedPercent
+        )
+    }
+
+    fun getReadTillPercent(bookId: String): Int {
+        val inMemory = _readTillMap.value[bookId]
+        if (inMemory != null) return inMemory
+        val persisted = prefs.getInt("${bookId}_read_till", -1)
+        if (persisted != -1) {
+            _readTillMap.value = _readTillMap.value + (bookId to persisted)
+            return persisted
+        }
+        val bookProg = _books.value.find { it.id == bookId }?.progress ?: 0
+        _readTillMap.value = _readTillMap.value + (bookId to bookProg)
+        return bookProg
+    }
+
+    fun forceSetReadTillPercent(bookId: String, percent: Int) {
+        val clamped = percent.coerceIn(0, 100)
+        _readTillMap.value = _readTillMap.value + (bookId to clamped)
+        prefs.edit().putInt("${bookId}_read_till", clamped).apply()
+        persistSettingToDb("read_till_${bookId}", clamped.toString())
+    }
+
+    fun forceSetLastReadPosition(bookId: String, chapterIdx: Int, pageIdx: Int, scrollPos: Int, progressPct: Int) {
+        val clamped = progressPct.coerceIn(0, 100)
+        _readTillMap.value = _readTillMap.value + (bookId to clamped)
+        prefs.edit().putInt("${bookId}_read_till", clamped).apply()
+        persistSettingToDb("read_till_${bookId}", clamped.toString())
+
+        val updated = _books.value.map {
+            if (it.id == bookId) {
+                it.copy(
+                    currentChapter = chapterIdx,
+                    currentPage = pageIdx,
+                    scrollPos = scrollPos,
+                    progress = clamped,
+                    lastRead = "Just now"
+                )
+            } else it
+        }
+        _books.value = updated
+
+        prefs.edit()
+            .putInt("${bookId}_chapter", chapterIdx)
+            .putInt("${bookId}_page", pageIdx)
+            .putInt("${bookId}_scroll", scrollPos)
+            .putInt("${bookId}_progress", clamped)
+            .apply()
+
+        repoScope.launch {
+            try {
+                val book = _books.value.find { it.id == bookId }
+                if (book != null) {
+                    dbHelper.updateReadingProgress(bookId, book.title, book.author, clamped, "${100 - clamped}m left")
+                    dbHelper.updateBookProgress(bookId, chapterIdx, pageIdx, scrollPos, clamped)
+                }
+            } catch (_: Exception) {}
         }
     }
 
@@ -846,6 +1002,15 @@ class BookRepository(private val context: Context) {
             .putInt("${bookId}_scroll", scrollPos)
             .putInt("${bookId}_progress", progressPct)
             .apply()
+
+        // Incremental advance: furthest place scrolled/read is read till
+        val currentReadTill = getReadTillPercent(bookId)
+        if (progressPct > currentReadTill) {
+            val clamped = progressPct.coerceIn(0, 100)
+            _readTillMap.value = _readTillMap.value + (bookId to clamped)
+            prefs.edit().putInt("${bookId}_read_till", clamped).apply()
+            persistSettingToDb("read_till_${bookId}", clamped.toString())
+        }
 
         // Debounce SQLite reading progress updates to prevent database lock contention
         readingPositionSaveJob?.cancel()
@@ -1139,6 +1304,49 @@ class BookRepository(private val context: Context) {
         repoScope.launch {
             dbHelper.clearCharacters(bookId)
             _characters.value = _characters.value + (bookId to emptyList())
+        }
+    }
+
+    // --- Book Lore Management ---
+
+    private val _lore = MutableStateFlow<Map<String, List<BookLore>>>(emptyMap())
+    val lore: StateFlow<Map<String, List<BookLore>>> = _lore.asStateFlow()
+
+    fun getLoreForBook(bookId: String): List<BookLore> {
+        val cached = _lore.value[bookId]
+        if (cached != null) return cached
+        val list = dbHelper.getLore(bookId)
+        _lore.value = _lore.value + (bookId to list)
+        return list
+    }
+
+    fun loadLore(bookId: String) {
+        repoScope.launch {
+            val list = dbHelper.getLore(bookId)
+            _lore.value = _lore.value + (bookId to list)
+        }
+    }
+
+    fun saveLore(loreItem: BookLore) {
+        repoScope.launch {
+            dbHelper.insertLore(loreItem)
+            val list = dbHelper.getLore(loreItem.bookId)
+            _lore.value = _lore.value + (loreItem.bookId to list)
+        }
+    }
+
+    fun deleteLore(id: Long, bookId: String) {
+        repoScope.launch {
+            dbHelper.deleteLore(id)
+            val list = dbHelper.getLore(bookId)
+            _lore.value = _lore.value + (bookId to list)
+        }
+    }
+
+    fun clearLore(bookId: String) {
+        repoScope.launch {
+            dbHelper.clearLore(bookId)
+            _lore.value = _lore.value + (bookId to emptyList())
         }
     }
 

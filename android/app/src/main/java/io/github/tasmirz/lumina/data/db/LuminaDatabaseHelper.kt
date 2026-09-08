@@ -6,6 +6,7 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import io.github.tasmirz.lumina.model.Book
 import io.github.tasmirz.lumina.model.BookCharacter
+import io.github.tasmirz.lumina.model.BookLore
 import io.github.tasmirz.lumina.model.Bookmark
 import io.github.tasmirz.lumina.model.Chapter
 import io.github.tasmirz.lumina.model.CustomThemeData
@@ -19,7 +20,7 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
 
     companion object {
         const val DATABASE_NAME = "lumina_reader.db"
-        const val DATABASE_VERSION = 7
+        const val DATABASE_VERSION = 9
 
         // Characters table
         const val TABLE_CHARACTERS = "book_characters"
@@ -32,6 +33,18 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
         const val COL_CHAR_EVENTS = "key_events"
         const val COL_CHAR_IS_SPOILER = "is_spoiler"
         const val COL_CHAR_CREATED_AT = "created_at"
+
+        // Lore table
+        const val TABLE_LORE = "book_lore"
+        const val COL_LORE_ID = "id"
+        const val COL_LORE_BOOK_ID = "book_id"
+        const val COL_LORE_TITLE = "title"
+        const val COL_LORE_CATEGORY = "category"
+        const val COL_LORE_FIRST_SEEN = "first_appearance"
+        const val COL_LORE_DESCRIPTION = "description"
+        const val COL_LORE_KEY_FACTS = "key_facts"
+        const val COL_LORE_IS_SPOILER = "is_spoiler"
+        const val COL_LORE_CREATED_AT = "created_at"
 
         // App Settings table (persists user settings directly into SQLite)
         const val TABLE_SETTINGS = "app_settings"
@@ -58,6 +71,7 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
         const val COL_BOOK_ADDED_AT = "added_at"
         const val COL_BOOK_CHAR_CHECKPOINT_CHAPTER = "char_checkpoint_chapter"
         const val COL_BOOK_CHAR_CHECKPOINT_PAGE = "char_checkpoint_page"
+        const val COL_BOOK_LANGUAGE = "language"
 
         // Bookmarks table
         const val TABLE_BOOKMARKS = "bookmarks"
@@ -95,6 +109,12 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
         const val COL_FTS_PARAGRAPH_INDEX = "paragraph_index"
         const val COL_FTS_CONTENT = "content"
 
+        // Indexed Books table (tracks which books have had FTS5 indexing completed)
+        const val TABLE_INDEXED_BOOKS = "indexed_books"
+        const val COL_IB_BOOK_ID = "book_id"
+        const val COL_IB_INDEXED_AT = "indexed_at"
+        const val COL_IB_PARAGRAPHS_COUNT = "paragraphs_count"
+
         // Completed Books table
         const val TABLE_COMPLETED_BOOKS = "completed_books"
         const val COL_CB_BOOK_ID = "book_id"
@@ -130,7 +150,8 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
                 $COL_BOOK_FILE_SIZE INTEGER NOT NULL DEFAULT 0,
                 $COL_BOOK_ADDED_AT INTEGER NOT NULL,
                 $COL_BOOK_CHAR_CHECKPOINT_CHAPTER INTEGER NOT NULL DEFAULT 0,
-                $COL_BOOK_CHAR_CHECKPOINT_PAGE INTEGER NOT NULL DEFAULT 0
+                $COL_BOOK_CHAR_CHECKPOINT_PAGE INTEGER NOT NULL DEFAULT 0,
+                $COL_BOOK_LANGUAGE TEXT NOT NULL DEFAULT 'en'
             )
         """.trimIndent())
 
@@ -216,6 +237,28 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
                 $COL_CHAR_EVENTS TEXT DEFAULT '',
                 $COL_CHAR_IS_SPOILER INTEGER NOT NULL DEFAULT 0,
                 $COL_CHAR_CREATED_AT INTEGER NOT NULL
+            )
+        """.trimIndent())
+
+        db.execSQL("""
+            CREATE TABLE IF NOT EXISTS $TABLE_LORE (
+                $COL_LORE_ID INTEGER PRIMARY KEY AUTOINCREMENT,
+                $COL_LORE_BOOK_ID TEXT NOT NULL,
+                $COL_LORE_TITLE TEXT NOT NULL,
+                $COL_LORE_CATEGORY TEXT NOT NULL,
+                $COL_LORE_FIRST_SEEN TEXT DEFAULT '',
+                $COL_LORE_DESCRIPTION TEXT NOT NULL,
+                $COL_LORE_KEY_FACTS TEXT DEFAULT '',
+                $COL_LORE_IS_SPOILER INTEGER NOT NULL DEFAULT 0,
+                $COL_LORE_CREATED_AT INTEGER NOT NULL
+            )
+        """.trimIndent())
+
+        db.execSQL("""
+            CREATE TABLE IF NOT EXISTS $TABLE_INDEXED_BOOKS (
+                $COL_IB_BOOK_ID TEXT PRIMARY KEY,
+                $COL_IB_INDEXED_AT INTEGER NOT NULL,
+                $COL_IB_PARAGRAPHS_COUNT INTEGER NOT NULL
             )
         """.trimIndent())
     }
@@ -321,6 +364,37 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
             } catch (_: Exception) {}
             try {
                 db.execSQL("ALTER TABLE $TABLE_BOOKS ADD COLUMN $COL_BOOK_CHAR_CHECKPOINT_PAGE INTEGER DEFAULT 0")
+            } catch (_: Exception) {}
+        }
+        if (oldVersion < 8) {
+            try {
+                db.execSQL("ALTER TABLE $TABLE_BOOKS ADD COLUMN $COL_BOOK_LANGUAGE TEXT DEFAULT 'en'")
+            } catch (_: Exception) {}
+            try {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS $TABLE_INDEXED_BOOKS (
+                        $COL_IB_BOOK_ID TEXT PRIMARY KEY,
+                        $COL_IB_INDEXED_AT INTEGER NOT NULL,
+                        $COL_IB_PARAGRAPHS_COUNT INTEGER NOT NULL
+                    )
+                """.trimIndent())
+            } catch (_: Exception) {}
+        }
+        if (oldVersion < 9) {
+            try {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS $TABLE_LORE (
+                        $COL_LORE_ID INTEGER PRIMARY KEY AUTOINCREMENT,
+                        $COL_LORE_BOOK_ID TEXT NOT NULL,
+                        $COL_LORE_TITLE TEXT NOT NULL,
+                        $COL_LORE_CATEGORY TEXT NOT NULL,
+                        $COL_LORE_FIRST_SEEN TEXT DEFAULT '',
+                        $COL_LORE_DESCRIPTION TEXT NOT NULL,
+                        $COL_LORE_KEY_FACTS TEXT DEFAULT '',
+                        $COL_LORE_IS_SPOILER INTEGER NOT NULL DEFAULT 0,
+                        $COL_LORE_CREATED_AT INTEGER NOT NULL
+                    )
+                """.trimIndent())
             } catch (_: Exception) {}
         }
     }
@@ -525,6 +599,50 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
 
     // --- Book FTS5 Scene Search ---
 
+    fun indexEntireBook(bookId: String, chapters: List<io.github.tasmirz.lumina.model.Chapter>): Int {
+        val db = writableDatabase
+        var totalParas = 0
+        db.beginTransaction()
+        try {
+            db.delete(TABLE_BOOK_FTS, "$COL_FTS_BOOK_ID = ?", arrayOf(bookId))
+            for ((cIdx, chap) in chapters.withIndex()) {
+                for ((pIdx, paragraph) in chap.paragraphs.withIndex()) {
+                    if (paragraph.isBlank()) continue
+                    val values = ContentValues().apply {
+                        put(COL_FTS_BOOK_ID, bookId)
+                        put(COL_FTS_CHAPTER_INDEX, cIdx)
+                        put(COL_FTS_CHAPTER_TITLE, chap.title)
+                        put(COL_FTS_PARAGRAPH_INDEX, pIdx)
+                        put(COL_FTS_CONTENT, paragraph)
+                    }
+                    db.insert(TABLE_BOOK_FTS, null, values)
+                    totalParas++
+                }
+            }
+            val ibValues = ContentValues().apply {
+                put(COL_IB_BOOK_ID, bookId)
+                put(COL_IB_INDEXED_AT, System.currentTimeMillis())
+                put(COL_IB_PARAGRAPHS_COUNT, totalParas)
+            }
+            db.insertWithOnConflict(TABLE_INDEXED_BOOKS, null, ibValues, SQLiteDatabase.CONFLICT_REPLACE)
+            db.setTransactionSuccessful()
+        } catch (_: Exception) {
+        } finally {
+            db.endTransaction()
+        }
+        return totalParas
+    }
+
+    fun isBookFtsIndexed(bookId: String): Boolean {
+        val db = readableDatabase
+        return try {
+            val cursor = db.rawQuery("SELECT 1 FROM $TABLE_INDEXED_BOOKS WHERE $COL_IB_BOOK_ID = ? LIMIT 1", arrayOf(bookId))
+            cursor.use { it.moveToFirst() }
+        } catch (_: Exception) {
+            isBookIndexed(bookId)
+        }
+    }
+
     fun indexChapterParagraphs(bookId: String, chapterIndex: Int, chapterTitle: String, paragraphs: List<String>) {
         val db = writableDatabase
         db.beginTransaction()
@@ -708,6 +826,7 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
         val db = writableDatabase
         try {
             db.execSQL("DELETE FROM $TABLE_BOOK_FTS")
+            db.execSQL("DELETE FROM $TABLE_INDEXED_BOOKS")
             db.execSQL("VACUUM")
         } catch (_: Exception) {}
     }
@@ -833,6 +952,7 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
             put(COL_BOOK_ADDED_AT, System.currentTimeMillis())
             put(COL_BOOK_CHAR_CHECKPOINT_CHAPTER, book.characterCheckpointChapter)
             put(COL_BOOK_CHAR_CHECKPOINT_PAGE, book.characterCheckpointPage)
+            put(COL_BOOK_LANGUAGE, book.language)
         }
         db.insertWithOnConflict(TABLE_BOOKS, null, values, SQLiteDatabase.CONFLICT_REPLACE)
     }
@@ -876,6 +996,7 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
         db.delete(TABLE_COMPLETED_BOOKS, "$COL_CB_BOOK_ID = ?", arrayOf(bookId))
         try {
             db.delete(TABLE_BOOK_FTS, "$COL_FTS_BOOK_ID = ?", arrayOf(bookId))
+            db.delete(TABLE_INDEXED_BOOKS, "$COL_IB_BOOK_ID = ?", arrayOf(bookId))
         } catch (_: Exception) {}
     }
 
@@ -902,6 +1023,7 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
                 val sizeCol = it.getColumnIndexOrThrow(COL_BOOK_FILE_SIZE)
                 val charChapCol = it.getColumnIndex(COL_BOOK_CHAR_CHECKPOINT_CHAPTER)
                 val charPageCol = it.getColumnIndex(COL_BOOK_CHAR_CHECKPOINT_PAGE)
+                val langCol = it.getColumnIndex(COL_BOOK_LANGUAGE)
 
                 while (it.moveToNext()) {
                     val chapters = deserializeChapters(it.getString(chapsJsonCol))
@@ -923,7 +1045,8 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
                             downloadUrl = it.getString(dlUrlCol) ?: "",
                             fileSize = it.getLong(sizeCol),
                             characterCheckpointChapter = if (charChapCol >= 0) it.getInt(charChapCol) else 0,
-                            characterCheckpointPage = if (charPageCol >= 0) it.getInt(charPageCol) else 0
+                            characterCheckpointPage = if (charPageCol >= 0) it.getInt(charPageCol) else 0,
+                            language = if (langCol >= 0) it.getString(langCol) ?: "en" else "en"
                         )
                     )
                 }
@@ -955,6 +1078,7 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
                     val sizeCol = it.getColumnIndexOrThrow(COL_BOOK_FILE_SIZE)
                     val charChapCol = it.getColumnIndex(COL_BOOK_CHAR_CHECKPOINT_CHAPTER)
                     val charPageCol = it.getColumnIndex(COL_BOOK_CHAR_CHECKPOINT_PAGE)
+                    val langCol = it.getColumnIndex(COL_BOOK_LANGUAGE)
 
                     val chapters = deserializeChapters(it.getString(chapsJsonCol))
                     return Book(
@@ -974,7 +1098,8 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
                         downloadUrl = it.getString(dlUrlCol) ?: "",
                         fileSize = it.getLong(sizeCol),
                         characterCheckpointChapter = if (charChapCol >= 0) it.getInt(charChapCol) else 0,
-                        characterCheckpointPage = if (charPageCol >= 0) it.getInt(charPageCol) else 0
+                        characterCheckpointPage = if (charPageCol >= 0) it.getInt(charPageCol) else 0,
+                        language = if (langCol >= 0) it.getString(langCol) ?: "en" else "en"
                     )
                 }
             }
@@ -1138,6 +1263,73 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
         return try {
             val db = writableDatabase
             db.delete(TABLE_CHARACTERS, "$COL_CHAR_BOOK_ID = ?", arrayOf(bookId)) > 0
+        } catch (_: Exception) { false }
+    }
+
+    // --- Book Lore CRUD ---
+
+    fun getLore(bookId: String): List<BookLore> {
+        val list = mutableListOf<BookLore>()
+        try {
+            val db = readableDatabase
+            val cursor = db.query(
+                TABLE_LORE,
+                null,
+                "$COL_LORE_BOOK_ID = ?",
+                arrayOf(bookId),
+                null,
+                null,
+                "$COL_LORE_TITLE ASC"
+            )
+            cursor.use {
+                while (it.moveToNext()) {
+                    list.add(
+                        BookLore(
+                            id = it.getLong(it.getColumnIndexOrThrow(COL_LORE_ID)),
+                            bookId = it.getString(it.getColumnIndexOrThrow(COL_LORE_BOOK_ID)),
+                            title = it.getString(it.getColumnIndexOrThrow(COL_LORE_TITLE)),
+                            category = it.getString(it.getColumnIndexOrThrow(COL_LORE_CATEGORY)),
+                            firstAppearanceChapter = it.getString(it.getColumnIndexOrThrow(COL_LORE_FIRST_SEEN)) ?: "",
+                            description = it.getString(it.getColumnIndexOrThrow(COL_LORE_DESCRIPTION)),
+                            keyFacts = it.getString(it.getColumnIndexOrThrow(COL_LORE_KEY_FACTS)) ?: "",
+                            isSpoiler = it.getInt(it.getColumnIndexOrThrow(COL_LORE_IS_SPOILER)) == 1,
+                            createdAt = it.getLong(it.getColumnIndexOrThrow(COL_LORE_CREATED_AT))
+                        )
+                    )
+                }
+            }
+        } catch (_: Exception) {}
+        return list
+    }
+
+    fun insertLore(lore: BookLore): Long {
+        return try {
+            val db = writableDatabase
+            val values = ContentValues().apply {
+                put(COL_LORE_BOOK_ID, lore.bookId)
+                put(COL_LORE_TITLE, lore.title)
+                put(COL_LORE_CATEGORY, lore.category)
+                put(COL_LORE_FIRST_SEEN, lore.firstAppearanceChapter)
+                put(COL_LORE_DESCRIPTION, lore.description)
+                put(COL_LORE_KEY_FACTS, lore.keyFacts)
+                put(COL_LORE_IS_SPOILER, if (lore.isSpoiler) 1 else 0)
+                put(COL_LORE_CREATED_AT, lore.createdAt)
+            }
+            db.insertWithOnConflict(TABLE_LORE, null, values, SQLiteDatabase.CONFLICT_REPLACE)
+        } catch (_: Exception) { -1L }
+    }
+
+    fun deleteLore(id: Long): Boolean {
+        return try {
+            val db = writableDatabase
+            db.delete(TABLE_LORE, "$COL_LORE_ID = ?", arrayOf(id.toString())) > 0
+        } catch (_: Exception) { false }
+    }
+
+    fun clearLore(bookId: String): Boolean {
+        return try {
+            val db = writableDatabase
+            db.delete(TABLE_LORE, "$COL_LORE_BOOK_ID = ?", arrayOf(bookId)) > 0
         } catch (_: Exception) { false }
     }
 }

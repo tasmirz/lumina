@@ -215,6 +215,57 @@ class SettingsModelTest {
         assertEquals(1, score2)
         assertTrue("Multi-concept match should score significantly higher", score1 > score2)
     }
+
+    @Test
+    fun testReadingProgressPercentCalculation() {
+        val totalChapters = 10
+        // 0% -> Chapter 0
+        val targetCh0 = ((0f / 100f) * (totalChapters - 1)).toInt().coerceIn(0, totalChapters - 1)
+        assertEquals(0, targetCh0)
+
+        // 50% -> Chapter 4 or 5
+        val targetCh50 = ((50f / 100f) * (totalChapters - 1)).toInt().coerceIn(0, totalChapters - 1)
+        assertEquals(4, targetCh50)
+
+        // 100% -> Chapter 9 (last chapter)
+        val targetCh100 = ((100f / 100f) * (totalChapters - 1)).toInt().coerceIn(0, totalChapters - 1)
+        assertEquals(9, targetCh100)
+
+        // Negative clamped to 0
+        val clampedNeg = ((-10).coerceIn(0, 100).toFloat() / 100f * (totalChapters - 1)).toInt()
+        assertEquals(0, clampedNeg)
+
+        // Over 100 clamped to 9
+        val clampedOver = ((120).coerceIn(0, 100).toFloat() / 100f * (totalChapters - 1)).toInt()
+        assertEquals(9, clampedOver)
+    }
+
+    @Test
+    fun testAssistantChatHistoryQueueRetention() {
+        val messages = mutableListOf<String>()
+        // Add 10 messages, keeping last 6 (3 user + 3 assistant turns)
+        for (i in 1..10) {
+            messages.add("Message $i")
+            if (messages.size > 6) {
+                messages.removeAt(0)
+            }
+        }
+        assertEquals(6, messages.size)
+        assertEquals("Message 5", messages.first())
+        assertEquals("Message 10", messages.last())
+    }
+
+    @Test
+    fun testBookLanguageDefaultsAndISO() {
+        val defaultBook = io.github.tasmirz.lumina.model.Book(
+            id = "test_book",
+            title = "Test Title",
+            author = "Test Author",
+            filePath = "/path/test.epub"
+        )
+        assertEquals("en", defaultBook.language)
+
+        val spanishBook = defaultBook.copy(language = "es")
+        assertEquals("es", spanishBook.language)
+    }
 }
-
-

@@ -511,8 +511,9 @@ fun AdvancedSettingsScreen(
                             ) {
                                 customThemes.forEach { th ->
                                     val isSel = themeFamily == ThemeFamily.CUSTOM &&
-                                        th.bgColor == repository?.customBgColor?.value &&
-                                        th.textColor == repository?.customTextColor?.value
+                                        repository != null &&
+                                        th.bgColor == repository.customBgColor.value &&
+                                        th.textColor == repository.customTextColor.value
                                     FilterChip(
                                         selected = isSel,
                                         onClick = {
@@ -1262,7 +1263,7 @@ fun AdvancedSettingsScreen(
                                                         color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                                     )
                                                     Text(
-                                                        text = "${size.dockedWidth.toInt()}×${size.dockedHeight.toInt()}dp",
+                                                        text = "${size.dockedWidth}×${size.dockedHeight}dp",
                                                         fontSize = 9.sp,
                                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                                     )
@@ -2003,16 +2004,42 @@ fun AdvancedSettingsScreen(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
-                                OutlinedButton(
-                                    onClick = {
-                                        repository?.clearFtsIndex()
-                                        ftsIndexCount = 0
-                                        Toast.makeText(context, "Search index cleared", Toast.LENGTH_SHORT).show()
-                                    },
-                                    shape = RoundedCornerShape(6.dp),
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
-                                    Text("Clear Index", fontSize = 10.5.sp)
+                                    val isIndexing by (repository?.isIndexingActive?.collectAsState() ?: remember { mutableStateOf(false) })
+                                    if (ftsIndexCount == 0) {
+                                        Button(
+                                            onClick = {
+                                                val active = repository?.getActiveBook()
+                                                if (active != null) {
+                                                    repository.indexEntireBookNow(active) { count ->
+                                                        ftsIndexCount = repository.getFtsIndexCount()
+                                                        Toast.makeText(context, "Indexed $count paragraphs", Toast.LENGTH_SHORT).show()
+                                                    }
+                                                } else {
+                                                    Toast.makeText(context, "No active book to index", Toast.LENGTH_SHORT).show()
+                                                }
+                                            },
+                                            enabled = !isIndexing,
+                                            shape = RoundedCornerShape(6.dp),
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Text(if (isIndexing) "Indexing..." else "Index Now", fontSize = 10.5.sp)
+                                        }
+                                    }
+                                    OutlinedButton(
+                                        onClick = {
+                                            repository?.clearFtsIndex()
+                                            ftsIndexCount = 0
+                                            Toast.makeText(context, "Search index cleared", Toast.LENGTH_SHORT).show()
+                                        },
+                                        shape = RoundedCornerShape(6.dp),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                    ) {
+                                        Text("Clear Index", fontSize = 10.5.sp)
+                                    }
                                 }
                             }
 

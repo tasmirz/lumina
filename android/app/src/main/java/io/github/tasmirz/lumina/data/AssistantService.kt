@@ -12,6 +12,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import io.github.tasmirz.lumina.model.Book
 import io.github.tasmirz.lumina.model.BookCharacter
+import io.github.tasmirz.lumina.model.BookLore
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
@@ -57,11 +58,13 @@ class AssistantService(private val context: Context? = null) {
         val activeChapterTitle: String,
         val knownContext: String,
         val userQuery: String,
-        val spoilerShield: Boolean
+        val spoilerShield: Boolean,
+        val language: String = "en"
     )
     private var lastQueryCache: LastQuery? = null
 
     fun startListening(
+        languageCode: String? = null,
         onReady: () -> Unit = {},
         onRmsChanged: (Float) -> Unit = {},
         onPartialResult: (String) -> Unit = {},
@@ -118,9 +121,16 @@ class AssistantService(private val context: Context? = null) {
             })
         }
 
+        val targetLocale = if (!languageCode.isNullOrBlank() && languageCode != "auto") {
+            try { Locale.forLanguageTag(languageCode) } catch (_: Exception) { Locale.getDefault() }
+        } else {
+            Locale.getDefault()
+        }
+
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, targetLocale.toLanguageTag())
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, targetLocale.toLanguageTag())
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         }
@@ -144,6 +154,24 @@ class AssistantService(private val context: Context? = null) {
     fun parseLocalCommand(query: String, totalChapters: Int): AssistantAction? {
         val lower = query.trim().lowercase()
 
+        // Analytical, question, or summary queries must always flow to AI, never intercepted locally
+        val isQueryOrSummary = lower.contains("summar") ||
+            lower.contains("explain") ||
+            lower.contains("what") ||
+            lower.contains("who") ||
+            lower.contains("why") ||
+            lower.contains("how") ||
+            lower.contains("tell me") ||
+            lower.contains("about") ||
+            lower.contains("describe") ||
+            lower.contains("overview") ||
+            lower.contains("analysis") ||
+            lower.contains("meaning") ||
+            lower.contains("scene")
+        if (isQueryOrSummary) {
+            return null
+        }
+
         // Navigation commands
         if (lower.contains("next chapter") || lower == "next") {
             return AssistantAction.NextChapter()
@@ -152,7 +180,10 @@ class AssistantService(private val context: Context? = null) {
             return AssistantAction.PreviousChapter()
         }
 
-        val chapterNumberMatch = ".*(?:chapter|section)\\s+(\\d+).*".toRegex().find(lower)
+        // Strict chapter navigation (e.g. "go to chapter 4", "jump to chapter 4", "open chapter 4", "chapter 4")
+        val chapterNavRegex = "^(?:go to|jump to|open|navigate to|switch to)\\s+(?:chapter|section)\\s+(\\d+)\\s*$".toRegex()
+        val chapterOnlyRegex = "^(?:chapter|section)\\s+(\\d+)\\s*$".toRegex()
+        val chapterNumberMatch = chapterNavRegex.find(lower) ?: chapterOnlyRegex.find(lower)
         if (chapterNumberMatch != null) {
             val num = chapterNumberMatch.groupValues[1].toIntOrNull()
             if (num != null && num in 1..totalChapters) {
@@ -290,6 +321,11 @@ class AssistantService(private val context: Context? = null) {
         return null
     }
 
+    private fun isSummaryOrContextQuery(query: String): Boolean {
+        val l = query.lowercase()
+        return l.contains("summar") || l.contains("explain") || l.contains("context") || l.contains("overview") || l.contains("what is happening") || l.contains("what's happening")
+    }
+
     suspend fun retryLastQuery(): AssistantResponse? {
         val last = lastQueryCache ?: return null
         return queryAssistant(
@@ -301,7 +337,8 @@ class AssistantService(private val context: Context? = null) {
             activeChapterTitle = last.activeChapterTitle,
             knownContext = last.knownContext,
             userQuery = last.userQuery,
-            spoilerShield = last.spoilerShield
+            spoilerShield = last.spoilerShield,
+            language = last.language
         )
     }
 
@@ -314,7 +351,8 @@ class AssistantService(private val context: Context? = null) {
         activeChapterTitle: String,
         knownContext: String,
         userQuery: String,
-        spoilerShield: Boolean = true
+        spoilerShield: Boolean = true,
+        language: String = "en"
     ): AssistantResponse = withContext(Dispatchers.IO) {
         lastQueryCache = LastQuery(
             provider = provider,
@@ -325,7 +363,8 @@ class AssistantService(private val context: Context? = null) {
             activeChapterTitle = activeChapterTitle,
             knownContext = knownContext,
             userQuery = userQuery,
-            spoilerShield = spoilerShield
+            spoilerShield = spoilerShield,
+            language = language
         )
 
         // Check for local instant command first
@@ -354,16 +393,31 @@ class AssistantService(private val context: Context? = null) {
             "SPOILER SHIELD OFF: The reader has granted full book permissions. You may freely reference later plot developments, themes, and endings if asked."
         }
 
+        val langInstruction = if (language.isNotBlank() && language != "auto") {
+            "LANGUAGE INSTRUCTION: Please reply to the user in language '$language'."
+        } else {
+            "LANGUAGE INSTRUCTION: Reply in the language matching the user's question or the book's language."
+        }
+
         val systemInstruction = """
             You are Lumina's attentive reading companion for "$bookTitle".
             The reader is reading "$activeChapterTitle".
             $spoilerRule
+            $langInstruction
             STRICT RULE: Answer directly and concisely (1-3 sentences).
             Available tools: switch_theme(theme, mode), jump_to_scene(query, chapter_index), control_tts(action), toggle_autoscroll(enable). Use these tools whenever the reader requests changing settings, jumping in the story, controlling speech, or auto-scrolling.
         """.trimIndent()
 
         if (provider == AiProvider.GEMINI) {
             if (apiKey.isBlank()) {
+                if (isSummaryOrContextQuery(userQuery) && knownContext.isNotBlank()) {
+                    val cleanLines = knownContext.lines().map { it.trim() }.filter { it.length > 20 }
+                    val synopsis = if (cleanLines.isNotEmpty()) cleanLines.take(3).joinToString(" ") else knownContext.take(200)
+                    val truncated = if (synopsis.length > 320) synopsis.take(320) + "..." else synopsis
+                    return@withContext AssistantResponse(
+                        answerText = "📖 Chapter Synopsis ($activeChapterTitle):\n\n\"$truncated\"\n\n💡 Tip: Add your Gemini API key in Settings for deep AI comprehension."
+                    )
+                }
                 return@withContext AssistantResponse(
                     answerText = "To enable intelligent Q&A and assistant tools, please add your Google Gemini API key in Advanced Settings."
                 )
@@ -622,15 +676,37 @@ class AssistantService(private val context: Context? = null) {
                     AssistantResponse(answerText = text.trim(), executedAction = toolAction)
                 } else {
                     val errorStream = conn.errorStream?.let { BufferedReader(InputStreamReader(it)).use { r -> r.readText() } }
-                    AssistantResponse(answerText = "Gemini request error ($responseCode): ${errorStream?.take(150) ?: "Check your API key"}")
+                    if (isSummaryOrContextQuery(userQuery) && knownContext.isNotBlank()) {
+                        val cleanLines = knownContext.lines().map { it.trim() }.filter { it.length > 20 }
+                        val synopsis = if (cleanLines.isNotEmpty()) cleanLines.take(3).joinToString(" ") else knownContext.take(200)
+                        val truncated = if (synopsis.length > 320) synopsis.take(320) + "..." else synopsis
+                        AssistantResponse(answerText = "📖 Chapter Synopsis ($activeChapterTitle):\n\n\"$truncated\"")
+                    } else {
+                        AssistantResponse(answerText = "Gemini request error ($responseCode): ${errorStream?.take(150) ?: "Check your API key"}")
+                    }
                 }
             } catch (e: Exception) {
-                AssistantResponse(answerText = "Unable to connect to Gemini: ${e.localizedMessage ?: "Network error"}")
+                if (isSummaryOrContextQuery(userQuery) && knownContext.isNotBlank()) {
+                    val cleanLines = knownContext.lines().map { it.trim() }.filter { it.length > 20 }
+                    val synopsis = if (cleanLines.isNotEmpty()) cleanLines.take(3).joinToString(" ") else knownContext.take(200)
+                    val truncated = if (synopsis.length > 320) synopsis.take(320) + "..." else synopsis
+                    AssistantResponse(answerText = "📖 Chapter Synopsis ($activeChapterTitle):\n\n\"$truncated\"")
+                } else {
+                    AssistantResponse(answerText = "Unable to connect to Gemini: ${e.localizedMessage ?: "Network error"}")
+                }
             }
         } else {
             // OpenAI Compatible Provider
             val cleanBase = (if (baseUrl.isNotBlank()) baseUrl.trim() else "https://api.openai.com/v1").trimEnd('/')
             if (apiKey.isBlank() && !cleanBase.contains("localhost") && !cleanBase.contains("127.0.0.1") && !cleanBase.contains("10.0.2.2")) {
+                if (isSummaryOrContextQuery(userQuery) && knownContext.isNotBlank()) {
+                    val cleanLines = knownContext.lines().map { it.trim() }.filter { it.length > 20 }
+                    val synopsis = if (cleanLines.isNotEmpty()) cleanLines.take(3).joinToString(" ") else knownContext.take(200)
+                    val truncated = if (synopsis.length > 320) synopsis.take(320) + "..." else synopsis
+                    return@withContext AssistantResponse(
+                        answerText = "📖 Chapter Synopsis ($activeChapterTitle):\n\n\"$truncated\"\n\n💡 Tip: Add your API key in Settings for deep AI comprehension."
+                    )
+                }
                 return@withContext AssistantResponse(
                     answerText = "To enable intelligent Q&A with OpenAI or custom models, please configure your API key in Advanced Settings."
                 )
@@ -663,7 +739,7 @@ class AssistantService(private val context: Context? = null) {
                         })
                     })
                     put("temperature", 0.3)
-                    put("max_tokens", 400)
+                    put("max_tokens", 500)
                 }
 
                 OutputStreamWriter(conn.outputStream).use { writer ->
@@ -682,15 +758,68 @@ class AssistantService(private val context: Context? = null) {
                     AssistantResponse(answerText = content.trim())
                 } else {
                     val errorStream = conn.errorStream?.let { BufferedReader(InputStreamReader(it)).use { r -> r.readText() } }
-                    AssistantResponse(answerText = "AI service error ($responseCode): ${errorStream?.take(150) ?: "Check your API key/Base URL"}")
+                    if (isSummaryOrContextQuery(userQuery) && knownContext.isNotBlank()) {
+                        val cleanLines = knownContext.lines().map { it.trim() }.filter { it.length > 20 }
+                        val synopsis = if (cleanLines.isNotEmpty()) cleanLines.take(3).joinToString(" ") else knownContext.take(200)
+                        val truncated = if (synopsis.length > 320) synopsis.take(320) + "..." else synopsis
+                        AssistantResponse(answerText = "📖 Chapter Synopsis ($activeChapterTitle):\n\n\"$truncated\"")
+                    } else {
+                        AssistantResponse(answerText = "AI service error ($responseCode): ${errorStream?.take(150) ?: "Check your API key/Base URL"}")
+                    }
                 }
             } catch (e: Exception) {
-                AssistantResponse(answerText = "Unable to connect to AI service: ${e.localizedMessage ?: "Network error"}")
+                if (isSummaryOrContextQuery(userQuery) && knownContext.isNotBlank()) {
+                    val cleanLines = knownContext.lines().map { it.trim() }.filter { it.length > 20 }
+                    val synopsis = if (cleanLines.isNotEmpty()) cleanLines.take(3).joinToString(" ") else knownContext.take(200)
+                    val truncated = if (synopsis.length > 320) synopsis.take(320) + "..." else synopsis
+                    AssistantResponse(answerText = "📖 Chapter Synopsis ($activeChapterTitle):\n\n\"$truncated\"")
+                } else {
+                    AssistantResponse(answerText = "Unable to connect to AI service: ${e.localizedMessage ?: "Network error"}")
+                }
             }
         }
     }
 
+    data class ExtractionResult(
+        val characters: List<BookCharacter>,
+        val lore: List<BookLore>
+    )
+
     companion object {
+        private fun normalizeEntityName(name: String): String {
+            return name.lowercase()
+                .replace("^(mr\\.?|mrs\\.?|ms\\.?|dr\\.?|lord|lady|comrade|brother|sister)\\s+".toRegex(), "")
+                .replace("['’\"-]".toRegex(), "")
+                .trim()
+        }
+
+        private fun isSameCharacter(name1: String, name2: String, aliases1: List<String> = emptyList(), aliases2: List<String> = emptyList()): Boolean {
+            val n1 = normalizeEntityName(name1)
+            val n2 = normalizeEntityName(name2)
+            if (n1.isBlank() || n2.isBlank()) return false
+            if (n1 == n2) return true
+            if (aliases1.any { normalizeEntityName(it) == n2 } || aliases2.any { normalizeEntityName(it) == n1 }) return true
+            val t1 = n1.split(" ").filter { it.length > 2 }
+            val t2 = n2.split(" ").filter { it.length > 2 }
+            if (t1.isNotEmpty() && t2.isNotEmpty()) {
+                if (t1 == t2) return true
+                if (t1.size == 1 && (t2.first() == t1[0] || t2.last() == t1[0])) return true
+                if (t2.size == 1 && (t1.first() == t2[0] || t1.last() == t2[0])) return true
+            }
+            return false
+        }
+
+        private fun isSameLore(title1: String, title2: String): Boolean {
+            val t1 = normalizeEntityName(title1)
+            val t2 = normalizeEntityName(title2)
+            if (t1.isBlank() || t2.isBlank()) return false
+            if (t1 == t2) return true
+            if (t1.contains(t2) || t2.contains(t1)) {
+                if (minOf(t1.length, t2.length) >= 4) return true
+            }
+            return false
+        }
+
         suspend fun extractCharacters(
             book: Book,
             currentChapterIndex: Int,
@@ -703,57 +832,147 @@ class AssistantService(private val context: Context? = null) {
             lastCalculatedChapter: Int = book.characterCheckpointChapter,
             lastCalculatedPage: Int = book.characterCheckpointPage,
             currentPageIndex: Int = book.currentPage
-        ): List<BookCharacter> = withContext(Dispatchers.IO) {
-            if (apiKey.isBlank()) return@withContext emptyList()
+        ): List<BookCharacter> {
+            val res = extractCharactersAndLore(
+                book = book,
+                currentChapterIndex = currentChapterIndex,
+                isSpoilerShield = isSpoilerShield,
+                apiKey = apiKey,
+                provider = provider,
+                modelName = modelName,
+                customEndpoint = customEndpoint,
+                existingCharacters = existingCharacters,
+                existingLore = emptyList(),
+                lastCalculatedChapter = lastCalculatedChapter,
+                lastCalculatedPage = lastCalculatedPage,
+                currentPageIndex = currentPageIndex
+            )
+            return res.characters
+        }
 
-            val hasCheckpoint = existingCharacters.isNotEmpty() && lastCalculatedChapter in 0..currentChapterIndex
-            val startChapter = if (hasCheckpoint) lastCalculatedChapter else 0
+        suspend fun extractCharactersAndLore(
+            book: Book,
+            currentChapterIndex: Int,
+            isSpoilerShield: Boolean,
+            apiKey: String,
+            provider: AiProvider = AiProvider.GEMINI,
+            modelName: String = "gemini-3.1-flash-lite",
+            customEndpoint: String = "",
+            existingCharacters: List<BookCharacter> = emptyList(),
+            existingLore: List<BookLore> = emptyList(),
+            lastCalculatedChapter: Int = book.characterCheckpointChapter,
+            lastCalculatedPage: Int = book.characterCheckpointPage,
+            currentPageIndex: Int = book.currentPage
+        ): ExtractionResult = withContext(Dispatchers.IO) {
+            if (apiKey.isBlank()) return@withContext ExtractionResult(existingCharacters, existingLore)
+
+            // 1. Zero-Token Guard: if we already extracted up to this chapter and page, do not check again!
+            val hasCheckpoint = (existingCharacters.isNotEmpty() || existingLore.isNotEmpty()) && lastCalculatedChapter >= 0
+            if (hasCheckpoint && lastCalculatedChapter >= currentChapterIndex && (currentPageIndex <= lastCalculatedPage || lastCalculatedPage == 0)) {
+                return@withContext ExtractionResult(existingCharacters, existingLore)
+            }
+
+            // 2. Strict Incremental Range: Only scan UNCHECKED chapters
+            val startChapter = if (hasCheckpoint && lastCalculatedChapter < currentChapterIndex) lastCalculatedChapter + 1 else 0
             val targetChapter = if (isSpoilerShield && currentChapterIndex >= 0) currentChapterIndex else (book.chapters.size - 1)
 
             val chaptersToConsider = if (startChapter <= targetChapter && targetChapter < book.chapters.size) {
                 book.chapters.subList(startChapter, targetChapter + 1)
+            } else if (startChapter == targetChapter && startChapter < book.chapters.size) {
+                listOf(book.chapters[startChapter])
             } else {
                 book.chapters.take(currentChapterIndex + 1)
             }
 
-            val contextBuilder = StringBuilder()
-            for (chap in chaptersToConsider) {
-                contextBuilder.append("--- Chapter: ${chap.title} ---\n")
-                val sampleParas = chap.paragraphs.take(10).joinToString("\n\n")
-                contextBuilder.append(sampleParas).append("\n\n")
-                if (contextBuilder.length > 14000) break
+            if (chaptersToConsider.isEmpty()) {
+                return@withContext ExtractionResult(existingCharacters, existingLore)
             }
 
-            val currentChapterName = book.chapters.getOrNull(currentChapterIndex)?.title ?: ""
-            val previousCharactersSummary = if (existingCharacters.isNotEmpty()) {
-                val sb = StringBuilder("\n[Previously Identified Characters]:\n")
-                for (c in existingCharacters.take(25)) {
-                    sb.append("- ${c.name} (Role: ${c.role}, first seen: ${c.firstAppearanceChapter}): ${c.summary.take(120)}\n")
-                }
-                sb.toString()
-            } else ""
+            // 3. Compact excerpts to strictly conserve tokens
+            val contextBuilder = StringBuilder()
+            for (chap in chaptersToConsider) {
+                contextBuilder.append("=== ").append(chap.title).append(" ===\n")
+                val significant = chap.paragraphs.filter { it.trim().length > 30 }.take(8)
+                contextBuilder.append(significant.joinToString("\n\n")).append("\n\n")
+                if (contextBuilder.length > 8000) break
+            }
+
+            val currentChapterName = book.chapters.getOrNull(currentChapterIndex)?.title ?: "Chapter ${currentChapterIndex + 1}"
+
+            // 4. Compact JSON context of known entities
+            val knownContextJson = JSONObject().apply {
+                put("reading_context", JSONObject().apply {
+                    put("book_title", book.title)
+                    put("book_author", book.author)
+                    put("previously_analyzed_chapter", if (hasCheckpoint) lastCalculatedChapter + 1 else 0)
+                    put("current_reading_chapter", currentChapterIndex + 1)
+                    put("current_reading_page", currentPageIndex + 1)
+                    put("active_chapter_name", currentChapterName)
+                })
+                put("known_characters", JSONArray().apply {
+                    for (c in existingCharacters.take(25)) {
+                        put(JSONObject().apply {
+                            put("name", c.name)
+                            put("role", c.role)
+                            put("summary", c.summary.take(160))
+                            if (c.aliases.isNotEmpty()) put("aliases", JSONArray(c.aliases))
+                        })
+                    }
+                })
+                put("known_lore", JSONArray().apply {
+                    for (l in existingLore.take(20)) {
+                        put(JSONObject().apply {
+                            put("title", l.title)
+                            put("category", l.category)
+                            put("description", l.description.take(160))
+                        })
+                    }
+                })
+            }.toString()
 
             val prompt = """
-                Analyze the following text excerpts from the book "${book.title}" by ${book.author} to identify and update characters.
-                $previousCharactersSummary
-                Text excerpts (from chapter "${chaptersToConsider.firstOrNull()?.title ?: ""}" up to chapter "$currentChapterName", reading page ${currentPageIndex + 1}):
-                $contextBuilder
+You are Lumina's literary analyst analyzing unread excerpts of "${book.title}" by ${book.author}.
 
-                Instructions:
-                1. If a character from the previously identified list has new actions or lore in these excerpts, update their role, summary, or key events.
-                2. If any new characters appear in these excerpts who were not previously listed, extract them.
-                3. Do NOT mention any future events, plot twists, deaths, or character fates beyond chapter "$currentChapterName".
+Context & Known Entities:
+$knownContextJson
 
-                Respond with ONLY a JSON array of objects with the following schema:
-                [
-                  {
-                    "name": "Character Name",
-                    "role": "Protagonist / Antagonist / Supporting / Mentor",
-                    "first_appearance": "Chapter name or estimated chapter",
-                    "summary": "Brief 1-2 sentence description up to this point",
-                    "key_events": "Key actions or lore revealed up to this point"
-                  }
-                ]
+New Book Excerpts (Chapters "${chaptersToConsider.firstOrNull()?.title ?: ""}" to "$currentChapterName"):
+$contextBuilder
+
+Instructions:
+1. STRICT ANTI-DUPLICATION:
+   - Do NOT create duplicate entries for characters or lore already in the known list.
+   - If "Winston" or "Smith" is already known, update "Winston Smith" under its canonical full name and add alternate names to "aliases".
+   - Do not create separate entries for titles or honorifics.
+2. RICH DESCRIPTIONS (can be 4+ sentences):
+   - Provide comprehensive, vivid descriptions (3-5+ sentences) detailing character motivations, personality, background, and relationships revealed up to "$currentChapterName".
+3. EXTRACT LORE & WORLD-BUILDING:
+   - Identify factions, organizations, historical events, technology, locations, philosophies, or key terms (e.g. Ingsoc, Thought Police, Ministry of Truth, Oceania, Tele-screen).
+4. SPOILER SHIELD:
+   - STRICT SPOILER SHIELD ACTIVE: NEVER mention plot twists, deaths, or events beyond chapter "$currentChapterName".
+
+Respond with ONLY a JSON object with this exact schema:
+{
+  "characters": [
+    {
+      "name": "Canonical Full Name",
+      "role": "Protagonist / Antagonist / Supporting / Rebel / Official",
+      "first_appearance": "Chapter name",
+      "summary": "Rich 3-5+ sentence description of personality, actions, and current arc up to this chapter.",
+      "key_events": "Key actions, relationships, and revelations up to this point.",
+      "aliases": ["Surname", "Nickname"]
+    }
+  ],
+  "lore": [
+    {
+      "title": "Faction / Location / Concept / Event / Technology Name",
+      "category": "Faction / Location / Concept / Event / Technology / Society",
+      "first_appearance": "Chapter name",
+      "description": "Rich 3-5+ sentence explanation of lore, history, purpose, and significance up to this chapter.",
+      "key_facts": "Key established facts or rules."
+    }
+  ]
+}
             """.trimIndent()
 
             try {
@@ -829,7 +1048,7 @@ class AssistantService(private val context: Context? = null) {
                     } else null
                 }
 
-                if (jsonText.isNullOrBlank()) return@withContext existingCharacters
+                if (jsonText.isNullOrBlank()) return@withContext ExtractionResult(existingCharacters, existingLore)
 
                 val cleanJson = jsonText.trim()
                     .removePrefix("```json")
@@ -837,47 +1056,120 @@ class AssistantService(private val context: Context? = null) {
                     .removeSuffix("```")
                     .trim()
 
-                val array = JSONArray(cleanJson)
-                val parsedList = mutableListOf<BookCharacter>()
-                for (i in 0 until array.length()) {
-                    val obj = array.getJSONObject(i)
+                val rootObj = JSONObject(cleanJson)
+                val charsArray = rootObj.optJSONArray("characters") ?: JSONArray()
+                val loreArray = rootObj.optJSONArray("lore") ?: JSONArray()
+
+                val parsedCharacters = mutableListOf<BookCharacter>()
+                for (i in 0 until charsArray.length()) {
+                    val obj = charsArray.getJSONObject(i)
                     val name = obj.optString("name", "").trim()
                     if (name.isBlank()) continue
-                    parsedList.add(
+                    val aliasesList = mutableListOf<String>()
+                    val aliasesArr = obj.optJSONArray("aliases")
+                    if (aliasesArr != null) {
+                        for (a in 0 until aliasesArr.length()) {
+                            val alias = aliasesArr.optString(a, "").trim()
+                            if (alias.isNotBlank()) aliasesList.add(alias)
+                        }
+                    }
+
+                    parsedCharacters.add(
                         BookCharacter(
                             bookId = book.id,
                             name = name,
                             role = obj.optString("role", "Character").trim(),
-                            firstAppearanceChapter = obj.optString("first_appearance", "").trim(),
+                            firstAppearanceChapter = obj.optString("first_appearance", currentChapterName).trim(),
                             summary = obj.optString("summary", "").trim(),
                             keyEvents = obj.optString("key_events", "").trim(),
+                            aliases = aliasesList,
                             isSpoiler = false
                         )
                     )
                 }
 
-                if (existingCharacters.isEmpty()) {
-                    parsedList
-                } else {
-                    val mergedMap = existingCharacters.associateBy { it.name.lowercase().trim() }.toMutableMap()
-                    for (c in parsedList) {
-                        val key = c.name.lowercase().trim()
-                        val existing = mergedMap[key]
-                        if (existing != null) {
-                            mergedMap[key] = existing.copy(
-                                role = if (c.role.isNotBlank()) c.role else existing.role,
-                                summary = if (c.summary.isNotBlank()) c.summary else existing.summary,
-                                keyEvents = if (c.keyEvents.isNotBlank()) c.keyEvents else existing.keyEvents,
-                                firstAppearanceChapter = existing.firstAppearanceChapter.ifBlank { c.firstAppearanceChapter }
-                            )
-                        } else {
-                            mergedMap[key] = c
-                        }
-                    }
-                    mergedMap.values.toList()
+                val parsedLore = mutableListOf<BookLore>()
+                for (i in 0 until loreArray.length()) {
+                    val obj = loreArray.getJSONObject(i)
+                    val title = obj.optString("title", "").trim()
+                    if (title.isBlank()) continue
+                    parsedLore.add(
+                        BookLore(
+                            bookId = book.id,
+                            title = title,
+                            category = obj.optString("category", "World").trim(),
+                            firstAppearanceChapter = obj.optString("first_appearance", currentChapterName).trim(),
+                            description = obj.optString("description", "").trim(),
+                            keyFacts = obj.optString("key_facts", "").trim(),
+                            isSpoiler = false
+                        )
+                    )
                 }
+
+                // Smart Canonical Deduplication and Merging for Characters
+                val mergedCharacters = existingCharacters.toMutableList()
+                for (newChar in parsedCharacters) {
+                    val existingIdx = mergedCharacters.indexOfFirst {
+                        isSameCharacter(it.name, newChar.name, it.aliases, newChar.aliases)
+                    }
+                    if (existingIdx != -1) {
+                        val existing = mergedCharacters[existingIdx]
+                        val canonicalName = if (newChar.name.length >= existing.name.length) newChar.name else existing.name
+                        val combinedAliases = (existing.aliases + newChar.aliases + listOf(newChar.name, existing.name))
+                            .filter { it.isNotBlank() && !it.equals(canonicalName, ignoreCase = true) }
+                            .distinctBy { normalizeEntityName(it) }
+
+                        val combinedSummary = if (newChar.summary.length > existing.summary.length) newChar.summary else existing.summary
+                        val combinedEvents = if (newChar.keyEvents.isNotBlank()) {
+                            if (existing.keyEvents.isNotBlank() && !existing.keyEvents.contains(newChar.keyEvents)) {
+                                "${existing.keyEvents} • ${newChar.keyEvents}"
+                            } else newChar.keyEvents
+                        } else existing.keyEvents
+
+                        mergedCharacters[existingIdx] = existing.copy(
+                            name = canonicalName,
+                            role = if (newChar.role.isNotBlank() && newChar.role != "Character") newChar.role else existing.role,
+                            summary = combinedSummary,
+                            keyEvents = combinedEvents,
+                            aliases = combinedAliases,
+                            firstAppearanceChapter = existing.firstAppearanceChapter.ifBlank { newChar.firstAppearanceChapter }
+                        )
+                    } else {
+                        mergedCharacters.add(newChar)
+                    }
+                }
+
+                // Smart Canonical Deduplication and Merging for Lore
+                val mergedLore = existingLore.toMutableList()
+                for (newLore in parsedLore) {
+                    val existingIdx = mergedLore.indexOfFirst {
+                        isSameLore(it.title, newLore.title)
+                    }
+                    if (existingIdx != -1) {
+                        val existing = mergedLore[existingIdx]
+                        val canonicalTitle = if (newLore.title.length >= existing.title.length) newLore.title else existing.title
+                        val combinedDesc = if (newLore.description.length > existing.description.length) newLore.description else existing.description
+                        val combinedFacts = if (newLore.keyFacts.isNotBlank()) {
+                            if (existing.keyFacts.isNotBlank() && !existing.keyFacts.contains(newLore.keyFacts)) {
+                                "${existing.keyFacts} • ${newLore.keyFacts}"
+                            } else newLore.keyFacts
+                        } else existing.keyFacts
+
+                        mergedLore[existingIdx] = existing.copy(
+                            title = canonicalTitle,
+                            category = if (newLore.category.isNotBlank() && newLore.category != "World") newLore.category else existing.category,
+                            description = combinedDesc,
+                            keyFacts = combinedFacts,
+                            firstAppearanceChapter = existing.firstAppearanceChapter.ifBlank { newLore.firstAppearanceChapter }
+                        )
+                    } else {
+                        mergedLore.add(newLore)
+                    }
+                }
+
+                ExtractionResult(mergedCharacters, mergedLore)
             } catch (_: Exception) {
-                existingCharacters
+                ExtractionResult(existingCharacters, existingLore)
             }
         }
     }

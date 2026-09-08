@@ -60,4 +60,60 @@ class EpubParserTest {
             "Part One"
         ))
     }
+
+    @Test
+    fun testParseEpubLanguageExtraction() {
+        val baos = ByteArrayOutputStream()
+        val zos = ZipOutputStream(baos)
+
+        // Add container.xml
+        zos.putNextEntry(ZipEntry("META-INF/container.xml"))
+        val containerXml = """
+            <?xml version="1.0"?>
+            <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+              <rootfiles>
+                <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+              </rootfiles>
+            </container>
+        """.trimIndent()
+        zos.write(containerXml.toByteArray(Charsets.UTF_8))
+        zos.closeEntry()
+
+        // Add content.opf with dc:language
+        zos.putNextEntry(ZipEntry("OEBPS/content.opf"))
+        val opfXml = """
+            <?xml version="1.0" encoding="utf-8"?>
+            <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+              <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <dc:title>Le Petit Prince</dc:title>
+                <dc:creator>Antoine de Saint-Exupéry</dc:creator>
+                <dc:language>fr-FR</dc:language>
+              </metadata>
+              <manifest>
+                <item id="c1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
+              </manifest>
+              <spine>
+                <itemref idref="c1"/>
+              </spine>
+            </package>
+        """.trimIndent()
+        zos.write(opfXml.toByteArray(Charsets.UTF_8))
+        zos.closeEntry()
+
+        // Add chapter1.xhtml
+        zos.putNextEntry(ZipEntry("OEBPS/chapter1.xhtml"))
+        val htmlContent = """
+            <?xml version="1.0" encoding="utf-8"?>
+            <html xmlns="http://www.w3.org/1999/xhtml">
+            <body><p>Bonjour le monde.</p></body>
+            </html>
+        """.trimIndent()
+        zos.write(htmlContent.toByteArray(Charsets.UTF_8))
+        zos.closeEntry()
+        zos.close()
+
+        val book = EpubParser.parseEpub(ByteArrayInputStream(baos.toByteArray()), "test.epub")
+        assertEquals("fr", book.language)
+        assertEquals("Le Petit Prince", book.title)
+    }
 }

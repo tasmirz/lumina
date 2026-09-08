@@ -12,7 +12,12 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -82,6 +87,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.Bookmarks
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FormatQuote
@@ -424,9 +430,22 @@ fun ReaderScreen(
             transientFontBadge = null
         }
     }
+
+    var showReadTillFeedback by remember { mutableStateOf(false) }
+    var readTillFeedbackText by remember { mutableStateOf("") }
+    LaunchedEffect(showReadTillFeedback) {
+        if (showReadTillFeedback) {
+            delay(1800)
+            showReadTillFeedback = false
+        }
+    }
+    var isLongPressingProgress by remember { mutableStateOf(false) }
+    val progressHoldAnim = remember { Animatable(0f) }
     var isScrubbingProgress by remember { mutableStateOf(false) }
     var scrubProgressPct by remember { mutableFloatStateOf(book.progress.toFloat()) }
     var currentProgressPct by rememberSaveable(book.id) { mutableIntStateOf(book.progress) }
+    val readTillMapState = repository?.readTillMap?.collectAsState(initial = emptyMap())
+    val currentReadTillPct = readTillMapState?.value?.get(book.id) ?: currentProgressPct
 
     // TTS Reader states
     var isTtsSpeaking by remember { mutableStateOf(false) }
@@ -506,14 +525,22 @@ fun ReaderScreen(
             val tts = TextToSpeech(context) { status ->
                 if (status == TextToSpeech.SUCCESS) {
                     val engine = ttsRef.value
-                    engine?.language = Locale.getDefault()
+                    val effLang = repository?.getEffectiveLanguage() ?: book.language
+                    val targetLocale = if (effLang.isNotBlank() && effLang != "auto") {
+                        try { Locale.forLanguageTag(effLang) } catch (_: Exception) { Locale.getDefault() }
+                    } else {
+                        Locale.getDefault()
+                    }
+                    engine?.language = targetLocale
                     engine?.setPitch(1.0f)
                     engine?.setSpeechRate(0.95f)
                     try {
                         val voices = engine?.voices
                         val naturalVoice = voices?.filter {
-                            it.locale.language == Locale.ENGLISH.language && !it.isNetworkConnectionRequired
-                        }?.maxByOrNull { it.quality } ?: voices?.firstOrNull { it.locale.language == Locale.ENGLISH.language }
+                            it.locale.language == targetLocale.language && !it.isNetworkConnectionRequired
+                        }?.maxByOrNull { it.quality }
+                            ?: voices?.firstOrNull { it.locale.language == targetLocale.language }
+                            ?: voices?.filter { !it.isNetworkConnectionRequired }?.maxByOrNull { it.quality }
                         if (naturalVoice != null) {
                             engine?.voice = naturalVoice
                         }
@@ -951,11 +978,24 @@ fun ReaderScreen(
                 val chapTitle = book.chapters.getOrNull(next)?.title ?: "Chapter ${next + 1}"
                 activeChapterTitle = chapTitle
                 coroutineScope.launch {
-                    var idx = 0
-                    for (i in 0 until next) {
-                        idx += (book.chapters[i].paragraphs.size + 1)
+                    if (readingMode == ReadingMode.SCROLL) {
+                        var idx = 0
+                        for (i in 0 until next) {
+                            idx += (book.chapters[i].paragraphs.size + 1)
+                        }
+                        if (kotlin.math.abs(listState.firstVisibleItemIndex - idx) > 3) {
+                            listState.scrollToItem(idx)
+                        } else {
+                            listState.animateScrollToItem(idx)
+                        }
+                    } else {
+                        val targetPage = pages.indexOfFirst { it.first == chapTitle }.coerceAtLeast(0)
+                        if (kotlin.math.abs(pagerState.currentPage - targetPage) > 3) {
+                            pagerState.scrollToPage(targetPage)
+                        } else {
+                            pagerState.animateScrollToPage(targetPage)
+                        }
                     }
-                    listState.animateScrollToItem(idx)
                 }
             }
             is AssistantAction.PreviousChapter -> {
@@ -965,11 +1005,24 @@ fun ReaderScreen(
                 val chapTitle = book.chapters.getOrNull(prev)?.title ?: "Chapter ${prev + 1}"
                 activeChapterTitle = chapTitle
                 coroutineScope.launch {
-                    var idx = 0
-                    for (i in 0 until prev) {
-                        idx += (book.chapters[i].paragraphs.size + 1)
+                    if (readingMode == ReadingMode.SCROLL) {
+                        var idx = 0
+                        for (i in 0 until prev) {
+                            idx += (book.chapters[i].paragraphs.size + 1)
+                        }
+                        if (kotlin.math.abs(listState.firstVisibleItemIndex - idx) > 3) {
+                            listState.scrollToItem(idx)
+                        } else {
+                            listState.animateScrollToItem(idx)
+                        }
+                    } else {
+                        val targetPage = pages.indexOfFirst { it.first == chapTitle }.coerceAtLeast(0)
+                        if (kotlin.math.abs(pagerState.currentPage - targetPage) > 3) {
+                            pagerState.scrollToPage(targetPage)
+                        } else {
+                            pagerState.animateScrollToPage(targetPage)
+                        }
                     }
-                    listState.animateScrollToItem(idx)
                 }
             }
             is AssistantAction.NavigateChapter -> {
@@ -979,11 +1032,24 @@ fun ReaderScreen(
                 val chapTitle = book.chapters.getOrNull(target)?.title ?: "Chapter ${target + 1}"
                 activeChapterTitle = chapTitle
                 coroutineScope.launch {
-                    var idx = 0
-                    for (i in 0 until target) {
-                        idx += (book.chapters[i].paragraphs.size + 1)
+                    if (readingMode == ReadingMode.SCROLL) {
+                        var idx = 0
+                        for (i in 0 until target) {
+                            idx += (book.chapters[i].paragraphs.size + 1)
+                        }
+                        if (kotlin.math.abs(listState.firstVisibleItemIndex - idx) > 3) {
+                            listState.scrollToItem(idx)
+                        } else {
+                            listState.animateScrollToItem(idx)
+                        }
+                    } else {
+                        val targetPage = pages.indexOfFirst { it.first == chapTitle }.coerceAtLeast(0)
+                        if (kotlin.math.abs(pagerState.currentPage - targetPage) > 3) {
+                            pagerState.scrollToPage(targetPage)
+                        } else {
+                            pagerState.animateScrollToPage(targetPage)
+                        }
                     }
-                    listState.animateScrollToItem(idx)
                 }
             }
             is AssistantAction.ToggleTts -> {
@@ -2211,60 +2277,211 @@ fun ReaderScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    // Top Progress Bar Extension: Pure Display (not movable, no actions), tapping toggles bottom nav dock
+                    // Dynamic rail height: expands from 3.5.dp to 7.dp while long-pressing
+                    val animatedRailHeight by animateDpAsState(
+                        targetValue = if (isLongPressingProgress) 7.dp else 3.5.dp,
+                        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                        label = "railHeight"
+                    )
+
+                    // Top Progress Bar Extension: Pure Display, tapping toggles bottom nav dock, long press charges up & saves last read position
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { onToggleNavBar() }
+                            .pointerInput(currentProgressPct, book.id, readingMode, speakingChapterIdx) {
+                                awaitEachGesture {
+                                    val down = awaitFirstDown(requireUnconsumed = false)
+                                    val startTime = System.currentTimeMillis()
+                                    var completed = false
+
+                                    val animJob = coroutineScope.launch {
+                                        isLongPressingProgress = true
+                                        progressHoldAnim.snapTo(0f)
+                                        progressHoldAnim.animateTo(
+                                            targetValue = 1f,
+                                            animationSpec = tween(durationMillis = 550, easing = LinearEasing)
+                                        )
+                                        // Long-press hold completed! Save position and trigger feedback
+                                        completed = true
+                                        view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+
+                                        val currentChapIdx = speakingChapterIdx.coerceIn(0, (book.chapters.size - 1).coerceAtLeast(0))
+                                        val currentPageIdx = if (readingMode != ReadingMode.SCROLL) pagerState.currentPage else 0
+                                        val currentScrollPos = if (readingMode == ReadingMode.SCROLL) listState.firstVisibleItemIndex else 0
+
+                                        repository?.forceSetLastReadPosition(
+                                            book.id,
+                                            currentChapIdx,
+                                            currentPageIdx,
+                                            currentScrollPos,
+                                            currentProgressPct
+                                        )
+                                        onPositionChange(currentChapIdx, currentPageIdx, currentScrollPos, currentProgressPct)
+
+                                        readTillFeedbackText = if (readingMode != ReadingMode.SCROLL) {
+                                            "Last read saved: Chapter ${currentChapIdx + 1}, Page ${currentPageIdx + 1} (${currentProgressPct}%)"
+                                        } else {
+                                            "Last read saved: Chapter ${currentChapIdx + 1}, Para ${currentScrollPos + 1} (${currentProgressPct}%)"
+                                        }
+                                        showReadTillFeedback = true
+                                    }
+
+                                    val up = waitForUpOrCancellation()
+                                    animJob.cancel()
+                                    isLongPressingProgress = false
+
+                                    if (up != null && !completed) {
+                                        val elapsed = System.currentTimeMillis() - startTime
+                                        if (elapsed < 300) {
+                                            onToggleNavBar()
+                                        }
+                                    }
+                                    coroutineScope.launch {
+                                        progressHoldAnim.animateTo(0f, tween(150))
+                                    }
+                                }
+                            }
                             .padding(horizontal = 14.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "${currentProgressPct}%",
+                            text = if (isLongPressingProgress && progressHoldAnim.value > 0.05f) {
+                                "${(progressHoldAnim.value * 100).toInt()}%"
+                            } else {
+                                "${currentProgressPct}%"
+                            },
                             fontFamily = FontFamily.SansSerif,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.secondary
+                            color = if (isLongPressingProgress) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
                         )
                         Spacer(modifier = Modifier.width(10.dp))
 
-                        // Pure Display Progress Rail - Non-movable, no actions
+                        // Pure Display Progress Rail with charging animation on hold
                         Box(
                             modifier = Modifier
                                 .weight(1f)
-                                .height(6.dp),
+                                .height(12.dp),
                             contentAlignment = Alignment.CenterStart
                         ) {
                             // Background rail
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(3.5.dp)
-                                    .clip(RoundedCornerShape(2.dp))
+                                    .height(animatedRailHeight)
+                                    .clip(RoundedCornerShape(animatedRailHeight / 2))
                                     .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
                             )
-                            // Filled progress bar
+                            // Read-till progress indicator (if ahead of current reading position)
+                            val readTillFraction = (currentReadTillPct.toFloat() / 100f).coerceIn(0f, 1f)
+                            if (currentReadTillPct > currentProgressPct) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth(readTillFraction)
+                                        .height(animatedRailHeight)
+                                        .clip(RoundedCornerShape(animatedRailHeight / 2))
+                                        .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.35f))
+                                )
+                            }
+                            // Filled progress bar (current scroll/page position)
                             val currentFraction = (currentProgressPct.toFloat() / 100f).coerceIn(0.01f, 1f)
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth(currentFraction)
-                                    .height(3.5.dp)
-                                    .clip(RoundedCornerShape(2.dp))
+                                    .height(animatedRailHeight)
+                                    .clip(RoundedCornerShape(animatedRailHeight / 2))
                                     .background(MaterialTheme.colorScheme.secondary)
                             )
+
+                            // Charging animation beam while holding down to save location
+                            val holdFraction = progressHoldAnim.value
+                            if (isLongPressingProgress || holdFraction > 0f) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth(holdFraction)
+                                        .height(animatedRailHeight)
+                                        .clip(RoundedCornerShape(animatedRailHeight / 2))
+                                        .background(
+                                            Brush.horizontalGradient(
+                                                colors = listOf(
+                                                    MaterialTheme.colorScheme.primary,
+                                                    MaterialTheme.colorScheme.tertiary,
+                                                    MaterialTheme.colorScheme.primary
+                                                )
+                                            )
+                                        )
+                                )
+                            }
+
+                            // Read-till marker pip if ahead of current progress
+                            if (currentReadTillPct > currentProgressPct) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth(readTillFraction)
+                                        .height(animatedRailHeight + 4.dp),
+                                    contentAlignment = Alignment.CenterEnd
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(if (isLongPressingProgress) 8.dp else 6.dp)
+                                            .clip(CircleShape)
+                                            .background(MaterialTheme.colorScheme.tertiary)
+                                    )
+                                }
+                            }
                         }
 
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = if (book.readTimeLeft.isNotBlank()) book.readTimeLeft else activeChapterTitle,
+                            text = if (isLongPressingProgress && progressHoldAnim.value > 0.05f) {
+                                "Holding to save..."
+                            } else {
+                                if (book.readTimeLeft.isNotBlank()) book.readTimeLeft else activeChapterTitle
+                            },
                             fontFamily = FontFamily.SansSerif,
                             fontSize = 10.5.sp,
-                            fontWeight = FontWeight.Normal,
+                            fontWeight = if (isLongPressingProgress) FontWeight.SemiBold else FontWeight.Normal,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = if (isLongPressingProgress) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+
+                    // Animated In-Place Read-Till Saved Feedback Pill
+                    AnimatedVisibility(
+                        visible = showReadTillFeedback,
+                        enter = fadeIn(animationSpec = tween(180)) + expandVertically(animationSpec = tween(200)),
+                        exit = fadeOut(animationSpec = tween(250)) + shrinkVertically(animationSpec = tween(250))
+                    ) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 4.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = readTillFeedbackText,
+                                    fontFamily = FontFamily.SansSerif,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+                        }
                     }
 
                     // Expandable Navigation Row directly attached below progress bar
@@ -2795,12 +3012,20 @@ fun ReaderScreen(
                             targetIdx += (book.chapters[c].paragraphs.size + 1)
                         }
                         coroutineScope.launch {
-                            listState.animateScrollToItem(targetIdx)
+                            if (kotlin.math.abs(listState.firstVisibleItemIndex - targetIdx) > 3) {
+                                listState.scrollToItem(targetIdx)
+                            } else {
+                                listState.animateScrollToItem(targetIdx)
+                            }
                         }
                     } else {
                         val targetPage = pages.indexOfFirst { it.first == activeChapterTitle }.coerceAtLeast(0)
                         coroutineScope.launch {
-                            pagerState.animateScrollToPage(targetPage)
+                            if (kotlin.math.abs(pagerState.currentPage - targetPage) > 3) {
+                                pagerState.scrollToPage(targetPage)
+                            } else {
+                                pagerState.animateScrollToPage(targetPage)
+                            }
                         }
                     }
                     showTocSheet = false
@@ -2818,7 +3043,7 @@ fun ReaderScreen(
             },
             bookTitle = book.title,
             activeChapterTitle = activeChapterTitle,
-            knownContext = book.chapters.firstOrNull { it.title == activeChapterTitle }?.paragraphs?.take(10)?.joinToString("\n") ?: "",
+            knownContext = book.chapters.firstOrNull { it.title == activeChapterTitle }?.paragraphs?.take(18)?.joinToString("\n") ?: "",
             apiKey = geminiApiKey,
             provider = aiProvider,
             baseUrl = aiBaseUrl,
@@ -2827,6 +3052,7 @@ fun ReaderScreen(
             disableStt = disableStt,
             disableAi = disableAi,
             autoStartVoice = assistantAutoStartVoice,
+            languageCode = repository?.getEffectiveLanguage() ?: book.language,
             assistantService = assistantService,
             onExecuteAction = { action -> handleAssistantAction(action) }
         )

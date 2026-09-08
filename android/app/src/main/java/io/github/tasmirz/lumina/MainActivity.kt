@@ -157,6 +157,7 @@ class MainActivity : ComponentActivity() {
             val aiModel by bookRepository.aiModel.collectAsStateWithLifecycle()
             val wishlistBooks by bookRepository.wishlistBooks.collectAsStateWithLifecycle()
             val completedBookIds by bookRepository.completedBookIds.collectAsStateWithLifecycle()
+            val preferredLanguage by bookRepository.preferredLanguage.collectAsStateWithLifecycle()
 
             var currentTab by rememberSaveable {
                 mutableStateOf(
@@ -511,6 +512,8 @@ class MainActivity : ComponentActivity() {
                                 onReadingModeChange = { bookRepository.setReadingMode(it) },
                                 paragraphSpacing = paragraphSpacing,
                                 onParagraphSpacingChange = { bookRepository.setParagraphSpacing(it) },
+                                currentLanguage = preferredLanguage,
+                                onLanguageChange = { bookRepository.setPreferredLanguage(it) },
                                 onOpenAdvancedSettings = { showAdvancedSettingsScreen = true },
                                 onDismiss = { showAppearanceSheet = false }
                             )

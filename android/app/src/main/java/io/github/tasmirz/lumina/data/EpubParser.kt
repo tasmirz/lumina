@@ -83,9 +83,10 @@ object EpubParser {
         val opfContent = if (opfEntryKey != null) String(entries[opfEntryKey] ?: ByteArray(0), Charsets.UTF_8) else ""
         val opfDir = if (opfPath.contains("/")) opfPath.substringBeforeLast('/') else ""
 
-        // 3. Extract Metadata: Title & Author
+        // 3. Extract Metadata: Title, Author & Language
         var title = ""
         var author = ""
+        var language = "en"
         var coverIdFromMeta = ""
 
         if (opfContent.isNotBlank()) {
@@ -97,6 +98,28 @@ object EpubParser {
             val authorMatch = "<dc:creator[^>]*>([^<]+)</dc:creator>".toRegex(RegexOption.IGNORE_CASE).find(opfContent)
             if (authorMatch != null) {
                 author = decodeHtmlEntities(authorMatch.groupValues[1].trim())
+            }
+
+            val langMatch = "<dc:language[^>]*>([^<]+)</dc:language>".toRegex(RegexOption.IGNORE_CASE).find(opfContent)
+            if (langMatch != null) {
+                val rawLang = langMatch.groupValues[1].trim().lowercase()
+                val code = rawLang.split("-", "_")[0].trim()
+                language = when (code) {
+                    "eng" -> "en"
+                    "spa" -> "es"
+                    "fra", "fre" -> "fr"
+                    "deu", "ger" -> "de"
+                    "ita" -> "it"
+                    "por" -> "pt"
+                    "rus" -> "ru"
+                    "ben" -> "bn"
+                    "hin" -> "hi"
+                    "zho", "chi" -> "zh"
+                    "jpn" -> "ja"
+                    "kor" -> "ko"
+                    "ara" -> "ar"
+                    else -> if (code.length == 2) code else "en"
+                }
             }
 
             val metaCoverMatch = "<meta[^>]+name=[\"']cover[\"'][^>]+content=[\"']([^\"']+)[\"']".toRegex(RegexOption.IGNORE_CASE).find(opfContent)
@@ -513,7 +536,8 @@ object EpubParser {
             lastRead = "Just added",
             progress = 0,
             readTimeLeft = "${finalChapters.size * 8}m left",
-            chapters = finalChapters
+            chapters = finalChapters,
+            language = language
         )
     }
 

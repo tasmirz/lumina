@@ -30,6 +30,7 @@ import io.github.tasmirz.lumina.data.AssistantService
 import io.github.tasmirz.lumina.data.BookRepository
 import io.github.tasmirz.lumina.model.Book
 import io.github.tasmirz.lumina.model.BookCharacter
+import io.github.tasmirz.lumina.model.BookLore
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -49,14 +50,19 @@ fun CharacterGuideSheet(
     val coroutineScope = rememberCoroutineScope()
     val charactersMap by repository.characters.collectAsState()
     val characters = charactersMap[book.id] ?: emptyList()
+    val loreMap by repository.lore.collectAsState()
+    val loreList = loreMap[book.id] ?: emptyList()
 
     var searchQuery by rememberSaveable { mutableStateOf("") }
+    var selectedFilter by rememberSaveable { mutableStateOf("ALL") } // "ALL", "CHARACTERS", "LORE"
     var isExtracting by remember { mutableStateOf(false) }
     var showAddDialog by remember { mutableStateOf(false) }
     var expandedCharacterId by remember { mutableStateOf<Long?>(null) }
+    var expandedLoreId by remember { mutableStateOf<Long?>(null) }
 
     LaunchedEffect(book.id) {
         repository.loadCharacters(book.id)
+        repository.loadLore(book.id)
     }
 
     val filteredCharacters = remember(characters, searchQuery) {
@@ -67,7 +73,22 @@ fun CharacterGuideSheet(
                 it.name.lowercase().contains(q) ||
                 it.role.lowercase().contains(q) ||
                 it.summary.lowercase().contains(q) ||
-                it.firstAppearanceChapter.lowercase().contains(q)
+                it.firstAppearanceChapter.lowercase().contains(q) ||
+                it.aliases.any { alias -> alias.lowercase().contains(q) }
+            }
+        }
+    }
+
+    val filteredLore = remember(loreList, searchQuery) {
+        if (searchQuery.isBlank()) loreList
+        else {
+            val q = searchQuery.trim().lowercase()
+            loreList.filter {
+                it.title.lowercase().contains(q) ||
+                it.category.lowercase().contains(q) ||
+                it.description.lowercase().contains(q) ||
+                it.firstAppearanceChapter.lowercase().contains(q) ||
+                it.keyFacts.any { fact -> fact.lowercase().contains(q) }
             }
         }
     }
@@ -95,7 +116,7 @@ fun CharacterGuideSheet(
             ) {
                 Column {
                     Text(
-                        text = "Characters & Lore",
+                        text = "Characters & World Lore",
                         fontFamily = FontFamily.Serif,
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold,
@@ -158,7 +179,7 @@ fun CharacterGuideSheet(
                 maxLines = 1,
                 placeholder = {
                     Text(
-                        text = "Search characters, roles, or lore...",
+                        text = "Search characters, factions, locations, terms...",
                         fontSize = 13.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -177,7 +198,31 @@ fun CharacterGuideSheet(
                 shape = RoundedCornerShape(12.dp)
             )
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Filter Chips Row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FilterChip(
+                    selected = selectedFilter == "ALL",
+                    onClick = { selectedFilter = "ALL" },
+                    label = { Text("All (${filteredCharacters.size + filteredLore.size})", fontSize = 11.5.sp) }
+                )
+                FilterChip(
+                    selected = selectedFilter == "CHARACTERS",
+                    onClick = { selectedFilter = "CHARACTERS" },
+                    label = { Text("Characters (${filteredCharacters.size})", fontSize = 11.5.sp) }
+                )
+                FilterChip(
+                    selected = selectedFilter == "LORE",
+                    onClick = { selectedFilter = "LORE" },
+                    label = { Text("Lore & World (${filteredLore.size})", fontSize = 11.5.sp) }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
 
             if (book.characterCheckpointChapter > 0 || book.characterCheckpointPage > 0) {
                 Surface(
@@ -221,7 +266,7 @@ fun CharacterGuideSheet(
                         isExtracting = true
                         coroutineScope.launch {
                             try {
-                                val extracted = AssistantService.extractCharacters(
+                                val result = AssistantService.extractCharactersAndLore(
                                     book = book,
                                     currentChapterIndex = currentChapterIndex,
                                     isSpoilerShield = isSpoilerShield,
@@ -230,19 +275,25 @@ fun CharacterGuideSheet(
                                     modelName = aiModel,
                                     customEndpoint = customEndpoint,
                                     existingCharacters = characters,
+                                    existingLore = loreList,
                                     lastCalculatedChapter = book.characterCheckpointChapter,
                                     lastCalculatedPage = book.characterCheckpointPage,
                                     currentPageIndex = book.currentPage
                                 )
-                                if (extracted.isNotEmpty()) {
-                                    extracted.forEach { repository.saveCharacter(it) }
+                                if (result.characters.isNotEmpty() || result.lore.isNotEmpty()) {
+                                    result.characters.forEach { repository.saveCharacter(it) }
+                                    result.lore.forEach { repository.saveLore(it) }
                                     repository.updateCharacterCheckpoint(book.id, currentChapterIndex, book.currentPage + 1)
-                                    Toast.makeText(context, "Analyzed characters up to Chapter ${currentChapterIndex + 1} (${extracted.size} total)", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(
+                                        context,
+                                        "Analyzed: ${result.characters.size} characters & ${result.lore.size} lore entries up to Chapter ${currentChapterIndex + 1}",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
                                 } else {
-                                    Toast.makeText(context, "No new characters found or AI unavailable", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "No new characters or lore found for this reading position", Toast.LENGTH_SHORT).show()
                                 }
                             } catch (e: Exception) {
-                                Toast.makeText(context, "Error scanning characters: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Error scanning characters & lore: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
                             } finally {
                                 isExtracting = false
                             }
@@ -255,7 +306,7 @@ fun CharacterGuideSheet(
                     if (isExtracting) {
                         CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Scanning with AI...", fontSize = 12.sp)
+                        Text("Extracting with AI...", fontSize = 12.sp)
                     } else {
                         Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
@@ -273,10 +324,14 @@ fun CharacterGuideSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
-            // Character List
-            if (filteredCharacters.isEmpty()) {
+            val showCharacters = selectedFilter == "ALL" || selectedFilter == "CHARACTERS"
+            val showLore = selectedFilter == "ALL" || selectedFilter == "LORE"
+            val hasContent = (showCharacters && filteredCharacters.isNotEmpty()) || (showLore && filteredLore.isNotEmpty())
+
+            // Content List
+            if (!hasContent) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -295,15 +350,15 @@ fun CharacterGuideSheet(
                         )
                         Spacer(modifier = Modifier.height(12.dp))
                         Text(
-                            text = if (searchQuery.isNotBlank()) "No characters matching \"$searchQuery\""
-                                   else "No characters tracked yet",
+                            text = if (searchQuery.isNotBlank()) "No entries matching \"$searchQuery\""
+                                   else "No characters or lore tracked yet",
                             fontFamily = FontFamily.SansSerif,
                             fontSize = 14.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "Tap 'Extract with AI' to identify dramatis personae automatically, or add your own notes.",
+                            text = "Tap 'Extract with AI' to analyze characters, factions, locations, and lore up to your current reading spot.",
                             fontFamily = FontFamily.SansSerif,
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
@@ -319,106 +374,264 @@ fun CharacterGuideSheet(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     contentPadding = PaddingValues(bottom = 24.dp)
                 ) {
-                    items(filteredCharacters, key = { it.id }) { character ->
-                        val isExpanded = expandedCharacterId == character.id
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    expandedCharacterId = if (isExpanded) null else character.id
-                                },
-                            shape = RoundedCornerShape(12.dp),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
-                            )
-                        ) {
-                            Column(modifier = Modifier.padding(14.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
+                    // Characters section
+                    if (showCharacters && filteredCharacters.isNotEmpty()) {
+                        if (selectedFilter == "ALL" && filteredLore.isNotEmpty()) {
+                            item(key = "header_characters") {
+                                Text(
+                                    text = "CHARACTERS (${filteredCharacters.size})",
+                                    fontFamily = FontFamily.SansSerif,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.secondary,
+                                    modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
+                                )
+                            }
+                        }
+                        items(filteredCharacters, key = { "char_${it.id}" }) { character ->
+                            val isExpanded = expandedCharacterId == character.id
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        expandedCharacterId = if (isExpanded) null else character.id
+                                    },
+                                shape = RoundedCornerShape(12.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                                )
+                            ) {
+                                Column(modifier = Modifier.padding(14.dp)) {
                                     Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.weight(1f)
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Text(
-                                            text = character.name,
-                                            fontFamily = FontFamily.Serif,
-                                            fontSize = 16.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Surface(
-                                            shape = RoundedCornerShape(6.dp),
-                                            color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f)
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.weight(1f)
                                         ) {
                                             Text(
-                                                text = character.role,
-                                                fontFamily = FontFamily.SansSerif,
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Medium,
-                                                color = MaterialTheme.colorScheme.secondary,
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                text = character.name,
+                                                fontFamily = FontFamily.Serif,
+                                                fontSize = 16.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Surface(
+                                                shape = RoundedCornerShape(6.dp),
+                                                color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f)
+                                            ) {
+                                                Text(
+                                                    text = character.role,
+                                                    fontFamily = FontFamily.SansSerif,
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Medium,
+                                                    color = MaterialTheme.colorScheme.secondary,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+
+                                        IconButton(
+                                            onClick = { repository.deleteCharacter(character.id, book.id) },
+                                            modifier = Modifier.size(24.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.DeleteOutline,
+                                                contentDescription = "Delete",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                                modifier = Modifier.size(16.dp)
                                             )
                                         }
                                     }
 
-                                    IconButton(
-                                        onClick = { repository.deleteCharacter(character.id, book.id) },
-                                        modifier = Modifier.size(24.dp)
-                                    ) {
-                                        Icon(
-                                            Icons.Default.DeleteOutline,
-                                            contentDescription = "Delete",
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                                            modifier = Modifier.size(16.dp)
+                                    if (character.aliases.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = "Also known as: ${character.aliases.joinToString(", ")}",
+                                            fontFamily = FontFamily.SansSerif,
+                                            fontSize = 11.sp,
+                                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
                                         )
                                     }
-                                }
 
-                                if (character.firstAppearanceChapter.isNotBlank()) {
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Text(
-                                        text = "Introduced: ${character.firstAppearanceChapter}",
-                                        fontFamily = FontFamily.SansSerif,
-                                        fontSize = 11.5.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
-                                    )
-                                }
-
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Text(
-                                    text = character.summary,
-                                    fontFamily = FontFamily.SansSerif,
-                                    fontSize = 13.sp,
-                                    lineHeight = 18.sp,
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.9f)
-                                )
-
-                                AnimatedVisibility(visible = isExpanded && character.keyEvents.isNotBlank()) {
-                                    Column(modifier = Modifier.padding(top = 10.dp)) {
-                                        HorizontalDivider(
-                                            modifier = Modifier.padding(vertical = 6.dp),
-                                            thickness = 0.5.dp,
-                                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
-                                        )
-                                        Text(
-                                            text = "Key Events & Timeline:",
-                                            fontFamily = FontFamily.SansSerif,
-                                            fontWeight = FontWeight.SemiBold,
-                                            fontSize = 12.sp,
-                                            color = MaterialTheme.colorScheme.secondary
-                                        )
+                                    if (character.firstAppearanceChapter.isNotBlank()) {
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
-                                            text = character.keyEvents,
+                                            text = "Introduced: ${character.firstAppearanceChapter}",
                                             fontFamily = FontFamily.SansSerif,
-                                            fontSize = 12.5.sp,
-                                            lineHeight = 17.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            fontSize = 11.5.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
                                         )
+                                    }
+
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = character.summary,
+                                        fontFamily = FontFamily.SansSerif,
+                                        fontSize = 13.sp,
+                                        lineHeight = 18.sp,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.9f)
+                                    )
+
+                                    AnimatedVisibility(visible = isExpanded && character.keyEvents.isNotBlank()) {
+                                        Column(modifier = Modifier.padding(top = 10.dp)) {
+                                            HorizontalDivider(
+                                                modifier = Modifier.padding(vertical = 6.dp),
+                                                thickness = 0.5.dp,
+                                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                                            )
+                                            Text(
+                                                text = "Key Events & Timeline:",
+                                                fontFamily = FontFamily.SansSerif,
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontSize = 12.sp,
+                                                color = MaterialTheme.colorScheme.secondary
+                                            )
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                text = character.keyEvents,
+                                                fontFamily = FontFamily.SansSerif,
+                                                fontSize = 12.5.sp,
+                                                lineHeight = 17.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Lore section
+                    if (showLore && filteredLore.isNotEmpty()) {
+                        if (selectedFilter == "ALL" && filteredCharacters.isNotEmpty()) {
+                            item(key = "header_lore") {
+                                Text(
+                                    text = "WORLD LORE & CONCEPTS (${filteredLore.size})",
+                                    fontFamily = FontFamily.SansSerif,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.tertiary,
+                                    modifier = Modifier.padding(top = 8.dp, bottom = 2.dp)
+                                )
+                            }
+                        }
+                        items(filteredLore, key = { "lore_${it.id}" }) { lore ->
+                            val isExpanded = expandedLoreId == lore.id
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        expandedLoreId = if (isExpanded) null else lore.id
+                                    },
+                                shape = RoundedCornerShape(12.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                                )
+                            ) {
+                                Column(modifier = Modifier.padding(14.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Text(
+                                                text = lore.title,
+                                                fontFamily = FontFamily.Serif,
+                                                fontSize = 16.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Surface(
+                                                shape = RoundedCornerShape(6.dp),
+                                                color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.15f)
+                                            ) {
+                                                Text(
+                                                    text = lore.category.uppercase(),
+                                                    fontFamily = FontFamily.SansSerif,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = MaterialTheme.colorScheme.tertiary,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+
+                                        IconButton(
+                                            onClick = { repository.deleteLore(lore.id, book.id) },
+                                            modifier = Modifier.size(24.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.DeleteOutline,
+                                                contentDescription = "Delete",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+
+                                    if (lore.firstAppearanceChapter.isNotBlank()) {
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = "Appears in: ${lore.firstAppearanceChapter}",
+                                            fontFamily = FontFamily.SansSerif,
+                                            fontSize = 11.5.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                                        )
+                                    }
+
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = lore.description,
+                                        fontFamily = FontFamily.SansSerif,
+                                        fontSize = 13.sp,
+                                        lineHeight = 18.sp,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.9f)
+                                    )
+
+                                    AnimatedVisibility(visible = isExpanded && lore.keyFacts.isNotEmpty()) {
+                                        Column(modifier = Modifier.padding(top = 10.dp)) {
+                                            HorizontalDivider(
+                                                modifier = Modifier.padding(vertical = 6.dp),
+                                                thickness = 0.5.dp,
+                                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                                            )
+                                            Text(
+                                                text = "Key Facts:",
+                                                fontFamily = FontFamily.SansSerif,
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontSize = 12.sp,
+                                                color = MaterialTheme.colorScheme.tertiary
+                                            )
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            lore.keyFacts.split("•", "\n", ",")
+                                                .map { it.trim() }
+                                                .filter { it.isNotBlank() }
+                                                .forEach { fact ->
+                                                    Row(
+                                                        modifier = Modifier.padding(vertical = 2.dp),
+                                                        verticalAlignment = Alignment.Top
+                                                    ) {
+                                                        Text("• ", fontSize = 12.sp, color = MaterialTheme.colorScheme.tertiary)
+                                                        Text(
+                                                            text = fact,
+                                                            fontFamily = FontFamily.SansSerif,
+                                                            fontSize = 12.sp,
+                                                            lineHeight = 16.sp,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                        )
+                                                    }
+                                                }
+                                        }
                                     }
                                 }
                             }
@@ -429,55 +642,102 @@ fun CharacterGuideSheet(
         }
     }
 
-    // Manual Add Dialog
+    // Manual Add Dialog (Character or Lore)
     if (showAddDialog) {
-        var name by remember { mutableStateOf("") }
-        var role by remember { mutableStateOf("") }
-        var summary by remember { mutableStateOf("") }
+        var addType by remember { mutableStateOf("CHARACTER") } // "CHARACTER" or "LORE"
+        var titleOrName by remember { mutableStateOf("") }
+        var roleOrCategory by remember { mutableStateOf("") }
+        var description by remember { mutableStateOf("") }
+        var keyFactsText by remember { mutableStateOf("") }
 
         AlertDialog(
             onDismissRequest = { showAddDialog = false },
-            title = { Text("Add Character", fontFamily = FontFamily.Serif) },
+            title = {
+                Text(
+                    text = if (addType == "CHARACTER") "Add Character" else "Add Lore Entry",
+                    fontFamily = FontFamily.Serif
+                )
+            },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Type selector
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = addType == "CHARACTER",
+                            onClick = { addType = "CHARACTER" },
+                            label = { Text("Character", fontSize = 12.sp) }
+                        )
+                        FilterChip(
+                            selected = addType == "LORE",
+                            onClick = { addType = "LORE" },
+                            label = { Text("Lore / World", fontSize = 12.sp) }
+                        )
+                    }
+
                     OutlinedTextField(
-                        value = name,
-                        onValueChange = { name = it },
-                        label = { Text("Name", maxLines = 1) },
+                        value = titleOrName,
+                        onValueChange = { titleOrName = it },
+                        label = { Text(if (addType == "CHARACTER") "Character Name" else "Lore Title / Name", maxLines = 1) },
                         singleLine = true,
                         maxLines = 1,
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
-                        value = role,
-                        onValueChange = { role = it },
-                        label = { Text("Role (e.g. Protagonist, Detective)", maxLines = 1) },
+                        value = roleOrCategory,
+                        onValueChange = { roleOrCategory = it },
+                        label = { Text(if (addType == "CHARACTER") "Role (e.g. Rebel, Officer)" else "Category (e.g. Faction, Location, Term)", maxLines = 1) },
                         singleLine = true,
                         maxLines = 1,
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
-                        value = summary,
-                        onValueChange = { summary = it },
-                        label = { Text("Description & Notes") },
-                        maxLines = 4,
+                        value = description,
+                        onValueChange = { description = it },
+                        label = { Text("Description & Nuanced Background (3-4+ sentences)") },
+                        maxLines = 5,
                         modifier = Modifier.fillMaxWidth()
                     )
+                    if (addType == "LORE") {
+                        OutlinedTextField(
+                            value = keyFactsText,
+                            onValueChange = { keyFactsText = it },
+                            label = { Text("Key Facts (comma separated)", maxLines = 1) },
+                            singleLine = true,
+                            maxLines = 1,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        if (name.isNotBlank()) {
-                            repository.saveCharacter(
-                                BookCharacter(
-                                    bookId = book.id,
-                                    name = name.trim(),
-                                    role = if (role.isNotBlank()) role.trim() else "Character",
-                                    firstAppearanceChapter = activeChapterName,
-                                    summary = summary.trim()
+                        if (titleOrName.isNotBlank()) {
+                            if (addType == "CHARACTER") {
+                                repository.saveCharacter(
+                                    BookCharacter(
+                                        bookId = book.id,
+                                        name = titleOrName.trim(),
+                                        role = if (roleOrCategory.isNotBlank()) roleOrCategory.trim() else "Character",
+                                        firstAppearanceChapter = activeChapterName,
+                                        summary = description.trim()
+                                    )
                                 )
-                            )
+                            } else {
+                                repository.saveLore(
+                                    BookLore(
+                                        bookId = book.id,
+                                        title = titleOrName.trim(),
+                                        category = if (roleOrCategory.isNotBlank()) roleOrCategory.trim() else "CONCEPT",
+                                        firstAppearanceChapter = activeChapterName,
+                                        description = description.trim(),
+                                        keyFacts = keyFactsText.trim()
+                                    )
+                                )
+                            }
                             showAddDialog = false
                         }
                     }
@@ -493,3 +753,4 @@ fun CharacterGuideSheet(
         )
     }
 }
+
