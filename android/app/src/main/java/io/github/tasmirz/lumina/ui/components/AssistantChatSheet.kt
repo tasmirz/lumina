@@ -395,11 +395,10 @@ fun AssistantChatSheet(
                     }
                 }
 
-                // Input Row: Text Field (with In-Box Mic Button) + Send / Enter Button
+                // Input Row: Searchbox Pill with In-Box Voice & Send Action
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.Bottom,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     OutlinedTextField(
                         value = inputPrompt,
@@ -413,51 +412,66 @@ fun AssistantChatSheet(
                             )
                         },
                         trailingIcon = {
-                            if (!disableStt && !disableAi) {
-                                IconButton(
-                                    onClick = {
-                                        if (isListening) {
-                                            assistantService.stopListening()
-                                            isListening = false
-                                        } else {
-                                            startVoice()
-                                        }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                modifier = Modifier.padding(end = 6.dp)
+                            ) {
+                                if (!disableStt && !disableAi) {
+                                    IconButton(
+                                        onClick = {
+                                            if (isListening) {
+                                                assistantService.stopListening()
+                                                isListening = false
+                                            } else {
+                                                startVoice()
+                                            }
+                                        },
+                                        modifier = Modifier.size(36.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = if (isListening) Icons.Default.MicOff else Icons.Default.Mic,
+                                            contentDescription = if (isListening) "Stop listening" else "Speak voice command",
+                                            tint = if (isListening) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(20.dp)
+                                        )
                                     }
+                                }
+
+                                FilledIconButton(
+                                    onClick = { sendQuery(inputPrompt) },
+                                    enabled = inputPrompt.isNotBlank() && !isQuerying,
+                                    colors = IconButtonDefaults.filledIconButtonColors(
+                                        containerColor = MaterialTheme.colorScheme.primary,
+                                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                                        disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                                    ),
+                                    modifier = Modifier.size(36.dp)
                                 ) {
-                                    Icon(
-                                        imageVector = if (isListening) Icons.Default.MicOff else Icons.Default.Mic,
-                                        contentDescription = if (isListening) "Stop listening" else "Speak voice command",
-                                        tint = if (isListening) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(20.dp)
-                                    )
+                                    if (isQuerying) {
+                                        CircularProgressIndicator(
+                                            strokeWidth = 2.dp,
+                                            modifier = Modifier.size(16.dp),
+                                            color = MaterialTheme.colorScheme.onPrimary
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Default.Send,
+                                            contentDescription = "Send question",
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
                                 }
                             }
                         },
-                        minLines = 2,
+                        minLines = 1,
                         maxLines = 3,
                         singleLine = false,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(12.dp)
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(24.dp)
                     )
-
-                    // Send / Enter Button
-                    FilledIconButton(
-                        onClick = { sendQuery(inputPrompt) },
-                        enabled = inputPrompt.isNotBlank() && !isQuerying,
-                        colors = IconButtonDefaults.filledIconButtonColors(
-                            containerColor = MaterialTheme.colorScheme.secondary
-                        ),
-                        modifier = Modifier
-                            .padding(bottom = 4.dp)
-                            .size(44.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Send,
-                            contentDescription = "Send question",
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
                 }
             }
         }

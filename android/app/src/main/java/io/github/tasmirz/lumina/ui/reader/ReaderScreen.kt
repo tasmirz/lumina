@@ -66,6 +66,8 @@ import androidx.compose.material.icons.filled.FindInPage
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import kotlin.math.roundToInt
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import kotlinx.coroutines.Dispatchers
@@ -365,6 +367,8 @@ fun ReaderScreen(
     val horizontalPadding = horizontalPaddingState?.value ?: 22
     val verticalPaddingState = repository?.verticalPadding?.collectAsState(initial = 0)
     val verticalPadding = verticalPaddingState?.value ?: 0
+    val paragraphSpacingState = repository?.paragraphSpacingMultiplier?.collectAsState(initial = 1.2f)
+    val paragraphSpacingMultiplier = paragraphSpacingState?.value ?: 1.2f
     val assistantOrbStyleState = repository?.assistantOrbStyle?.collectAsState(initial = "DOCK_DOT")
     val assistantOrbStyle = assistantOrbStyleState?.value ?: "DOCK_DOT"
     val spoilerShieldState = repository?.spoilerShield?.collectAsState(initial = true)
@@ -745,8 +749,10 @@ fun ReaderScreen(
     val gestureSingleTap by (repository?.gestureSingleTap?.collectAsState(initial = GestureAction.TOGGLE_BARS) ?: remember { mutableStateOf(GestureAction.TOGGLE_BARS) })
     val gestureTtsTap by (repository?.gestureTtsTap?.collectAsState(initial = GestureAction.TTS_READ_ALOUD) ?: remember { mutableStateOf(GestureAction.TTS_READ_ALOUD) })
 
+    val density = LocalDensity.current
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val screenHeightPx = with(density) { configuration.screenHeightDp.dp.toPx() }
     val isStrictPaged = readingMode == ReadingMode.PAGED
     val isPagedReading = readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL
     var showCharacterGuideSheet by rememberSaveable { mutableStateOf(false) }
@@ -757,8 +763,8 @@ fun ReaderScreen(
     val cutoutStart = cutoutPaddingValues.calculateStartPadding(layoutDirection)
     val cutoutEnd = cutoutPaddingValues.calculateEndPadding(layoutDirection)
 
-    val landscapeSidePaddingStart = maxOf((horizontalPadding * 1.5f).dp.coerceAtLeast(40.dp), cutoutStart + 16.dp)
-    val landscapeSidePaddingEnd = maxOf((horizontalPadding * 1.5f).dp.coerceAtLeast(40.dp), cutoutEnd + 16.dp)
+    val landscapeSidePaddingStart = maxOf((horizontalPadding * 1.8f).dp.coerceAtLeast(56.dp), cutoutStart + 20.dp)
+    val landscapeSidePaddingEnd = maxOf((horizontalPadding * 1.8f).dp.coerceAtLeast(56.dp), cutoutEnd + 20.dp)
 
     val effectiveStartPadding = if (isLandscape) landscapeSidePaddingStart else horizontalPadding.dp
     val effectiveEndPadding = if (isLandscape) landscapeSidePaddingEnd else horizontalPadding.dp
@@ -902,8 +908,8 @@ fun ReaderScreen(
                                 for (i in 0 until chapIdx) {
                                     itemIdx += (book.chapters[i].paragraphs.size + 1)
                                 }
-                                itemIdx += (target.paragraphIndex + 1)
-                                listState.animateScrollToItem(itemIdx.coerceAtLeast(0))
+                                val focusOffsetPx = (screenHeightPx * 0.22f).roundToInt().coerceIn(120, 450)
+                                listState.animateScrollToItem(itemIdx.coerceAtLeast(0), scrollOffset = -focusOffsetPx)
                             }
                             Toast.makeText(context, "Jumped to scene: ${target.snippet.take(45)}...", Toast.LENGTH_SHORT).show()
                         }
@@ -1259,15 +1265,16 @@ fun ReaderScreen(
                             }
                     }
 
-                    val scrollHorizontalPadding = if (isLandscape) (horizontalPadding * 1.5f).toInt().coerceAtLeast(28) else horizontalPadding
+                    val scrollHorizontalPaddingStart = if (isLandscape) landscapeSidePaddingStart else horizontalPadding.dp
+                    val scrollHorizontalPaddingEnd = if (isLandscape) landscapeSidePaddingEnd else horizontalPadding.dp
 
                     LazyColumn(
                             state = listState,
                             contentPadding = PaddingValues(
                                 top = (76 + verticalPadding).dp,
                                 bottom = 100.dp + progressBottomInset + verticalPadding.dp,
-                                start = scrollHorizontalPadding.dp,
-                                end = scrollHorizontalPadding.dp
+                                start = scrollHorizontalPaddingStart,
+                                end = scrollHorizontalPaddingEnd
                             ),
                             modifier = Modifier.fillMaxSize()
                         ) {
@@ -1418,7 +1425,7 @@ fun ReaderScreen(
 
                                     val textLayoutRef = remember { AtomicReference<TextLayoutResult?>(null) }
 
-                                    val paraBottomSpacing = (fontSize * 0.45f).dp.coerceIn(8.dp, 16.dp)
+                                    val paraBottomSpacing = (fontSize * 0.85f * paragraphSpacingMultiplier).dp.coerceIn(8.dp, 42.dp)
                                     Column(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -1574,13 +1581,15 @@ fun ReaderScreen(
                                     } else {
                                         statusBarTopInset + 10.dp + (verticalPadding * 0.4f).dp
                                     },
-                                    bottom = if (isUiVisible) {
+                                    bottom = if (readingMode == ReadingMode.PAGED) {
+                                        progressBottomInset + 56.dp + (verticalPadding * 0.4f).dp
+                                    } else if (isUiVisible) {
                                         progressBottomInset + 48.dp + (verticalPadding * 0.4f).dp
                                     } else {
                                         progressBottomInset + 20.dp + (verticalPadding * 0.4f).dp
                                     },
-                                    start = horizontalPadding.dp,
-                                    end = horizontalPadding.dp
+                                    start = effectiveStartPadding,
+                                    end = effectiveEndPadding
                                 )
                         ) { pageIdx ->
                             val (chapTitle, content) = pages[pageIdx]
@@ -2397,6 +2406,11 @@ fun ReaderScreen(
                 orbEdgeSnap = orbEdgeSnap,
                 orbColor = orbColor,
                 orbOpacity = orbOpacity,
+                savedX = if (isLandscape) orbLandscapeX else orbPortraitX,
+                savedY = if (isLandscape) orbLandscapeY else orbPortraitY,
+                onSavePosition = { x, y, land ->
+                    repository?.saveOrbPosition(x, y, land)
+                },
                 modifier = Modifier.zIndex(150f)
             )
         }
@@ -2869,7 +2883,8 @@ fun ReaderScreen(
                         }
                         itemIdx += (match.paragraphIndex + 1)
                         coroutineScope.launch {
-                            listState.animateScrollToItem(itemIdx.coerceAtLeast(0), scrollOffset = 0)
+                            val focusOffsetPx = (screenHeightPx * 0.22f).roundToInt().coerceIn(120, 450)
+                            listState.animateScrollToItem(itemIdx.coerceAtLeast(0), scrollOffset = -focusOffsetPx)
                         }
                     } else {
                         val cleanSnippet = match.snippet.replace("...", "").trim().take(15)
@@ -2897,25 +2912,98 @@ fun ReaderScreen(
                 delay(if (inBookSearchMode == InBookSearchMode.PLAIN) 250 else 300)
                 val results = withContext(Dispatchers.IO) {
                     if (inBookSearchMode == InBookSearchMode.SEMANTIC) {
+                        val semanticStopwords = setOf(
+                            "a", "about", "above", "after", "again", "against", "all", "am", "an", "and", "any", "are",
+                            "as", "at", "be", "because", "been", "before", "being", "below", "between", "both", "but",
+                            "by", "can", "could", "did", "do", "does", "doing", "down", "during", "each", "few", "for",
+                            "from", "further", "had", "has", "have", "having", "he", "her", "here", "hers", "herself",
+                            "him", "himself", "his", "how", "i", "if", "in", "into", "is", "it", "its", "itself", "just",
+                            "me", "more", "most", "my", "myself", "no", "nor", "not", "now", "of", "off", "on", "once",
+                            "only", "or", "other", "our", "ours", "ourselves", "out", "over", "own", "same", "she", "should",
+                            "so", "some", "such", "than", "that", "the", "their", "theirs", "them", "themselves", "then",
+                            "there", "these", "they", "this", "those", "through", "to", "too", "under", "until", "up",
+                            "very", "was", "we", "were", "what", "when", "where", "which", "while", "who", "whom", "why",
+                            "with", "would", "you", "your", "yours", "yourself", "yourselves", "find", "scene", "jump",
+                            "show", "tell", "book", "chapter"
+                        )
                         val ftsResults = repository?.searchScenes(book.id, q) ?: emptyList()
-                        if (ftsResults.isNotEmpty()) {
-                            ftsResults
-                        } else {
-                            val list = mutableListOf<SceneMatch>()
-                            for ((cIdx, chap) in book.chapters.withIndex()) {
-                                for ((pIdx, para) in chap.paragraphs.withIndex()) {
-                                    if (para.contains(q, ignoreCase = true) && !para.startsWith("[IMG:")) {
-                                        val start = maxOf(0, para.indexOf(q, ignoreCase = true) - 25)
-                                        val end = minOf(para.length, start + 90)
-                                        val snippet = (if (start > 0) "..." else "") + para.substring(start, end).trim() + (if (end < para.length) "..." else "")
-                                        list.add(SceneMatch(book.id, cIdx, chap.title, pIdx, snippet))
-                                        if (list.size >= 30) break
+                        val semanticResults = mutableListOf<SceneMatch>()
+                        val seenKeys = mutableSetOf<String>()
+
+                        ftsResults.forEach {
+                            seenKeys.add("${it.chapterIndex}-${it.paragraphIndex}")
+                            semanticResults.add(it)
+                        }
+
+                        val cleanTokens = q.lowercase().split(Regex("\\W+"))
+                            .map { it.trim() }
+                            .filter { it.length >= 2 && !semanticStopwords.contains(it) }
+                        val searchTokens = if (cleanTokens.isNotEmpty()) cleanTokens else listOf(q.lowercase().trim())
+
+                        data class ScoredMatch(val match: SceneMatch, val score: Int)
+                        val scoredList = mutableListOf<ScoredMatch>()
+
+                        for ((cIdx, chap) in book.chapters.withIndex()) {
+                            val chapTitleLower = chap.title.lowercase()
+                            val chapTitleMatches = searchTokens.count { chapTitleLower.contains(it) }
+
+                            for ((pIdx, para) in chap.paragraphs.withIndex()) {
+                                val key = "$cIdx-$pIdx"
+                                if (seenKeys.contains(key) || para.startsWith("[IMG:") || para.isBlank()) continue
+
+                                val paraLower = para.lowercase()
+                                var matchedTokensCount = 0
+                                var totalTokenOccurrences = 0
+                                var firstMatchPos = -1
+
+                                for (token in searchTokens) {
+                                    val idx = paraLower.indexOf(token)
+                                    if (idx != -1) {
+                                        matchedTokensCount++
+                                        if (firstMatchPos == -1 || idx < firstMatchPos) {
+                                            firstMatchPos = idx
+                                        }
+                                        val isWordBoundary = (idx == 0 || !paraLower[idx - 1].isLetterOrDigit())
+                                        if (isWordBoundary) totalTokenOccurrences += 2 else totalTokenOccurrences += 1
+                                    } else if (token.length >= 4) {
+                                        val stem = token.take(token.length - 2)
+                                        val stemIdx = paraLower.indexOf(stem)
+                                        if (stemIdx != -1) {
+                                            matchedTokensCount++
+                                            if (firstMatchPos == -1 || stemIdx < firstMatchPos) {
+                                                firstMatchPos = stemIdx
+                                            }
+                                            totalTokenOccurrences += 1
+                                        }
                                     }
                                 }
-                                if (list.size >= 30) break
+
+                                if (matchedTokensCount > 0) {
+                                    var score = matchedTokensCount * 40 + totalTokenOccurrences * 10 + chapTitleMatches * 25
+                                    if (matchedTokensCount == searchTokens.size) {
+                                        score += 100
+                                    }
+
+                                    val start = maxOf(0, firstMatchPos - 35)
+                                    val end = minOf(para.length, start + 110)
+                                    val snippet = (if (start > 0) "..." else "") +
+                                            para.substring(start, end).trim() +
+                                            (if (end < para.length) "..." else "")
+
+                                    scoredList.add(ScoredMatch(SceneMatch(book.id, cIdx, chap.title, pIdx, snippet), score))
+                                }
                             }
-                            list
                         }
+
+                        scoredList.sortByDescending { it.score }
+                        for (item in scoredList) {
+                            if (semanticResults.size >= 35) break
+                            val key = "${item.match.chapterIndex}-${item.match.paragraphIndex}"
+                            if (seenKeys.add(key)) {
+                                semanticResults.add(item.match)
+                            }
+                        }
+                        semanticResults
                     } else {
                         val list = mutableListOf<SceneMatch>()
                         for ((cIdx, chap) in book.chapters.withIndex()) {
@@ -2936,7 +3024,7 @@ fun ReaderScreen(
                 inBookSearchResults = results
                 inBookCurrentMatchIndex = 0
                 isSearchingInBook = false
-                if (results.isNotEmpty() && inBookSearchMode == InBookSearchMode.PLAIN) {
+                if (results.isNotEmpty()) {
                     jumpToMatch(results[0])
                 }
             }

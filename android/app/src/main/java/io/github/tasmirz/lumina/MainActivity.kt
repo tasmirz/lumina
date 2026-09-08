@@ -143,6 +143,7 @@ class MainActivity : ComponentActivity() {
             val fontSize by bookRepository.fontSize.collectAsStateWithLifecycle()
             val typeface by bookRepository.typefaceMode.collectAsStateWithLifecycle()
             val lineHeight by bookRepository.lineHeightMultiplier.collectAsStateWithLifecycle()
+            val paragraphSpacing by bookRepository.paragraphSpacingMultiplier.collectAsStateWithLifecycle()
             val showFloatingAssistant by bookRepository.showFloatingAssistant.collectAsStateWithLifecycle()
             val orbSize by bookRepository.orbSize.collectAsStateWithLifecycle()
             val orbMenuSize by bookRepository.orbMenuSize.collectAsStateWithLifecycle()
@@ -508,6 +509,8 @@ class MainActivity : ComponentActivity() {
                                 onOrbColorChange = { bookRepository.setOrbColor(it) },
                                 readingMode = readingMode,
                                 onReadingModeChange = { bookRepository.setReadingMode(it) },
+                                paragraphSpacing = paragraphSpacing,
+                                onParagraphSpacingChange = { bookRepository.setParagraphSpacing(it) },
                                 onOpenAdvancedSettings = { showAdvancedSettingsScreen = true },
                                 onDismiss = { showAppearanceSheet = false }
                             )

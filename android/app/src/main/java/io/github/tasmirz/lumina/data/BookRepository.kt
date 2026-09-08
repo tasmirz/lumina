@@ -95,6 +95,9 @@ class BookRepository(private val context: Context) {
     private val _lineHeightMultiplier = MutableStateFlow(prefs.getFloat("line_height", 1.68f))
     val lineHeightMultiplier: StateFlow<Float> = _lineHeightMultiplier.asStateFlow()
 
+    private val _paragraphSpacingMultiplier = MutableStateFlow(prefs.getFloat("paragraph_spacing", 1.2f))
+    val paragraphSpacingMultiplier: StateFlow<Float> = _paragraphSpacingMultiplier.asStateFlow()
+
     private val _showFloatingAssistant = MutableStateFlow(prefs.getBoolean("show_floating_assistant", true))
     val showFloatingAssistant: StateFlow<Boolean> = _showFloatingAssistant.asStateFlow()
 
@@ -267,21 +270,25 @@ class BookRepository(private val context: Context) {
     fun setGestureDoubleTap(action: GestureAction) {
         _gestureDoubleTap.value = action
         prefs.edit().putString("gesture_double_tap", action.name).apply()
+        persistSettingToDb("gesture_double_tap", action.name)
     }
 
     fun setGestureTripleTap(action: GestureAction) {
         _gestureTripleTap.value = action
         prefs.edit().putString("gesture_triple_tap", action.name).apply()
+        persistSettingToDb("gesture_triple_tap", action.name)
     }
 
     fun setGestureSingleTap(action: GestureAction) {
         _gestureSingleTap.value = action
         prefs.edit().putString("gesture_single_tap", action.name).apply()
+        persistSettingToDb("gesture_single_tap", action.name)
     }
 
     fun setGestureTtsTap(action: GestureAction) {
         _gestureTtsTap.value = action
         prefs.edit().putString("gesture_tts_tap", action.name).apply()
+        persistSettingToDb("gesture_tts_tap", action.name)
     }
 
     fun setCustomThemeColors(bg: Long, text: Long, accent: Long) {
@@ -293,41 +300,51 @@ class BookRepository(private val context: Context) {
             .putLong("custom_text_color", text)
             .putLong("custom_accent_color", accent)
             .apply()
+        persistSettingToDb("custom_bg_color", bg.toString())
+        persistSettingToDb("custom_text_color", text.toString())
+        persistSettingToDb("custom_accent_color", accent.toString())
     }
 
     fun setHorizontalPadding(padding: Int) {
         _horizontalPadding.value = padding
         prefs.edit().putInt("horizontal_padding", padding).apply()
+        persistSettingToDb("horizontal_padding", padding.toString())
     }
 
     fun setVerticalPadding(padding: Int) {
         _verticalPadding.value = padding
         prefs.edit().putInt("vertical_padding", padding).apply()
+        persistSettingToDb("vertical_padding", padding.toString())
     }
 
     fun setAssistantOrbStyle(style: String) {
         _assistantOrbStyle.value = style
         prefs.edit().putString("assistant_orb_style", style).apply()
+        persistSettingToDb("assistant_orb_style", style)
     }
 
     fun setSpoilerShield(enabled: Boolean) {
         _spoilerShield.value = enabled
         prefs.edit().putBoolean("spoiler_shield", enabled).apply()
+        persistSettingToDb("spoiler_shield", enabled.toString())
     }
 
     fun setAutoScrollSpeed(speed: Float) {
         _autoScrollSpeed.value = speed
         prefs.edit().putFloat("auto_scroll_speed", speed).apply()
+        persistSettingToDb("auto_scroll_speed", speed.toString())
     }
 
     fun setDisableAi(disabled: Boolean) {
         _disableAi.value = disabled
         prefs.edit().putBoolean("disable_ai", disabled).apply()
+        persistSettingToDb("disable_ai", disabled.toString())
     }
 
     fun setDisableTts(disabled: Boolean) {
         _disableTts.value = disabled
         prefs.edit().putBoolean("disable_tts", disabled).apply()
+        persistSettingToDb("disable_tts", disabled.toString())
     }
 
     fun exportUnifiedBackupJson(): String {
@@ -343,6 +360,7 @@ class BookRepository(private val context: Context) {
         settings.put("theme_variant", _themeVariant.value.name)
         settings.put("typeface_mode", _typefaceMode.value.name)
         settings.put("line_height", _lineHeightMultiplier.value.toDouble())
+        settings.put("paragraph_spacing", _paragraphSpacingMultiplier.value.toDouble())
         settings.put("letter_spacing", _letterSpacing.value.toDouble())
         settings.put("text_alignment_mode", _textAlignmentMode.value.name)
         settings.put("horizontal_padding", _horizontalPadding.value)
@@ -446,6 +464,7 @@ class BookRepository(private val context: Context) {
                     try { setTypefaceMode(TypefaceMode.valueOf(s.getString("typeface_mode"))) } catch (_: Exception) {}
                 }
                 if (s.has("line_height")) setLineHeight(s.getDouble("line_height").toFloat())
+                if (s.has("paragraph_spacing")) setParagraphSpacing(s.getDouble("paragraph_spacing").toFloat())
                 if (s.has("letter_spacing")) setLetterSpacing(s.getDouble("letter_spacing").toFloat())
                 if (s.has("text_alignment_mode")) {
                     try { setTextAlignmentMode(TextAlignmentMode.valueOf(s.getString("text_alignment_mode"))) } catch (_: Exception) {}
@@ -645,11 +664,13 @@ class BookRepository(private val context: Context) {
     fun setDisableStt(disabled: Boolean) {
         _disableStt.value = disabled
         prefs.edit().putBoolean("disable_stt", disabled).apply()
+        persistSettingToDb("disable_stt", disabled.toString())
     }
 
     fun setEnableFtsIndexing(enabled: Boolean) {
         _enableFtsIndexing.value = enabled
         prefs.edit().putBoolean("enable_fts_indexing", enabled).apply()
+        persistSettingToDb("enable_fts_indexing", enabled.toString())
     }
 
     fun clearFtsIndex() {
@@ -750,6 +771,7 @@ class BookRepository(private val context: Context) {
         }
         _quickThemes.value = current
         prefs.edit().putStringSet("quick_themes", current.map { it.name }.toSet()).apply()
+        persistSettingToDb("quick_themes", current.joinToString(",") { it.name })
     }
 
     fun toggleQuickFont(font: TypefaceMode) {
@@ -761,6 +783,7 @@ class BookRepository(private val context: Context) {
         }
         _quickFonts.value = current
         prefs.edit().putStringSet("quick_fonts", current.map { it.name }.toSet()).apply()
+        persistSettingToDb("quick_fonts", current.joinToString(",") { it.name })
     }
 
     fun reorderOrbAction(fromIndex: Int, toIndex: Int) {
@@ -771,6 +794,7 @@ class BookRepository(private val context: Context) {
             list.add(toIndex, item)
             _orbActionOrder.value = list
             prefs.edit().putString("orb_action_order", list.joinToString(",") { it.name }).apply()
+            persistSettingToDb("orb_action_order", list.joinToString(",") { it.name })
         }
     }
 
@@ -853,16 +877,19 @@ class BookRepository(private val context: Context) {
     fun setFontSize(size: Int) {
         _fontSize.value = size
         prefs.edit().putInt("font_size", size).apply()
+        persistSettingToDb("font_size", size.toString())
     }
 
     fun setReadingMode(mode: ReadingMode) {
         _readingMode.value = mode
         prefs.edit().putString("reading_mode", mode.name).apply()
+        persistSettingToDb("reading_mode", mode.name)
     }
 
     fun setThemeMode(theme: ThemeMode) {
         _themeMode.value = theme
         prefs.edit().putString("theme_mode", theme.name).apply()
+        persistSettingToDb("theme_mode", theme.name)
         when (theme) {
             ThemeMode.WARM_PAPER -> {
                 setThemeFamily(ThemeFamily.PAPER)
@@ -882,26 +909,31 @@ class BookRepository(private val context: Context) {
     fun setThemeFamily(family: ThemeFamily) {
         _themeFamily.value = family
         prefs.edit().putString("theme_family", family.name).apply()
+        persistSettingToDb("theme_family", family.name)
     }
 
     fun setThemeVariant(variant: ThemeVariant) {
         _themeVariant.value = variant
         prefs.edit().putString("theme_variant", variant.name).apply()
+        persistSettingToDb("theme_variant", variant.name)
     }
 
     fun setBackgroundTexture(texture: BackgroundTexture) {
         _backgroundTexture.value = texture
         prefs.edit().putString("background_texture", texture.name).apply()
+        persistSettingToDb("background_texture", texture.name)
     }
 
     fun setCustomBgUri(uri: String) {
         _customBgUri.value = uri
         prefs.edit().putString("custom_bg_uri", uri).apply()
+        persistSettingToDb("custom_bg_uri", uri)
     }
 
     fun setOrbActionItems(items: Set<OrbActionItem>) {
         _orbActionItems.value = items
         prefs.edit().putStringSet("orb_action_items", items.map { it.name }.toSet()).apply()
+        persistSettingToDb("orb_action_items", items.joinToString(",") { it.name })
     }
 
     fun toggleOrbActionItem(item: OrbActionItem) {
@@ -917,26 +949,37 @@ class BookRepository(private val context: Context) {
     fun setTextAlignmentMode(alignment: TextAlignmentMode) {
         _textAlignmentMode.value = alignment
         prefs.edit().putString("text_alignment_mode", alignment.name).apply()
+        persistSettingToDb("text_alignment_mode", alignment.name)
     }
 
     fun setLetterSpacing(spacing: Float) {
         _letterSpacing.value = spacing
         prefs.edit().putFloat("letter_spacing", spacing).apply()
+        persistSettingToDb("letter_spacing", spacing.toString())
     }
 
     fun setTypefaceMode(typeface: TypefaceMode) {
         _typefaceMode.value = typeface
         prefs.edit().putString("typeface_mode", typeface.name).apply()
+        persistSettingToDb("typeface_mode", typeface.name)
     }
 
     fun setLineHeight(multiplier: Float) {
         _lineHeightMultiplier.value = multiplier
         prefs.edit().putFloat("line_height", multiplier).apply()
+        persistSettingToDb("line_height", multiplier.toString())
+    }
+
+    fun setParagraphSpacing(multiplier: Float) {
+        _paragraphSpacingMultiplier.value = multiplier
+        prefs.edit().putFloat("paragraph_spacing", multiplier).apply()
+        persistSettingToDb("paragraph_spacing", multiplier.toString())
     }
 
     fun setShowFloatingAssistant(show: Boolean) {
         _showFloatingAssistant.value = show
         prefs.edit().putBoolean("show_floating_assistant", show).apply()
+        persistSettingToDb("show_floating_assistant", show.toString())
     }
 
     fun setOrbSize(size: OrbSize) {
@@ -954,6 +997,7 @@ class BookRepository(private val context: Context) {
     fun setOrbEdgeSnap(snap: Boolean) {
         _orbEdgeSnap.value = snap
         prefs.edit().putBoolean("orb_edge_snap", snap).apply()
+        persistSettingToDb("orb_edge_snap", snap.toString())
     }
 
     fun saveOrbPosition(x: Float, y: Float, isLandscape: Boolean) {
@@ -961,21 +1005,27 @@ class BookRepository(private val context: Context) {
             _orbLandscapeX.value = x
             _orbLandscapeY.value = y
             prefs.edit().putFloat("orb_pos_x_landscape", x).putFloat("orb_pos_y_landscape", y).apply()
+            persistSettingToDb("orb_pos_x_landscape", x.toString())
+            persistSettingToDb("orb_pos_y_landscape", y.toString())
         } else {
             _orbPortraitX.value = x
             _orbPortraitY.value = y
             prefs.edit().putFloat("orb_pos_x_portrait", x).putFloat("orb_pos_y_portrait", y).apply()
+            persistSettingToDb("orb_pos_x_portrait", x.toString())
+            persistSettingToDb("orb_pos_y_portrait", y.toString())
         }
     }
 
     fun setOrbColor(color: OrbColor) {
         _orbColor.value = color
         prefs.edit().putString("orb_color", color.name).apply()
+        persistSettingToDb("orb_color", color.name)
     }
 
     fun setOrbOpacity(opacity: Float) {
         _orbOpacity.value = opacity
         prefs.edit().putFloat("orb_opacity", opacity).apply()
+        persistSettingToDb("orb_opacity", opacity.toString())
     }
 
     fun setGeminiApiKey(key: String) {
@@ -1261,6 +1311,7 @@ class BookRepository(private val context: Context) {
                 try { _typefaceMode.value = TypefaceMode.valueOf(it) } catch (_: Exception) {}
             }
             dbSettings["line_height"]?.toFloatOrNull()?.let { _lineHeightMultiplier.value = it }
+            dbSettings["paragraph_spacing"]?.toFloatOrNull()?.let { _paragraphSpacingMultiplier.value = it }
             dbSettings["letter_spacing"]?.toFloatOrNull()?.let { _letterSpacing.value = it }
             dbSettings["show_floating_assistant"]?.toBooleanStrictOrNull()?.let { _showFloatingAssistant.value = it }
             dbSettings["orb_size"]?.let {
@@ -1274,6 +1325,10 @@ class BookRepository(private val context: Context) {
                 try { _orbColor.value = OrbColor.valueOf(it) } catch (_: Exception) {}
             }
             dbSettings["orb_opacity"]?.toFloatOrNull()?.let { _orbOpacity.value = it }
+            dbSettings["orb_pos_x_portrait"]?.toFloatOrNull()?.let { _orbPortraitX.value = it }
+            dbSettings["orb_pos_y_portrait"]?.toFloatOrNull()?.let { _orbPortraitY.value = it }
+            dbSettings["orb_pos_x_landscape"]?.toFloatOrNull()?.let { _orbLandscapeX.value = it }
+            dbSettings["orb_pos_y_landscape"]?.toFloatOrNull()?.let { _orbLandscapeY.value = it }
             dbSettings["theme_family"]?.let {
                 try { _themeFamily.value = ThemeFamily.valueOf(it) } catch (_: Exception) {}
             }
@@ -1294,6 +1349,35 @@ class BookRepository(private val context: Context) {
             dbSettings["auto_scroll_speed"]?.toFloatOrNull()?.let { _autoScrollSpeed.value = it }
             dbSettings["disable_ai"]?.toBooleanStrictOrNull()?.let { _disableAi.value = it }
             dbSettings["disable_tts"]?.toBooleanStrictOrNull()?.let { _disableTts.value = it }
+            dbSettings["disable_stt"]?.toBooleanStrictOrNull()?.let { _disableStt.value = it }
+            dbSettings["enable_fts_indexing"]?.toBooleanStrictOrNull()?.let { _enableFtsIndexing.value = it }
+            dbSettings["gesture_double_tap"]?.let {
+                try { _gestureDoubleTap.value = GestureAction.valueOf(it) } catch (_: Exception) {}
+            }
+            dbSettings["gesture_triple_tap"]?.let {
+                try { _gestureTripleTap.value = GestureAction.valueOf(it) } catch (_: Exception) {}
+            }
+            dbSettings["gesture_single_tap"]?.let {
+                try { _gestureSingleTap.value = GestureAction.valueOf(it) } catch (_: Exception) {}
+            }
+            dbSettings["gesture_tts_tap"]?.let {
+                try { _gestureTtsTap.value = GestureAction.valueOf(it) } catch (_: Exception) {}
+            }
+            dbSettings["custom_bg_color"]?.toLongOrNull()?.let { _customBgColor.value = it }
+            dbSettings["custom_text_color"]?.toLongOrNull()?.let { _customTextColor.value = it }
+            dbSettings["custom_accent_color"]?.toLongOrNull()?.let { _customAccentColor.value = it }
+            dbSettings["orb_action_items"]?.split(",")?.mapNotNull { name ->
+                try { OrbActionItem.valueOf(name.trim()) } catch (_: Exception) { null }
+            }?.takeIf { it.isNotEmpty() }?.toSet()?.let { _orbActionItems.value = it }
+            dbSettings["orb_action_order"]?.split(",")?.mapNotNull { name ->
+                try { OrbActionItem.valueOf(name.trim()) } catch (_: Exception) { null }
+            }?.takeIf { it.isNotEmpty() }?.let { _orbActionOrder.value = it }
+            dbSettings["quick_themes"]?.split(",")?.mapNotNull { name ->
+                try { ThemeFamily.valueOf(name.trim()) } catch (_: Exception) { null }
+            }?.takeIf { it.isNotEmpty() }?.toSet()?.let { _quickThemes.value = it }
+            dbSettings["quick_fonts"]?.split(",")?.mapNotNull { name ->
+                try { TypefaceMode.valueOf(name.trim()) } catch (_: Exception) { null }
+            }?.takeIf { it.isNotEmpty() }?.toSet()?.let { _quickFonts.value = it }
             dbSettings["ai_provider"]?.let {
                 try { _aiProvider.value = AiProvider.valueOf(it) } catch (_: Exception) {}
             }
@@ -1325,6 +1409,7 @@ class BookRepository(private val context: Context) {
         persistSettingToDb("theme_mode", _themeMode.value.name)
         persistSettingToDb("typeface_mode", _typefaceMode.value.name)
         persistSettingToDb("line_height", _lineHeightMultiplier.value.toString())
+        persistSettingToDb("paragraph_spacing", _paragraphSpacingMultiplier.value.toString())
         persistSettingToDb("letter_spacing", _letterSpacing.value.toString())
         persistSettingToDb("show_floating_assistant", _showFloatingAssistant.value.toString())
         persistSettingToDb("orb_size", _orbSize.value.name)
@@ -1332,6 +1417,10 @@ class BookRepository(private val context: Context) {
         persistSettingToDb("orb_edge_snap", _orbEdgeSnap.value.toString())
         persistSettingToDb("orb_color", _orbColor.value.name)
         persistSettingToDb("orb_opacity", _orbOpacity.value.toString())
+        persistSettingToDb("orb_pos_x_portrait", _orbPortraitX.value.toString())
+        persistSettingToDb("orb_pos_y_portrait", _orbPortraitY.value.toString())
+        persistSettingToDb("orb_pos_x_landscape", _orbLandscapeX.value.toString())
+        persistSettingToDb("orb_pos_y_landscape", _orbLandscapeY.value.toString())
         persistSettingToDb("theme_family", _themeFamily.value.name)
         persistSettingToDb("theme_variant", _themeVariant.value.name)
         persistSettingToDb("background_texture", _backgroundTexture.value.name)
@@ -1344,6 +1433,19 @@ class BookRepository(private val context: Context) {
         persistSettingToDb("auto_scroll_speed", _autoScrollSpeed.value.toString())
         persistSettingToDb("disable_ai", _disableAi.value.toString())
         persistSettingToDb("disable_tts", _disableTts.value.toString())
+        persistSettingToDb("disable_stt", _disableStt.value.toString())
+        persistSettingToDb("enable_fts_indexing", _enableFtsIndexing.value.toString())
+        persistSettingToDb("gesture_double_tap", _gestureDoubleTap.value.name)
+        persistSettingToDb("gesture_triple_tap", _gestureTripleTap.value.name)
+        persistSettingToDb("gesture_single_tap", _gestureSingleTap.value.name)
+        persistSettingToDb("gesture_tts_tap", _gestureTtsTap.value.name)
+        persistSettingToDb("custom_bg_color", _customBgColor.value.toString())
+        persistSettingToDb("custom_text_color", _customTextColor.value.toString())
+        persistSettingToDb("custom_accent_color", _customAccentColor.value.toString())
+        persistSettingToDb("orb_action_items", _orbActionItems.value.joinToString(",") { it.name })
+        persistSettingToDb("orb_action_order", _orbActionOrder.value.joinToString(",") { it.name })
+        persistSettingToDb("quick_themes", _quickThemes.value.joinToString(",") { it.name })
+        persistSettingToDb("quick_fonts", _quickFonts.value.joinToString(",") { it.name })
         persistSettingToDb("ai_provider", _aiProvider.value.name)
         persistSettingToDb("ai_model", _aiModel.value)
         persistSettingToDb("ai_base_url", _aiBaseUrl.value)

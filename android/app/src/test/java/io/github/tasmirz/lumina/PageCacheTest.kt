@@ -173,4 +173,85 @@ class PageCacheTest {
         assertEquals("Paged scroll should keep whole paragraph intact on 1 page", 1, scrollPages.size)
         assertTrue(scrollPages[0].second.contains("sentence number 12"))
     }
+
+    @Test
+    fun testStrictPagedBreaksAndContinuesAcrossPages() {
+        val para1 = "Short opening paragraph with seventy characters of prose here."
+        val para2 = (1..6).joinToString(" ") { i ->
+            "Sentence $i of the second paragraph describing the scene in great detail and with vivid descriptions."
+        }
+        val chapter = Chapter("Continuation Chapter", "", "4 min", listOf(para1, para2))
+
+        val pages = PageCache.getOrCompute(
+            bookId = "test_continuation",
+            chapters = listOf(chapter),
+            fontSize = 18,
+            isStrictPaged = true
+        )
+
+        // Must produce at least 2 pages
+        assertTrue("Expected at least 2 pages, got: ${pages.size}", pages.size >= 2)
+
+        // Page 1 must contain opening paragraph AND the first portion of paragraph 2
+        val page1 = pages[0].second
+        assertTrue("Page 1 must contain opening paragraph", page1.contains(para1))
+        assertTrue("Page 1 must contain start of second paragraph", page1.contains("Sentence 1 of the second paragraph"))
+
+        // Page 2 must continue paragraph 2 seamlessly without restarting paragraph 1
+        val page2 = pages[1].second
+        assertFalse("Page 2 must not repeat opening paragraph", page2.contains(para1))
+        assertTrue("Page 2 must continue paragraph 2", page2.contains("Sentence 6 of the second paragraph"))
+    }
+
+    @Test
+    fun testStrictPagedPreventsCutoffOnChapterStartPage() {
+        // Simulates cutoff.png: Chapter header + 2 medium paragraphs + 3 slogan lines
+        val para1 = "But it was no use, he could not remember: nothing remained of his childhood except a series of bright-lit tableaux occurring against no background and mostly unintelligible."
+        val para2 = "The Ministry of Truth—Minitrue, in Newspeak [Newspeak was the official language of Oceania. For an account of its structure and etymology see Appendix.]—was startlingly different from any other object in sight. It was an enormous pyramidal structure of glittering white concrete, soaring up, terrace after terrace, 300 metres into the air. From where Winston stood it was just possible to read, picked out on its white face in elegant lettering, the three slogans of the Party:"
+        val slogan1 = "WAR IS PEACE"
+        val slogan2 = "FREEDOM IS SLAVERY"
+        val slogan3 = "IGNORANCE IS STRENGTH"
+
+        val chapter = Chapter("Nineteen Eighty-Four", "Chapter 1", "10 min", listOf(para1, para2, slogan1, slogan2, slogan3))
+
+        val pages = PageCache.getOrCompute(
+            bookId = "test_cutoff_prevention",
+            chapters = listOf(chapter),
+            fontSize = 18,
+            isStrictPaged = true
+        )
+
+        // Slogans must not all be crammed into page 1 causing overflow; they should be on subsequent page(s)
+        assertTrue("Must break across at least 2 pages", pages.size >= 2)
+        val page1 = pages[0].second
+        assertFalse(
+            "Page 1 must not cram all slogans causing bottom cutoff; IGNORANCE IS STRENGTH should move to next page",
+            page1.contains(slogan3)
+        )
+        // Verify slogan3 is present on page 2
+        assertTrue("Page 2 must contain the slogans", pages[1].second.contains(slogan3))
+    }
+
+    @Test
+    fun testStrictPagedFillsPagesWithoutPrematureHalfEmptyBreaks() {
+        // Simulates too_short.png: A paragraph of 700 chars followed by more content
+        val para1 = "The little sandy-haired woman gave a squeak of mingled fear and disgust. Goldstein was the renegade and backslider who once, long ago (how long ago, nobody quite remembered), had been one of the leading figures of the Party, almost on a level with Big Brother himself, and then had engaged in counter-revolutionary activities, had been condemned to death, and had mysteriously escaped and disappeared. The programmes of the Two Minutes Hate varied from day to day, but there was none in which Goldstein was not the principal figure. He was the primal traitor, the earliest defiler of the Party's purity. All subsequent crimes against the Party, all treacheries, acts of sabotage, heresies, deviations, sprang directly out of his teaching."
+        val para2 = "Somewhere or other he was still alive and hatching his conspiracies: perhaps somewhere beyond the sea, under the protection of his foreign paymasters, perhaps even—so it was occasionally rumoured—in some hiding-place in Oceania itself."
+
+        val chapter = Chapter("Two Minutes Hate", "", "5 min", listOf(para1, para2))
+
+        val pages = PageCache.getOrCompute(
+            bookId = "test_too_short_prevention",
+            chapters = listOf(chapter),
+            fontSize = 18,
+            isStrictPaged = true
+        )
+
+        assertTrue("Expected multiple pages", pages.size >= 2)
+        // On page 1, because para1 is ~700 chars and page 1 is a chapter header page with 13-line budget,
+        // it breaks to fill page 1 and continues onto page 2
+        val page1 = pages[0].second
+        assertTrue("Page 1 should be well filled", page1.length >= 350)
+        assertTrue("Page 2 should contain continuation or remainder", pages[1].second.contains("foreign paymasters"))
+    }
 }

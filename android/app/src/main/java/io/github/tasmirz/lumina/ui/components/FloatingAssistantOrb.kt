@@ -189,7 +189,7 @@ fun FloatingAssistantOrb(
         } else {
             offsetY = offsetY.coerceIn(minY, maxY)
             if (orbEdgeSnap) {
-                offsetX = if (offsetX < screenWidthPx / 2f) minX else maxX
+                offsetX = if (isNearLeftEdge) minX else maxX
             } else {
                 offsetX = offsetX.coerceIn(minX, maxX)
             }
@@ -366,12 +366,12 @@ fun FloatingAssistantOrb(
                     )
                 }
 
-                // 2-Ring Concentric Palette:
-                // Tier 1 (Inner): up to 3 core reading items
-                // Tier 2 (Outer): up to 6 tool items (3 + 6 = 9 items total)
-                val tier1Items = activeItems.take(minOf(3, activeItems.size))
-                val tier2Items = activeItems.drop(tier1Items.size).take(minOf(6, activeItems.size - tier1Items.size))
-                val tier3Items = activeItems.drop(tier1Items.size + tier2Items.size)
+                // Adaptive layout:
+                // If 1..5 items in total: single tier (1st layer) with custom angular span & enlarged buttons
+                // If 6..9 items in total: 2 tiers (Tier 1: 3 core items, Tier 2: 3..6 items with distinct scaling)
+                val tier1Items = if (activeItems.size <= 5) activeItems else activeItems.take(3)
+                val tier2Items = if (activeItems.size <= 5) emptyList() else activeItems.drop(3).take(minOf(6, activeItems.size - 3))
+                val tier3Items = if (activeItems.size <= 5) emptyList() else activeItems.drop(9)
 
                 val minDockXForMenu = cutoutLeftPx
                 val maxDockXForMenu = (screenWidthPx - with(density) { dockedWidthDp.toPx() } - cutoutRightPx).coerceAtLeast(minDockXForMenu)
@@ -399,12 +399,14 @@ fun FloatingAssistantOrb(
                 }
 
                 val radiusScale = 1.0f // Never shrink radius in landscape so buttons don't compress
-                val innerRadius = with(density) { (orbMenuSize.innerRadiusDp * radiusScale).dp.toPx() }
-                val middleRadius = with(density) { (orbMenuSize.outerRadiusDp * radiusScale).dp.toPx() }
-                val outerRadius = with(density) { ((orbMenuSize.outerRadiusDp + 46) * radiusScale).dp.toPx() }
+                val innerRadius = with(density) { ((orbMenuSize.innerRadiusDp + 18) * radiusScale).dp.toPx() }
+                val middleRadiusExpand = if (tier2Items.size == 6) 24 else 18
+                val middleRadius = with(density) { ((orbMenuSize.outerRadiusDp + middleRadiusExpand) * radiusScale).dp.toPx() }
+                val outerRadius = with(density) { ((orbMenuSize.outerRadiusDp + 64) * radiusScale).dp.toPx() }
 
-                val innerItemSizeDp = (orbMenuSize.itemSizeDp - 2).dp
+                val innerItemSizeDp = (orbMenuSize.itemSizeDp + 4).dp
                 val innerItemSizePx = with(density) { innerItemSizeDp.toPx() }
+                val innerIconSize = (orbMenuSize.iconSizeDp + 2).dp
                 val middleItemSizeDp = orbMenuSize.itemSizeDp.dp
                 val middleItemSizePx = with(density) { middleItemSizeDp.toPx() }
                 val outerItemSizeDp = orbMenuSize.itemSizeDp.dp
@@ -421,11 +423,13 @@ fun FloatingAssistantOrb(
                 val outerMinYBound = if (isLandscape) -with(density) { 24.dp.toPx() } else with(density) { 36.dp.toPx() }
                 val outerMaxYBound = if (isLandscape) screenHeightPx + with(density) { 24.dp.toPx() } - outerItemSizePx else screenHeightPx - outerItemSizePx - with(density) { 48.dp.toPx() }
 
-                // 1. Tier 1: Inner Ring Placement (up to 3 items)
+                // 1. Tier 1: Inner Ring Placement (1..5 items when total <= 5, or 3 items when total >= 6)
                 val innerSpanDeg = when (tier1Items.size) {
                     1 -> 0.0
                     2 -> 38.0
-                    else -> 64.0
+                    3 -> 66.0
+                    4 -> 88.0
+                    else -> 106.0
                 }
                 val innerSpanRad = Math.toRadians(innerSpanDeg)
                 val innerStep = if (tier1Items.size > 1) innerSpanRad / (tier1Items.size - 1) else 0.0
@@ -455,20 +459,20 @@ fun FloatingAssistantOrb(
                         Icon(
                             imageVector = item.icon,
                             contentDescription = item.label,
-                            modifier = Modifier.size(menuIconSize),
+                            modifier = Modifier.size(innerIconSize),
                             tint = MaterialTheme.colorScheme.primary
                         )
                     }
                 }
 
-                // 2. Tier 2: Middle Ring Placement (up to 6 items)
+                // 2. Tier 2: Middle Ring Placement (1..5 items vs 6 items have different scaling)
                 val middleSpanDeg = when (tier2Items.size) {
                     1 -> 0.0
                     2 -> 34.0
                     3 -> 56.0
                     4 -> 76.0
                     5 -> 94.0
-                    else -> 110.0
+                    else -> 118.0
                 }
                 val middleSpanRad = Math.toRadians(middleSpanDeg)
                 val middleStep = if (tier2Items.size > 1) middleSpanRad / (tier2Items.size - 1) else 0.0
@@ -581,6 +585,18 @@ fun FloatingAssistantOrb(
         val minDockY = maxOf(screenHeightPx * 0.15f, cutoutTopPx)
         val maxDockY = minOf(screenHeightPx * 0.85f - orbHeightPx, screenHeightPx - cutoutBottomPx - orbHeightPx).coerceAtLeast(minDockY)
 
+        val currentMinDockX by rememberUpdatedState(minDockX)
+        val currentMaxDockX by rememberUpdatedState(maxDockX)
+        val currentMinDockY by rememberUpdatedState(minDockY)
+        val currentMaxDockY by rememberUpdatedState(maxDockY)
+        val currentScreenWidthPx by rememberUpdatedState(screenWidthPx)
+        val currentScreenHeightPx by rememberUpdatedState(screenHeightPx)
+        val currentIsLandscape by rememberUpdatedState(isLandscape)
+        val currentOrbEdgeSnap by rememberUpdatedState(orbEdgeSnap)
+        val currentBinCenterX by rememberUpdatedState(binCenterX)
+        val currentOrbWidthPx by rememberUpdatedState(orbWidthPx)
+        val currentOrbHeightPx by rememberUpdatedState(orbHeightPx)
+
         val animatedX by animateFloatAsState(
             targetValue = if (isDragging) offsetX else (if (orbEdgeSnap) (if (isNearLeftEdge) minDockX else maxDockX) else offsetX),
             animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
@@ -635,7 +651,7 @@ fun FloatingAssistantOrb(
                         }
                     )
                 }
-                .pointerInput(Unit) {
+                .pointerInput(isLandscape, screenWidthPx, screenHeightPx) {
                     detectDragGestures(
                         onDragStart = {
                             isDragging = true
@@ -645,14 +661,14 @@ fun FloatingAssistantOrb(
                             isDragging = false
                             if (isOverBin) {
                                 onDismissOrb()
-                            } else if (orbEdgeSnap) {
-                                // Snap to nearest safe edge outside cutout
-                                offsetX = if (offsetX < screenWidthPx / 2f) minDockX else maxDockX
-                                onSavePosition(offsetX, offsetY, isLandscape)
+                            } else if (currentOrbEdgeSnap) {
+                                // Snap to nearest safe edge outside cutout in active orientation
+                                offsetX = if (offsetX < currentScreenWidthPx / 2f) currentMinDockX else currentMaxDockX
+                                onSavePosition(offsetX, offsetY, currentIsLandscape)
                             } else {
                                 // Free floating within cutout-safe bounds
-                                offsetX = offsetX.coerceIn(minDockX, maxDockX)
-                                onSavePosition(offsetX, offsetY, isLandscape)
+                                offsetX = offsetX.coerceIn(currentMinDockX, currentMaxDockX)
+                                onSavePosition(offsetX, offsetY, currentIsLandscape)
                             }
                             isOverBin = false
                         },
@@ -662,15 +678,15 @@ fun FloatingAssistantOrb(
                         },
                         onDrag = { change, dragAmount ->
                             change.consume()
-                            val newX = (offsetX + dragAmount.x).coerceIn(minDockX, maxDockX)
-                            val newY = (offsetY + dragAmount.y).coerceIn(minDockY, maxDockY)
+                            val newX = (offsetX + dragAmount.x).coerceIn(currentMinDockX, currentMaxDockX)
+                            val newY = (offsetY + dragAmount.y).coerceIn(currentMinDockY, currentMaxDockY)
                             offsetX = newX
                             offsetY = newY
 
-                            val orbCenterXPx = offsetX + orbWidthPx / 2f
-                            val orbCenterYPx = offsetY + orbHeightPx / 2f
-                            val distFromBinXPx = kotlin.math.abs(orbCenterXPx - binCenterX)
-                            val isInBottomZone = orbCenterYPx > screenHeightPx - with(density) { 150.dp.toPx() }
+                            val orbCenterXPx = offsetX + currentOrbWidthPx / 2f
+                            val orbCenterYPx = offsetY + currentOrbHeightPx / 2f
+                            val distFromBinXPx = kotlin.math.abs(orbCenterXPx - currentBinCenterX)
+                            val isInBottomZone = orbCenterYPx > currentScreenHeightPx - with(density) { 150.dp.toPx() }
                             isOverBin = isInBottomZone && distFromBinXPx < with(density) { 95.dp.toPx() }
                         }
                     )
@@ -688,10 +704,10 @@ fun FloatingAssistantOrb(
                         )
                 )
             } else {
-                // Concentric inner circle with slight size difference (36dp inside 48dp)
+                // Layer 0: Sleek inner circle with smaller icon so it never crowds or overlaps with Layer 1
                 Box(
                     modifier = Modifier
-                        .size(36.dp)
+                        .size(28.dp)
                         .clip(CircleShape)
                         .background(
                             Brush.radialGradient(
@@ -717,7 +733,7 @@ fun FloatingAssistantOrb(
                             AssistantVoiceState.IDLE -> Icons.Default.AutoAwesome
                         },
                         contentDescription = "Lumina Assistant",
-                        modifier = Modifier.size(19.dp),
+                        modifier = Modifier.size(13.5.dp),
                         tint = MaterialTheme.colorScheme.primary
                     )
                 }

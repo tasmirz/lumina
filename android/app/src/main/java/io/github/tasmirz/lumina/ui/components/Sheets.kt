@@ -497,6 +497,8 @@ fun AppearanceSheet(
     onHorizontalPaddingChange: (Int) -> Unit = {},
     verticalPadding: Int = 16,
     onVerticalPaddingChange: (Int) -> Unit = {},
+    paragraphSpacing: Float = 1.2f,
+    onParagraphSpacingChange: (Float) -> Unit = {},
     onOpenAdvancedSettings: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
@@ -732,6 +734,31 @@ fun AppearanceSheet(
             }
 
             Spacer(modifier = Modifier.height(16.dp))
+
+            // Paragraph Spacing
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Paragraph Spacing", fontFamily = FontFamily.SansSerif, fontSize = 13.sp, fontWeight = FontWeight.Normal)
+                Text(
+                    text = "${String.format("%.2f", paragraphSpacing)}x",
+                    fontFamily = FontFamily.SansSerif,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Slider(
+                value = paragraphSpacing,
+                onValueChange = onParagraphSpacingChange,
+                valueRange = 0.6f..2.4f,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(modifier = Modifier.height(14.dp))
             HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
             Spacer(modifier = Modifier.height(16.dp))
 

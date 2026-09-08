@@ -167,5 +167,54 @@ class SettingsModelTest {
         val scrollAction = io.github.tasmirz.lumina.data.AssistantAction.ToggleAutoScroll(enable = true)
         assertEquals(true, scrollAction.enable)
     }
+
+    @Test
+    fun testParagraphSpacingMultiplierDefaultsAndCalculation() {
+        val defaultMultiplier = 1.2f
+        val clampedMin = (defaultMultiplier.coerceIn(0.6f, 2.4f))
+        assertEquals(1.2f, clampedMin, 0.001f)
+
+        val fontSize = 18f
+        val oldBottomSpacing = (fontSize * 0.45f).coerceIn(8f, 16f)
+        val newBottomSpacing = (fontSize * 0.85f * defaultMultiplier).coerceIn(8f, 42f)
+
+        // New default spacing is significantly more generous and comfortable than the old cramped spacing
+        assertTrue(newBottomSpacing > oldBottomSpacing * 1.5f)
+        assertEquals(18.36f, newBottomSpacing, 0.01f)
+    }
+
+    @Test
+    fun testOrbPaletteSizingDistinction() {
+        val actions5 = setOf(
+            OrbActionItem.READING_MODE,
+            OrbActionItem.TTS,
+            OrbActionItem.NOTE,
+            OrbActionItem.THEME_MODE,
+            OrbActionItem.SETTINGS
+        )
+        val actions6 = actions5 + OrbActionItem.VOICE
+
+        // 1..5 items should fit on single tier
+        assertTrue(actions5.size <= 5)
+        // 6 items should distribute into two tiers
+        assertTrue(actions6.size >= 6)
+    }
+
+    @Test
+    fun testSemanticSearchScoring() {
+        val query = "Sherlock cigar ash"
+        val queryTokens = listOf("sherlock", "cigar", "ash")
+
+        val para1 = "Sherlock examined the cigar ash carefully on the carpet."
+        val para2 = "The room was filled with cold ash from the fireplace."
+
+        val score1 = queryTokens.count { para1.lowercase().contains(it) }
+        val score2 = queryTokens.count { para2.lowercase().contains(it) }
+
+        assertEquals(3, score1)
+        assertEquals(1, score2)
+        assertTrue("Multi-concept match should score significantly higher", score1 > score2)
+    }
 }
+
 

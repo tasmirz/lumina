@@ -144,6 +144,9 @@ fun AdvancedSettingsScreen(
     val disableAiState = repository?.disableAi?.collectAsState(initial = false)
     val disableAi = disableAiState?.value ?: false
 
+    val paragraphSpacingState = repository?.paragraphSpacingMultiplier?.collectAsState(initial = 1.2f)
+    val paragraphSpacing = paragraphSpacingState?.value ?: 1.2f
+
     val disableTtsState = repository?.disableTts?.collectAsState(initial = false)
     val disableTts = disableTtsState?.value ?: false
 
@@ -664,6 +667,25 @@ fun AdvancedSettingsScreen(
                             value = letterSpacing,
                             onValueChange = onLetterSpacingChange,
                             valueRange = 0.0f..2.5f,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Paragraph Spacing
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Paragraph Spacing", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("${String.format("%.2f", paragraphSpacing)}x", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Slider(
+                            value = paragraphSpacing,
+                            onValueChange = { repository?.setParagraphSpacing(it) },
+                            valueRange = 0.6f..2.4f,
                             modifier = Modifier.fillMaxWidth()
                         )
 
