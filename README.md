@@ -263,6 +263,8 @@ For streamlined development, a `justfile` is included at the repository root:
 
 We welcome contributions from the open-source community! Please review our [CONTRIBUTING.md](CONTRIBUTING.md) guide for details on code style, Jetpack Compose performance standards, commit formatting, and pull request procedures.
 
+> **Note**: Active development happens on the [`dev`](https://github.com/tasmirz/lumina/tree/dev) branch. Please ensure all pull requests are opened against **`dev`** (`base: dev`).
+
 ---
 
 ## 📜 License
