@@ -13,7 +13,6 @@
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.0+-purple.svg)](https://kotlinlang.org)
 [![Compose](https://img.shields.io/badge/Jetpack_Compose-Material_3-4285F4.svg)](https://developer.android.com/jetpack/compose)
 [![F-Droid](https://img.shields.io/badge/F--Droid-Compliant-3DDC84.svg)](metadata/io.github.tasmirz.lumina.yml)
-[![Offline-First](https://img.shields.io/badge/Privacy-100%25_Offline--First-success.svg)](#-privacy--offline-first-guarantee)
 
 <p align="center">
   <a href="#-download--releases"><b>Download</b></a> •
