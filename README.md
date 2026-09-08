@@ -48,6 +48,18 @@ Get the latest production-ready release of Lumina for Android:
 
 ---
 
+## 🚀 What's New in Recent Updates
+
+- **🎙️ Human-Like Edge Neural TTS**: High-definition, human-cadence text-to-speech engine powered by `EdgeTtsService`. Streams crystal-clear narration with curated natural voices (Jenny, Guy, Aria, Sonia, Christopher) over lightweight WebSockets without heavy third-party SDKs, with seamless automatic fallback to system TTS when offline.
+- **🛡️ Bulletproof Audio Concurrency & Teardown**: Introduced monotonic audio session tokens (`currentAudioSessionId`) and managed coroutine jobs that completely eliminate dual-stream audio bugs during rapid paragraph skipping. Lifecycle-aware listeners (`ON_STOP`/`ON_DESTROY`) and BackHandler integration prevent lingering "zombie" playback after dismissing the player.
+- **📖 Pure Distraction-Free Auto-Scroll**: When auto-scroll starts, all reader chrome (headers, footers, orb, docks) smoothly recedes for total visual immersion. The floating pill features minimal `11.sp` speed text (e.g. `1.0x`), and tapping the banner directly cycles through speeds (0.5x → 3.0x) without bulky buttons or toggles.
+- **📚 Instant Pronunciation & Dictionary Service**: Look up any highlighted word instantly with word definitions, phonetic pronunciations, audio pronunciation previews, part-of-speech tags, and usage examples with in-memory caching and offline fallbacks.
+- **⚙️ Centralized Reading & Audio Controls**: Dedicated "Reading Controls & Audio" hub in Advanced Settings for configuring TTS engines, voice selections, speech rate multipliers, and STT voice commands, keeping reader sheets streamlined and typography-focused.
+- **🖼️ Hardened EPUB Parser & Cover Extraction**: Tolerant manifest resolution, URL decoding, and path normalization ensuring flawless image and cover extraction across complex standard EPUBs (Standard Ebooks, Project Gutenberg).
+- **🏛️ Complete Architecture Documentation**: Comprehensive technical guides added in `docs/architecture/` covering the reader layout engine, LRU caching pipeline, SQLite FTS5 search, floating orb physics, and the design token system.
+
+---
+
 ## 🌟 Overview
 
 **Lumina** is an artisanal digital reading space designed for book lovers who value typography, fluid 60/120 FPS performance, and distraction-free immersion. 
@@ -63,7 +75,7 @@ Lumina is strictly **100% free, open source, and offline-first**—zero ads, zer
 ### 📖 Dual Reading Engines
 - **Continuous Scroll Mode**: Seamless vertical scroll across full book spine with dynamic header/footer auto-hide.
 - **Paged Horizontal Mode**: Physical-book style swipe pagination with page turn animations, notch/edge-inset safe margins, and touch-zone navigation.
-- **Hands-Free Auto-Scroll**: Double-tap to activate smooth, continuous auto-scrolling with adjustable speed controls.
+- **Distraction-Free Auto-Scroll**: Hands-free continuous vertical scrolling that automatically recedes all chrome, featuring a minimal `11.sp` capsule pill with direct tap-to-cycle speed control (0.5x to 3.0x).
 - **Interactive Scrubbing**: Bottom progress scrubber and chapter markers with instant persistent location saves.
 
 ### 🎨 Typography & Custom Themes
@@ -88,18 +100,20 @@ Lumina is strictly **100% free, open source, and offline-first**—zero ads, zer
 - **Anti-Spoiler Shield**: Context windows are strictly constrained to text up to your current reading position—guaranteeing zero future plot spoilers.
 - **Zero-Telephony Isolation**: Completely disablable via a single master switch for 100% offline isolation.
 
-### 🎧 Natural Text-to-Speech (TTS)
-- **Calibrated Cadence**: Neural voice selection tuned with a calm, natural reading pace (0.95x).
-- **Spoken Sentence Highlighting**: Dynamic visual focus tracking on currently spoken paragraphs with automatic viewport advancement.
+### 🎧 Natural & Neural Text-to-Speech (TTS)
+- **Edge Neural Voices**: High-fidelity, human-like streaming speech with natural inflection (Jenny, Guy, Aria, Sonia, Christopher) via `EdgeTtsService`.
+- **System TTS Engine**: Built-in Android `TextToSpeech` engine fallback ensuring 100% offline narration reliability.
+- **Concurrency & Lifecycle Guard**: Monotonic session tokens and hardware teardown prevent overlapping audio streams or background leaks.
+- **Spoken Paragraph Highlighting**: Dynamic visual focus tracking on active paragraphs with automatic paragraph progression.
 
-### ✍️ Precision Selection, Notes & Scholarly Citations
+### ✍️ Precision Selection, Notes, Citations & Dictionary
 - **Sub-Paragraph Selection**: Word-level and sentence-level drag handles for smooth, granular text selection.
+- **Instant Word Dictionary**: Pronunciation phonetics, audio playback, part of speech tags, and contextual definitions with offline caching.
 - **Multi-Color Highlighting**: Color-coded annotations (Gold, Rose, Sage) with personal marginalia notes.
 - **Scholarly Citation Generator**: One-tap formatted bibliographic citations (author, book title, chapter title, and timestamp).
-- **Instant Dictionary**: Built-in word definition lookups, phonetics, and offline fallback dictionaries.
 
 ### 📚 Library Management & Curated Catalogs
-- **Offline Library**: Import any DRM-free `.epub` file directly from local storage.
+- **Offline Library**: Import any DRM-free `.epub` file directly from local storage with robust cover extraction.
 - **Curated Public Catalogs**: Search and download classic public-domain literature directly from **Standard Ebooks**, **Project Gutenberg**, **Internet Archive**, and **Open Library**.
 - **Context Sheets**: Long-press any book card to inspect reading statistics, share EPUBs, reset progress, or manage storage.
 - **Unified Backup & Restore**: Export and import your entire library database, reading positions, highlights, bookmarks, notes, and custom themes into a single JSON file.
@@ -108,7 +122,7 @@ Lumina is strictly **100% free, open source, and offline-first**—zero ads, zer
 
 ## 🛠️ Architecture & Tech Stack
 
-Lumina adheres to clean architecture principles and strict Unidirectional Data Flow (UDF):
+Lumina adheres to clean architecture principles, strict Unidirectional Data Flow (UDF), and modular design:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -122,21 +136,23 @@ Lumina adheres to clean architecture principles and strict Unidirectional Data F
 └─────────────▲─────────────────────────────▲─────────────┘
               │                             │
 ┌─────────────┴─────────────┐ ┌─────────────┴─────────────┐
-│    LuminaDatabaseHelper   │ │        EpubParser         │
-│  (SQLite + FTS5 Storage)  │ │  (Streaming XML / Zip)    │
+│    LuminaDatabaseHelper   │ │  EpubParser & AudioEngine │
+│  (SQLite + FTS5 Storage)  │ │ (Streaming XML / EdgeTTS) │
 └───────────────────────────┘ └───────────────────────────┘
 ```
 
 | Layer | Technologies / Implementation |
 | :--- | :--- |
 | **Language** | Kotlin 2.0+ with Kotlin Coroutines & `StateFlow` |
-| **UI Framework** | Jetpack Compose + Material 3 (Design Tokens & Color Schemes) |
+| **UI Framework** | Jetpack Compose + Material 3 (Design Tokens & Custom Palettes) |
 | **EPUB Engine** | Zero-dependency streaming XML / XHTML ZIP parser (`EpubParser`) |
 | **Search Engine** | Android embedded SQLite **FTS5** (Full-Text Search) virtual tables |
 | **Caching Pipeline**| Two-tier LRU memory cache (`PageCache` & `AnnotatedTextCache`) |
-| **Speech / TTS** | Android `TextToSpeech` with `UtteranceProgressListener` |
+| **Audio & TTS** | Edge Neural TTS (`EdgeTtsService`) + System `TextToSpeech` with session guards |
+| **Dictionary** | In-memory cached dictionary service (`DictionaryService`) with offline fallbacks |
 | **Storage / DB** | SQLite (`LuminaDatabaseHelper`) + Private app storage (`context.filesDir/epubs/`) |
-| **Build System** | Gradle Version Catalogs (`libs.versions.toml`) |
+| **Documentation**| Modular subsystem architecture guides in [`docs/architecture/`](docs/architecture/) |
+| **Build System** | Gradle Version Catalogs (`libs.versions.toml`) + ProGuard/R8 13 MB release APK |
 
 ---
 
@@ -222,6 +238,7 @@ For streamlined development, a `justfile` is included at the repository root:
 | :--- | :--- |
 | `just build` | Assembles the debug APK |
 | `just build-release` | Assembles the signed release APK |
+| `just release` | Builds signed release APK, installs, and launches on connected device |
 | `just test` | Runs all JVM unit tests |
 | `just install` | Installs the latest debug APK onto a connected ADB device |
 | `just run` / `just launch` | Launches Lumina on the active device |
