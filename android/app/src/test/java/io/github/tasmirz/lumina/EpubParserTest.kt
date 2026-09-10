@@ -136,4 +136,20 @@ class EpubParserTest {
         println("Pride title: ${book.title}")
         assertTrue("Chapters should not be empty", book.chapters.isNotEmpty())
     }
+
+    @Test
+    fun testParseEpubFilenameResolution() {
+        val baos = ByteArrayOutputStream()
+        val zos = ZipOutputStream(baos)
+        zos.putNextEntry(ZipEntry("OEBPS/ch1.xhtml"))
+        zos.write("<html><body><p>Test paragraph content.</p></body></html>".toByteArray(Charsets.UTF_8))
+        zos.closeEntry()
+        zos.close()
+
+        val book1 = EpubParser.parseEpub(ByteArrayInputStream(baos.toByteArray()), "My_Favorite_Book.epub")
+        assertEquals("My Favorite Book", book1.title)
+
+        val book2 = EpubParser.parseEpub(ByteArrayInputStream(baos.toByteArray()), "1694380000_sample_story.epub")
+        assertEquals("Sample Story", book2.title)
+    }
 }

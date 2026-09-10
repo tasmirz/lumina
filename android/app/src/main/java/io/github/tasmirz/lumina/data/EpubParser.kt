@@ -130,7 +130,8 @@ object EpubParser {
         }
 
         if (title.isBlank() || title.startsWith("Document:", ignoreCase = true)) {
-            title = filename.removeSuffix(".epub").replace("-", " ").replace("_", " ")
+            val rawName = filename.replace(Regex("^\\d{10,14}_"), "").removeSuffix(".epub")
+            title = rawName.replace("-", " ").replace("_", " ")
                 .split(" ").filter { it.isNotBlank() }.joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
         }
         if (author.isBlank()) {

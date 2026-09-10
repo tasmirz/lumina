@@ -75,6 +75,31 @@ enum class ScreenTab {
 
 class MainActivity : ComponentActivity() {
 
+    private var pendingImportUri by mutableStateOf<Uri?>(null)
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIncomingIntent(intent)
+    }
+
+    private fun handleIncomingIntent(intent: android.content.Intent?) {
+        if (intent == null) return
+        val action = intent.action
+        val data = intent.data
+            ?: (if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(android.content.Intent.EXTRA_STREAM, Uri::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra<Uri>(android.content.Intent.EXTRA_STREAM)
+            })
+            ?: intent.clipData?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.uri
+
+        if ((android.content.Intent.ACTION_VIEW == action || android.content.Intent.ACTION_SEND == action) && data != null) {
+            pendingImportUri = data
+        }
+    }
+
     override fun onWindowStartingActionMode(callback: ActionMode.Callback?, type: Int): ActionMode? {
         if (type == ActionMode.TYPE_FLOATING) {
             // Suppress Android's floating action mode ("Copy | Select all") in favor of Lumina's SelectionMenuPill
@@ -126,6 +151,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         androidx.compose.foundation.ComposeFoundationFlags.isNewContextMenuEnabled = false
         enableEdgeToEdge()
+        handleIncomingIntent(intent)
 
         val bookRepository = BookRepository(applicationContext)
 
@@ -185,6 +211,8 @@ class MainActivity : ComponentActivity() {
             var isFullscreen by rememberSaveable { mutableStateOf(false) }
             var activeWordDefinition by remember { mutableStateOf<WordDefinition?>(null) }
 
+            val coroutineScope = rememberCoroutineScope()
+
             LaunchedEffect(currentTab) {
                 bookRepository.setLastTab(currentTab.name)
             }
@@ -199,38 +227,34 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            val coroutineScope = rememberCoroutineScope()
+            // Handle incoming EPUB intent (open from file manager, browser, share sheet)
+            LaunchedEffect(pendingImportUri) {
+                val uri = pendingImportUri
+                if (uri != null) {
+                    val importedBook = bookRepository.importEpubFromUri(uri)
+                    if (importedBook != null) {
+                        currentTab = ScreenTab.READER
+                        Toast.makeText(this@MainActivity, "Added \"${importedBook.title}\" to Library", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(this@MainActivity, "Failed to parse EPUB file", Toast.LENGTH_SHORT).show()
+                    }
+                    pendingImportUri = null
+                }
+            }
 
             // EPUB File Picker Launcher
             val epubPickerLauncher = rememberLauncherForActivityResult(
                 contract = ActivityResultContracts.GetContent()
             ) { uri: Uri? ->
                 if (uri != null) {
-                    try {
-                        val fileName = uri.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':') ?: "Imported.epub"
-                        val cleanName = if (fileName.endsWith(".epub", ignoreCase = true)) fileName else "$fileName.epub"
-                        val epubDir = File(applicationContext.filesDir, "epubs").apply { if (!exists()) mkdirs() }
-                        val destFile = File(epubDir, "${System.currentTimeMillis()}_$cleanName")
-
-                        contentResolver.openInputStream(uri)?.use { input ->
-                            destFile.outputStream().use { output ->
-                                input.copyTo(output)
-                            }
-                        }
-
-                        destFile.inputStream().use { stream ->
-                            val parsedBook = EpubParser.parseEpub(stream, cleanName, applicationContext)
-                            val bookToSave = parsedBook.copy(
-                                filePath = destFile.absolutePath,
-                                fileSize = destFile.length(),
-                                isDownloaded = false
-                            )
-                            bookRepository.addBook(bookToSave)
+                    coroutineScope.launch {
+                        val importedBook = bookRepository.importEpubFromUri(uri)
+                        if (importedBook != null) {
                             currentTab = ScreenTab.READER
-                            Toast.makeText(this, "Added \"${parsedBook.title}\" to Library", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(this@MainActivity, "Added \"${importedBook.title}\" to Library", Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(this@MainActivity, "Failed to parse EPUB file", Toast.LENGTH_SHORT).show()
                         }
-                    } catch (_: Exception) {
-                        Toast.makeText(this, "Failed to parse EPUB file", Toast.LENGTH_SHORT).show()
                     }
                 }
             }

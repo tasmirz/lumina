@@ -2,6 +2,7 @@ package io.github.tasmirz.lumina.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.net.Uri
 import io.github.tasmirz.lumina.model.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -1689,6 +1690,52 @@ class BookRepository(private val context: Context) {
         }
         setActiveBook(book.id)
         dbHelper.insertOrUpdateBook(book, book.filePath, book.isDownloaded, book.downloadUrl, book.fileSize)
+    }
+
+    suspend fun importEpubFromUri(uri: Uri): Book? = withContext(Dispatchers.IO) {
+        try {
+            var fileName: String? = null
+            if (uri.scheme == android.content.ContentResolver.SCHEME_CONTENT) {
+                context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val index = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                        if (index != -1) {
+                            fileName = cursor.getString(index)
+                        }
+                    }
+                }
+            }
+            if (fileName.isNullOrBlank()) {
+                fileName = uri.path?.substringAfterLast('/')?.substringAfterLast(':') ?: uri.lastPathSegment
+            }
+            val cleanName = if (!fileName.isNullOrBlank() && fileName.endsWith(".epub", ignoreCase = true)) {
+                fileName
+            } else {
+                "${fileName ?: "Imported"}.epub"
+            }
+            val epubDir = File(context.filesDir, "epubs").apply { if (!exists()) mkdirs() }
+            val destFile = File(epubDir, "${System.currentTimeMillis()}_$cleanName")
+
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                destFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            } ?: return@withContext null
+
+            destFile.inputStream().use { stream ->
+                val parsedBook = EpubParser.parseEpub(stream, cleanName, context)
+                val bookToSave = parsedBook.copy(
+                    filePath = destFile.absolutePath,
+                    fileSize = destFile.length(),
+                    isDownloaded = false
+                )
+                addBook(bookToSave)
+                bookToSave
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
     }
 
     fun removeBook(bookId: String) {
