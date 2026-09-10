@@ -45,8 +45,13 @@ Agents modifying this codebase MUST strictly adhere to the guidelines outlined b
         dbHelper.updateReadingPosition(...)
     }
     ```
-- **Debounced Updates**:
-  - Debounce high-frequency events (like scroll position updates) before issuing SQLite writes to prevent database lock contention.
+- **Debounced Updates & State Isolation**:
+  - Debounce high-frequency reading progress updates (e.g. 800ms) before updating `_books.value` and SQLite to prevent database lock contention and UI recomposition storms.
+  - Reader position state is streamed immediately through `_readingPosition` (`StateFlow<ReadingPosition>`), decoupled from full library updates.
+- **Asynchronous & Lazy Chapter Loading**:
+  - Chapter lists are retrieved and cached on-demand (`getChaptersForBook`, `getCachedChapters`, `prefetchChapters`).
+  - Books displayed in library screens carry lightweight metadata; full chapter content is stored in normalized SQLite table `book_chapters` and cached via `SimpleLruCache` to keep initial startup sub-100ms.
+  - When switching books or launching the reader, show an explicit loading indicator while chapters resolve asynchronously instead of presenting an empty "No Book Selected" state.
 
 ### 5. Architectural Invariants
 
@@ -61,7 +66,21 @@ The floating assistant orb has two distinct sizing configurations:
   - `SETTINGS` (Open reading controls)
 - Table of Contents (TOC) is intentionally omitted from the orb menu to keep the palette focused; TOC is accessed from reader top bars and sheets.
 
-#### B. Jetpack Compose Compiler Constraints
+#### B. Reader Architecture & Modular UI Components
+The reading screen is modularized into specialized components:
+- `ReaderTopBar`: Minimalist header with book/chapter titles, navigation, and assistant triggers.
+- `ReaderBottomDock`: Bottom navigation dock with chapter scrubbers, reading progress, and quick controls.
+- `ReaderTtsDock`: Dedicated playback controls for Text-to-Speech narration.
+- `ReaderAutoScrollPill`: Subtle floating control pill for hands-free continuous scrolling.
+- `ReaderSelectionMenu`: In-text context toolbar for highlighting, dictionary lookups, note annotations, and copy actions.
+- `InBookSearchDialog`: In-book full-text search supporting both plain substring and semantic search.
+- `BookmarkDetailModal`: Bottom sheet modal for inspecting, updating notes/colors, and deleting saved bookmarks.
+
+#### C. Progressive Pagination Precomputation
+- Reader rendering prioritizes the active chapter immediately (<100ms) while queuing background precomputation for remaining spine chapters via `Dispatchers.Default`.
+- Paginated results are cached in the SQLite `page_cache` table to guarantee instant resumption.
+
+#### D. Jetpack Compose Compiler Constraints
 - **Scope Integrity**: In `LazyListScope`, do NOT invoke `@Composable` functions (such as `remember(...)`) outside of an `item { ... }` or `items { ... }` block. Doing so causes Compose compiler errors.
 - **State Hoisting**: Hoist mutable state to coordinators or `BookRepository`. Do not manage duplicated local state across disparate composable trees.
 
@@ -76,16 +95,27 @@ The floating assistant orb has two distinct sizing configurations:
 
 | Path | Responsibility |
 | :--- | :--- |
-| `android/app/src/main/java/io/github/tasmirz/lumina/data/BookRepository.kt` | Central repository singleton managing `StateFlow` for books, settings, and bookmarks |
-| `android/app/src/main/java/io/github/tasmirz/lumina/data/db/LuminaDatabaseHelper.kt` | SQLite database manager for books, bookmarks, and settings |
+| `android/app/src/main/java/io/github/tasmirz/lumina/data/BookRepository.kt` | Central repository singleton managing `StateFlow` for books, settings, bookmarks, and caching |
+| `android/app/src/main/java/io/github/tasmirz/lumina/data/db/LuminaDatabaseHelper.kt` | SQLite database manager (`lumina_reader.db`) for books, normalized chapters, page cache, lore, and settings |
 | `android/app/src/main/java/io/github/tasmirz/lumina/data/EpubParser.kt` | Zero-dependency streaming XML/XHTML EPUB parser |
-| `android/app/src/main/java/io/github/tasmirz/lumina/util/PageCache.kt` | LRU caching system for paginated chapters and annotated text spans |
+| `android/app/src/main/java/io/github/tasmirz/lumina/data/DictionaryService.kt` | Offline/online dictionary lookup service with in-memory caching |
+| `android/app/src/main/java/io/github/tasmirz/lumina/data/AssistantService.kt` | Multi-provider AI assistant orchestration (Gemini & OpenAI-compatible) and character extraction |
+| `android/app/src/main/java/io/github/tasmirz/lumina/util/PageCache.kt` | Line-budgeted pagination engine and LRU caching for pages & chapter layouts |
 | `android/app/src/main/java/io/github/tasmirz/lumina/ui/reader/ReaderScreen.kt` | Core reader canvas (Continuous vertical scroll & Paged swipe modes) |
-| `android/app/src/main/java/io/github/tasmirz/lumina/ui/reader/FloatingAssistantOrb.kt` | Draggable floating orb, edge-snapping, radial action menu, and TTS |
+| `android/app/src/main/java/io/github/tasmirz/lumina/ui/reader/ReaderTopBar.kt` | Reader header bar with title and quick navigation |
+| `android/app/src/main/java/io/github/tasmirz/lumina/ui/reader/ReaderBottomDock.kt` | Reader footer dock with chapter scrubber, progress indicator, and controls |
+| `android/app/src/main/java/io/github/tasmirz/lumina/ui/reader/ReaderTtsDock.kt` | Floating Text-to-Speech audio narration dock |
+| `android/app/src/main/java/io/github/tasmirz/lumina/ui/reader/ReaderAutoScrollPill.kt` | Quick floating controls for auto-scroll mode |
+| `android/app/src/main/java/io/github/tasmirz/lumina/ui/reader/ReaderSelectionMenu.kt` | Highlight, note, dictionary, and copy action overlay menu |
+| `android/app/src/main/java/io/github/tasmirz/lumina/ui/reader/InBookSearchDialog.kt` | In-book search modal dialog (plain and semantic matching) |
+| `android/app/src/main/java/io/github/tasmirz/lumina/ui/reader/BookmarkDetailModal.kt` | Modal bottom sheet for viewing and editing bookmark notes/highlights |
+| `android/app/src/main/java/io/github/tasmirz/lumina/ui/reader/ReaderTextAnnotator.kt` | Text layout formatting, drop caps, bookmarks, and search highlights |
+| `android/app/src/main/java/io/github/tasmirz/lumina/ui/components/FloatingAssistantOrb.kt` | Draggable floating orb, edge-snapping, radial action menu, and speech/AI triggers |
 | `android/app/src/main/java/io/github/tasmirz/lumina/ui/library/LibraryScreen.kt` | Book gallery, sorting, import, and online public catalogs |
 | `android/app/src/main/java/io/github/tasmirz/lumina/ui/components/Sheets.kt` | Reading settings modal, Table of Contents, and Book Details sheets |
+| `android/app/src/main/java/io/github/tasmirz/lumina/ui/settings/AdvancedSettingsScreen.kt` | Comprehensive configuration hub for themes, fonts, AI, TTS, gestures, and indexing |
 | `android/app/src/main/java/io/github/tasmirz/lumina/model/Book.kt` | Domain models: `Book`, `Chapter`, `Bookmark`, `ReaderSettings`, `OrbSize`, `OrbMenuSize` |
-| `justfile` | Automation command runner (`just build`, `just test`, `just ss`, `just install`, `just run`, `just hot`, `just reload`) |
+| `justfile` | Automation command runner (`just build`, `just release`, `just test`, `just ss`, `just install`, `just run`, `just hot`, `just reload`) |
 
 ---
 
@@ -114,7 +144,7 @@ Before completing any task or signaling readiness to the user, an agent MUST exe
    - Ensure an `onUpgrade` migration path handles existing user databases gracefully.
 
 4. **Visual & UI Verification (When Device/Emulator is Connected)**:
-   - Deploy: `just install && just run`
+   - Deploy: `just install && just run` (or `just release` for release APK)
    - Capture Screenshot: `just ss <feature_name>`
    - Inspect the captured screenshot in `debug/<feature_name>.png` to verify proper spacing, contrast, alignment, and lack of visual artifacts.
 
@@ -123,7 +153,8 @@ Before completing any task or signaling readiness to the user, an agent MUST exe
 ## 🚫 Anti-Patterns to Avoid
 
 - ❌ **Do NOT use web or hybrid abstractions**: This is a pure native Kotlin + Jetpack Compose app. Do not suggest HTML, Tailwind, or WebView-based reading engines.
-- ❌ **Do NOT read entire multi-megabyte EPUBs into memory at once**: Parse chapter contents on-demand from the spine.
+- ❌ **Do NOT read entire multi-megabyte EPUBs into memory at once**: Parse chapter contents on-demand from the spine and cache through `SimpleLruCache` / `book_chapters`.
 - ❌ **Do NOT bypass `PageCache`**: Never compute line wrapping or character splits on each frame render.
 - ❌ **Do NOT mutate state directly**: Always copy data classes and update state via `BookRepository`.
 - ❌ **Do NOT ignore edge-to-edge window insets**: Always handle `WindowInsets.systemBars` or `WindowInsets.statusBars` properly so content does not collide with notches or navigation pills.
+

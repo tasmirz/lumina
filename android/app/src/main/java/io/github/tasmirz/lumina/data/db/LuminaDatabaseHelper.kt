@@ -1080,7 +1080,9 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
         fileSize: Long = book.fileSize
     ) {
         val db = writableDatabase
-        val chaptersJson = serializeChapters(book.chapters)
+        // Normalized chapters are saved in TABLE_CHAPTERS via saveChaptersForBook.
+        // We do not bloat TABLE_BOOKS with monolithic multi-megabyte JSON blobs.
+        val chaptersJson = ""
         val values = ContentValues().apply {
             put(COL_BOOK_ID, book.id)
             put(COL_BOOK_TITLE_MAIN, book.title)
@@ -1343,6 +1345,10 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
             }
         } catch (_: Exception) {}
         return list
+    }
+
+    fun getCachedChapters(bookId: String): List<Chapter>? {
+        return chaptersCache[bookId]
     }
 
     fun getChapter(bookId: String, chapterIndex: Int): Chapter? {

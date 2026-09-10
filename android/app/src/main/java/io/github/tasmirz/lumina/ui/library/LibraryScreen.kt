@@ -79,6 +79,12 @@ fun LibraryScreen(
     var bookToDelete by remember { mutableStateOf<Book?>(null) }
     var bookForContextMenu by remember { mutableStateOf<Book?>(null) }
 
+    LaunchedEffect(activeBook?.id) {
+        if (activeBook != null && activeBook.chapters.isEmpty()) {
+            repository?.prefetchChapters(activeBook.id)
+        }
+    }
+
     val filteredBooks = remember(books, searchQuery) {
         if (searchQuery.isBlank()) emptyList()
         else books.filter {

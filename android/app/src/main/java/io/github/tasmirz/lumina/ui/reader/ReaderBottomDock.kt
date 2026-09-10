@@ -69,7 +69,7 @@ fun ReaderBottomDock(
 
     LaunchedEffect(showReadTillFeedback) {
         if (showReadTillFeedback) {
-            delay(1800)
+            delay(800)
             showReadTillFeedback = false
         }
     }

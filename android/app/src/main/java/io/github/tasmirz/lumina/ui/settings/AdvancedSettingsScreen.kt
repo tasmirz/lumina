@@ -50,6 +50,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import io.github.tasmirz.lumina.data.AiProvider
 import io.github.tasmirz.lumina.data.BookRepository
+import io.github.tasmirz.lumina.data.EdgeTtsService
+import java.util.Locale
 import io.github.tasmirz.lumina.model.BackgroundTexture
 import io.github.tasmirz.lumina.model.CustomThemeData
 import io.github.tasmirz.lumina.model.GestureAction
@@ -152,6 +154,18 @@ fun AdvancedSettingsScreen(
 
     val disableTtsState = repository?.disableTts?.collectAsState(initial = false)
     val disableTts = disableTtsState?.value ?: false
+
+    val ttsEngineState = repository?.ttsEngine?.collectAsState(initial = "EDGE_NEURAL")
+    val ttsEngine = ttsEngineState?.value ?: "EDGE_NEURAL"
+
+    val ttsEdgeVoiceState = repository?.ttsEdgeVoice?.collectAsState(initial = "en-US-JennyNeural")
+    val ttsEdgeVoice = ttsEdgeVoiceState?.value ?: "en-US-JennyNeural"
+
+    val ttsSpeedState = repository?.ttsSpeed?.collectAsState(initial = 1.0f)
+    val ttsSpeed = ttsSpeedState?.value ?: 1.0f
+
+    val ttsPitchState = repository?.ttsPitch?.collectAsState(initial = 1.0f)
+    val ttsPitch = ttsPitchState?.value ?: 1.0f
 
     val disableSttState = repository?.disableStt?.collectAsState(initial = false)
     val disableStt = disableSttState?.value ?: false
@@ -1098,6 +1112,99 @@ fun AdvancedSettingsScreen(
                                 Switch(
                                     checked = !disableTts,
                                     onCheckedChange = { repository?.setDisableTts(!it) }
+                                )
+                            }
+
+                            if (!disableTts) {
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Text(
+                                    text = "Audio Engine Mode",
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 11.5.sp
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    val isEdge = ttsEngine == "EDGE_NEURAL"
+                                    Surface(
+                                        onClick = { repository?.setTtsEngine("EDGE_NEURAL") },
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = if (isEdge) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                        border = BorderStroke(1.dp, if (isEdge) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Column(modifier = Modifier.padding(10.dp)) {
+                                            Text(text = "Edge Neural (Audiobook)", fontWeight = FontWeight.Bold, fontSize = 11.5.sp)
+                                            Text(text = "Natural human voice synthesis", fontSize = 9.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    }
+                                    val isSystem = ttsEngine == "SYSTEM"
+                                    Surface(
+                                        onClick = { repository?.setTtsEngine("SYSTEM") },
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = if (isSystem) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                        border = BorderStroke(1.dp, if (isSystem) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Column(modifier = Modifier.padding(10.dp)) {
+                                            Text(text = "System TTS", fontWeight = FontWeight.Bold, fontSize = 11.5.sp)
+                                            Text(text = "On-device speech engine", fontSize = 9.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    }
+                                }
+
+                                if (ttsEngine == "EDGE_NEURAL") {
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    Text(
+                                        text = "Neural Voice Persona",
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 11.5.sp
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        EdgeTtsService.AVAILABLE_VOICES.forEach { voice ->
+                                            val isSelected = ttsEdgeVoice == voice.id
+                                            Surface(
+                                                onClick = { repository?.setTtsEdgeVoice(voice.id) },
+                                                shape = RoundedCornerShape(10.dp),
+                                                color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f),
+                                                border = BorderStroke(1.dp, if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)),
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    RadioButton(
+                                                        selected = isSelected,
+                                                        onClick = { repository?.setTtsEdgeVoice(voice.id) },
+                                                        modifier = Modifier.size(20.dp)
+                                                    )
+                                                    Spacer(modifier = Modifier.width(10.dp))
+                                                    Column {
+                                                        Text(text = voice.displayName, fontWeight = FontWeight.Medium, fontSize = 11.5.sp)
+                                                        Text(text = voice.description, fontSize = 9.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Text(
+                                    text = "Narration Speed: ${String.format(Locale.US, "%.2f", ttsSpeed)}x",
+                                    fontWeight = FontWeight.Medium,
+                                    fontSize = 11.sp
+                                )
+                                Slider(
+                                    value = ttsSpeed,
+                                    onValueChange = { repository?.setTtsSpeed(it) },
+                                    valueRange = 0.5f..2.0f,
+                                    steps = 5,
+                                    modifier = Modifier.fillMaxWidth()
                                 )
                             }
 

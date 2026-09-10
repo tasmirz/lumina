@@ -13,6 +13,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -74,6 +75,31 @@ enum class ScreenTab {
 
 class MainActivity : ComponentActivity() {
 
+    private var pendingImportUri by mutableStateOf<Uri?>(null)
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIncomingIntent(intent)
+    }
+
+    private fun handleIncomingIntent(intent: android.content.Intent?) {
+        if (intent == null) return
+        val action = intent.action
+        val data = intent.data
+            ?: (if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(android.content.Intent.EXTRA_STREAM, Uri::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra<Uri>(android.content.Intent.EXTRA_STREAM)
+            })
+            ?: intent.clipData?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.uri
+
+        if ((android.content.Intent.ACTION_VIEW == action || android.content.Intent.ACTION_SEND == action) && data != null) {
+            pendingImportUri = data
+        }
+    }
+
     override fun onWindowStartingActionMode(callback: ActionMode.Callback?, type: Int): ActionMode? {
         if (type == ActionMode.TYPE_FLOATING) {
             // Suppress Android's floating action mode ("Copy | Select all") in favor of Lumina's SelectionMenuPill
@@ -125,6 +151,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         androidx.compose.foundation.ComposeFoundationFlags.isNewContextMenuEnabled = false
         enableEdgeToEdge()
+        handleIncomingIntent(intent)
 
         val bookRepository = BookRepository(applicationContext)
 
@@ -132,7 +159,15 @@ class MainActivity : ComponentActivity() {
             val readerSettings by bookRepository.readerSettings.collectAsStateWithLifecycle()
             val books by bookRepository.books.collectAsStateWithLifecycle()
             val activeBookId by bookRepository.activeBookId.collectAsStateWithLifecycle()
-            val activeBook = books.find { it.id == activeBookId } ?: books.firstOrNull() ?: bookRepository.getActiveBook()
+            val rawActiveBook = books.find { it.id == activeBookId } ?: books.firstOrNull() ?: bookRepository.getActiveBook()
+            val activeBook = remember(rawActiveBook?.id, rawActiveBook?.chapters?.size, books) {
+                if (rawActiveBook == null) null
+                else if (rawActiveBook.chapters.isNotEmpty()) rawActiveBook
+                else {
+                    val cached = bookRepository.getCachedChapters(rawActiveBook.id)
+                    if (cached != null && cached.isNotEmpty()) rawActiveBook.copy(chapters = cached) else rawActiveBook
+                }
+            }
             val bookmarks by bookRepository.bookmarks.collectAsStateWithLifecycle()
             val wishlistBooks by bookRepository.wishlistBooks.collectAsStateWithLifecycle()
             val completedBookIds by bookRepository.completedBookIds.collectAsStateWithLifecycle()
@@ -176,6 +211,8 @@ class MainActivity : ComponentActivity() {
             var isFullscreen by rememberSaveable { mutableStateOf(false) }
             var activeWordDefinition by remember { mutableStateOf<WordDefinition?>(null) }
 
+            val coroutineScope = rememberCoroutineScope()
+
             LaunchedEffect(currentTab) {
                 bookRepository.setLastTab(currentTab.name)
             }
@@ -190,38 +227,34 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            val coroutineScope = rememberCoroutineScope()
+            // Handle incoming EPUB intent (open from file manager, browser, share sheet)
+            LaunchedEffect(pendingImportUri) {
+                val uri = pendingImportUri
+                if (uri != null) {
+                    val importedBook = bookRepository.importEpubFromUri(uri)
+                    if (importedBook != null) {
+                        currentTab = ScreenTab.READER
+                        Toast.makeText(this@MainActivity, "Added \"${importedBook.title}\" to Library", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(this@MainActivity, "Failed to parse EPUB file", Toast.LENGTH_SHORT).show()
+                    }
+                    pendingImportUri = null
+                }
+            }
 
             // EPUB File Picker Launcher
             val epubPickerLauncher = rememberLauncherForActivityResult(
                 contract = ActivityResultContracts.GetContent()
             ) { uri: Uri? ->
                 if (uri != null) {
-                    try {
-                        val fileName = uri.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':') ?: "Imported.epub"
-                        val cleanName = if (fileName.endsWith(".epub", ignoreCase = true)) fileName else "$fileName.epub"
-                        val epubDir = File(applicationContext.filesDir, "epubs").apply { if (!exists()) mkdirs() }
-                        val destFile = File(epubDir, "${System.currentTimeMillis()}_$cleanName")
-
-                        contentResolver.openInputStream(uri)?.use { input ->
-                            destFile.outputStream().use { output ->
-                                input.copyTo(output)
-                            }
-                        }
-
-                        destFile.inputStream().use { stream ->
-                            val parsedBook = EpubParser.parseEpub(stream, cleanName, applicationContext)
-                            val bookToSave = parsedBook.copy(
-                                filePath = destFile.absolutePath,
-                                fileSize = destFile.length(),
-                                isDownloaded = false
-                            )
-                            bookRepository.addBook(bookToSave)
+                    coroutineScope.launch {
+                        val importedBook = bookRepository.importEpubFromUri(uri)
+                        if (importedBook != null) {
                             currentTab = ScreenTab.READER
-                            Toast.makeText(this, "Added \"${parsedBook.title}\" to Library", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(this@MainActivity, "Added \"${importedBook.title}\" to Library", Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(this@MainActivity, "Failed to parse EPUB file", Toast.LENGTH_SHORT).show()
                         }
-                    } catch (_: Exception) {
-                        Toast.makeText(this, "Failed to parse EPUB file", Toast.LENGTH_SHORT).show()
                     }
                 }
             }
@@ -280,18 +313,32 @@ class MainActivity : ComponentActivity() {
                             ScreenTab.READER -> {
                                 var readerBookWithChapters by remember(activeBook?.id) {
                                     mutableStateOf(
-                                        if (activeBook?.chapters?.isNotEmpty() == true) activeBook else null
+                                        if (activeBook?.chapters?.isNotEmpty() == true) {
+                                            activeBook
+                                        } else if (activeBook != null) {
+                                            val cached = bookRepository.getCachedChapters(activeBook.id)
+                                            if (cached != null && cached.isNotEmpty()) activeBook.copy(chapters = cached) else null
+                                        } else {
+                                            null
+                                        }
                                     )
                                 }
                                 LaunchedEffect(activeBook?.id) {
                                     if (activeBook != null) {
-                                        if (activeBook.chapters.isNotEmpty()) {
+                                        if (readerBookWithChapters?.id == activeBook.id && readerBookWithChapters?.chapters?.isNotEmpty() == true) {
+                                            // Chapters already loaded and up-to-date
+                                        } else if (activeBook.chapters.isNotEmpty()) {
                                             readerBookWithChapters = activeBook
                                         } else {
-                                            val chaps = withContext(Dispatchers.IO) {
-                                                bookRepository.getChaptersForBook(activeBook.id)
+                                            val cached = bookRepository.getCachedChapters(activeBook.id)
+                                            if (cached != null && cached.isNotEmpty()) {
+                                                readerBookWithChapters = activeBook.copy(chapters = cached)
+                                            } else {
+                                                val chaps = withContext(Dispatchers.IO) {
+                                                    bookRepository.getChaptersForBook(activeBook.id)
+                                                }
+                                                readerBookWithChapters = activeBook.copy(chapters = chaps)
                                             }
-                                            readerBookWithChapters = activeBook.copy(chapters = chaps)
                                         }
                                     } else {
                                         readerBookWithChapters = null
@@ -349,6 +396,31 @@ class MainActivity : ComponentActivity() {
                                         onThemeVariantChange = { bookRepository.setThemeVariant(it) },
                                         onOpenAdvancedSettings = { showAdvancedSettingsScreen = true }
                                     )
+                                } else if (activeBook != null) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .background(MaterialTheme.colorScheme.background),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.spacedBy(16.dp),
+                                            modifier = Modifier.padding(32.dp)
+                                        ) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(36.dp),
+                                                color = MaterialTheme.colorScheme.primary,
+                                                strokeWidth = 3.dp
+                                            )
+                                            Text(
+                                                text = "Opening ${activeBook.title}...",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                textAlign = TextAlign.Center
+                                            )
+                                        }
+                                    }
                                 } else {
                                     Box(
                                         modifier = Modifier.fillMaxSize(),
@@ -594,30 +666,40 @@ class MainActivity : ComponentActivity() {
                                 onBookDownloaded = { onlineBook ->
                                     coroutineScope.launch {
                                         Toast.makeText(this@MainActivity, "Downloading \"${onlineBook.title}\"...", Toast.LENGTH_SHORT).show()
-                                        val epubDir = File(applicationContext.filesDir, "epubs").apply { if (!exists()) mkdirs() }
-                                        val cleanName = onlineBook.title.replace(Regex("[^a-zA-Z0-9.-]"), "_") + ".epub"
-                                        val destFile = File(epubDir, "${System.currentTimeMillis()}_$cleanName")
+                                        val finalBook = withContext(Dispatchers.IO) {
+                                            try {
+                                                val epubDir = File(applicationContext.filesDir, "epubs").apply { if (!exists()) mkdirs() }
+                                                val cleanName = onlineBook.title.replace(Regex("[^a-zA-Z0-9.-]"), "_") + ".epub"
+                                                val destFile = File(epubDir, "${System.currentTimeMillis()}_$cleanName")
 
-                                        val stream = OnlineEpubService.downloadEpubStream(onlineBook.epubDownloadUrl)
-                                        if (stream != null) {
-                                            destFile.outputStream().use { output ->
-                                                stream.copyTo(output)
+                                                val stream = OnlineEpubService.downloadEpubStream(onlineBook.epubDownloadUrl)
+                                                if (stream != null) {
+                                                    destFile.outputStream().use { output ->
+                                                        stream.copyTo(output)
+                                                    }
+                                                    destFile.inputStream().use { savedStream ->
+                                                        val parsed = EpubParser.parseEpub(savedStream, cleanName, applicationContext)
+                                                        val readyBook = (if (onlineBook.coverUrl.isNotBlank() && parsed.coverUrl.startsWith("http")) {
+                                                            parsed.copy(coverUrl = onlineBook.coverUrl)
+                                                        } else parsed).copy(
+                                                            filePath = destFile.absolutePath,
+                                                            fileSize = destFile.length(),
+                                                            isDownloaded = true,
+                                                            downloadUrl = onlineBook.epubDownloadUrl
+                                                        )
+                                                        bookRepository.addBook(readyBook)
+                                                        readyBook
+                                                    }
+                                                } else null
+                                            } catch (e: Exception) {
+                                                e.printStackTrace()
+                                                null
                                             }
-                                            destFile.inputStream().use { savedStream ->
-                                                val parsed = EpubParser.parseEpub(savedStream, cleanName, applicationContext)
-                                                val finalBook = (if (onlineBook.coverUrl.isNotBlank() && parsed.coverUrl.startsWith("http")) {
-                                                    parsed.copy(coverUrl = onlineBook.coverUrl)
-                                                } else parsed).copy(
-                                                    filePath = destFile.absolutePath,
-                                                    fileSize = destFile.length(),
-                                                    isDownloaded = true,
-                                                    downloadUrl = onlineBook.epubDownloadUrl
-                                                )
-                                                bookRepository.addBook(finalBook)
-                                                showAddBookSheet = false
-                                                currentTab = ScreenTab.READER
-                                                Toast.makeText(this@MainActivity, "Opened \"${finalBook.title}\"", Toast.LENGTH_SHORT).show()
-                                            }
+                                        }
+                                        if (finalBook != null) {
+                                            showAddBookSheet = false
+                                            currentTab = ScreenTab.READER
+                                            Toast.makeText(this@MainActivity, "Opened \"${finalBook.title}\"", Toast.LENGTH_SHORT).show()
                                         } else {
                                             Toast.makeText(this@MainActivity, "Download failed. Please check connection.", Toast.LENGTH_SHORT).show()
                                         }

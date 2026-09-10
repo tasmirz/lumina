@@ -5,9 +5,12 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.pm.PackageManager
+import android.media.MediaPlayer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.widget.Toast
+import java.io.File
+import io.github.tasmirz.lumina.data.EdgeTtsService
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -76,7 +79,9 @@ import kotlin.math.roundToInt
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBackIos
@@ -326,15 +331,24 @@ fun ReaderScreen(
     val disableTtsState = repository?.disableTts?.collectAsState(initial = false)
     val disableTts = disableTtsState?.value ?: false
 
+    val ttsEngineState = repository?.ttsEngine?.collectAsState(initial = "EDGE_NEURAL")
+    val ttsEngine = ttsEngineState?.value ?: "EDGE_NEURAL"
+
+    val ttsEdgeVoiceState = repository?.ttsEdgeVoice?.collectAsState(initial = "en-US-JennyNeural")
+    val ttsEdgeVoice = ttsEdgeVoiceState?.value ?: "en-US-JennyNeural"
+
     val disableSttState = repository?.disableStt?.collectAsState(initial = false)
     val disableStt = disableSttState?.value ?: false
 
     var showAssistantChatSheet by rememberSaveable { mutableStateOf(false) }
     var assistantAutoStartVoice by rememberSaveable { mutableStateOf(false) }
 
-    // TextToSpeech Engine
+    // TextToSpeech & Media Player Engines
     val ttsRef = remember { mutableStateOf<TextToSpeech?>(null) }
     val isTtsInitialized = remember { mutableStateOf(false) }
+    val mediaPlayerRef = remember { mutableStateOf<MediaPlayer?>(null) }
+    var currentAudioSessionId by remember { mutableLongStateOf(0L) }
+    var audioJob by remember { mutableStateOf<Job?>(null) }
 
     // Floating Voice Assistant State & Service
     val assistantService = remember { AssistantService(context) }
@@ -342,47 +356,213 @@ fun ReaderScreen(
     var voiceQuery by remember { mutableStateOf("") }
     var voiceResponse by remember { mutableStateOf("") }
 
-    val speakNextPara = rememberUpdatedState {
-        if (disableTts) {
-            Toast.makeText(context, "TTS Audio Engine is disabled in Settings", Toast.LENGTH_SHORT).show()
-            isTtsSpeaking = false
-            return@rememberUpdatedState
+    fun stopAllAudio() {
+        currentAudioSessionId++
+        audioJob?.cancel()
+        audioJob = null
+
+        mediaPlayerRef.value?.let { mp ->
+            try { mp.setOnCompletionListener(null) } catch (_: Throwable) {}
+            try { mp.setOnErrorListener(null) } catch (_: Throwable) {}
+            try { mp.stop() } catch (_: Throwable) {}
+            try { mp.reset() } catch (_: Throwable) {}
+            try { mp.release() } catch (_: Throwable) {}
         }
+        mediaPlayerRef.value = null
+
+        try {
+            ttsRef.value?.stop()
+        } catch (_: Throwable) {}
+
+        isTtsSpeaking = false
+    }
+
+    fun speakWithSystemTts(text: String, sessionId: Long) {
+        if (sessionId != currentAudioSessionId || !showTtsDock || !isTtsSpeaking) {
+            isTtsSpeaking = false
+            return
+        }
+        // Ensure any MediaPlayer is released before system TTS speaks
+        mediaPlayerRef.value?.let { mp ->
+            try { mp.setOnCompletionListener(null) } catch (_: Throwable) {}
+            try { mp.setOnErrorListener(null) } catch (_: Throwable) {}
+            try { mp.stop() } catch (_: Throwable) {}
+            try { mp.reset() } catch (_: Throwable) {}
+            try { mp.release() } catch (_: Throwable) {}
+        }
+        mediaPlayerRef.value = null
+
         val tts = ttsRef.value
         if (tts != null && isTtsInitialized.value) {
             tts.setSpeechRate(ttsSpeed)
-            val chapter = book.chapters.getOrNull(speakingChapterIdx)
-            if (chapter != null && speakingParaIdx < chapter.paragraphs.size) {
-                val p = chapter.paragraphs[speakingParaIdx]
-                if (p.startsWith("[IMG:") && p.endsWith("]")) {
-                    speakingParaIdx++
-                    if (speakingParaIdx < chapter.paragraphs.size) {
-                        tts.speak(chapter.paragraphs[speakingParaIdx], TextToSpeech.QUEUE_FLUSH, null, "lumina_tts_$speakingParaIdx")
-                        isTtsSpeaking = true
-                    } else {
-                        isTtsSpeaking = false
+            tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "lumina_tts_${sessionId}_${speakingChapterIdx}_${speakingParaIdx}")
+            isTtsSpeaking = true
+        } else {
+            isTtsSpeaking = false
+        }
+    }
+
+    var triggerSpeakNextParaAction: () -> Unit = {}
+
+    fun advanceToNextParagraph() {
+        if (!showTtsDock || !isTtsSpeaking) return
+        val chapter = book.chapters.getOrNull(speakingChapterIdx)
+        if (chapter != null && speakingParaIdx + 1 < chapter.paragraphs.size) {
+            speakingParaIdx++
+            triggerSpeakNextParaAction()
+        } else if (speakingChapterIdx + 1 < book.chapters.size) {
+            speakingChapterIdx++
+            speakingParaIdx = 0
+            val chapTitle = book.chapters.getOrNull(speakingChapterIdx)?.title ?: "Chapter ${speakingChapterIdx + 1}"
+            activeChapterTitle = chapTitle
+            triggerSpeakNextParaAction()
+        } else {
+            stopAllAudio()
+        }
+    }
+
+    fun triggerSpeakNextPara() {
+        if (disableTts) {
+            Toast.makeText(context, "TTS Audio Engine is disabled in Settings", Toast.LENGTH_SHORT).show()
+            stopAllAudio()
+            return
+        }
+        if (!showTtsDock) {
+            stopAllAudio()
+            return
+        }
+        stopAllAudio()
+
+        val chapter = book.chapters.getOrNull(speakingChapterIdx)
+        if (chapter == null || speakingParaIdx >= chapter.paragraphs.size) {
+            isTtsSpeaking = false
+            return
+        }
+
+        val rawPara = chapter.paragraphs[speakingParaIdx]
+        val p = if (rawPara.startsWith("[IMG:") && rawPara.endsWith("]")) {
+            speakingParaIdx++
+            if (speakingParaIdx < chapter.paragraphs.size) chapter.paragraphs[speakingParaIdx] else null
+        } else rawPara
+
+        if (p == null || p.isBlank()) {
+            isTtsSpeaking = false
+            return
+        }
+
+        isTtsSpeaking = true
+        val sessionId = currentAudioSessionId
+
+        audioJob = coroutineScope.launch {
+            if (ttsEngine == "EDGE_NEURAL") {
+                val audioBytes = withContext(Dispatchers.IO) {
+                    if (!isActive || sessionId != currentAudioSessionId || !showTtsDock || !isTtsSpeaking) return@withContext null
+                    EdgeTtsService.synthesizeToBytes(
+                        text = p,
+                        voice = ttsEdgeVoice,
+                        speedMultiplier = ttsSpeed
+                    )
+                }
+
+                if (!isActive || sessionId != currentAudioSessionId || !showTtsDock || !isTtsSpeaking) {
+                    return@launch
+                }
+
+                if (audioBytes != null && audioBytes.isNotEmpty()) {
+                    val tempFile = File(context.cacheDir, "lumina_tts_${sessionId}.mp3")
+                    val mp = MediaPlayer()
+                    mediaPlayerRef.value = mp
+                    try {
+                        withContext(Dispatchers.IO) {
+                            tempFile.writeBytes(audioBytes)
+                        }
+
+                        if (!isActive || sessionId != currentAudioSessionId || !showTtsDock || !isTtsSpeaking) {
+                            try { mp.release() } catch (_: Throwable) {}
+                            if (mediaPlayerRef.value == mp) mediaPlayerRef.value = null
+                            try { tempFile.delete() } catch (_: Throwable) {}
+                            return@launch
+                        }
+
+                        mp.setDataSource(tempFile.absolutePath)
+                        mp.prepare()
+                        mp.setOnCompletionListener {
+                            try { it.setOnCompletionListener(null) } catch (_: Throwable) {}
+                            try { it.setOnErrorListener(null) } catch (_: Throwable) {}
+                            try { it.release() } catch (_: Throwable) {}
+                            try { tempFile.delete() } catch (_: Throwable) {}
+                            if (mediaPlayerRef.value == it) {
+                                mediaPlayerRef.value = null
+                            }
+                            if (sessionId == currentAudioSessionId && isTtsSpeaking && showTtsDock) {
+                                advanceToNextParagraph()
+                            }
+                        }
+                        mp.setOnErrorListener { it, _, _ ->
+                            try { it.setOnCompletionListener(null) } catch (_: Throwable) {}
+                            try { it.setOnErrorListener(null) } catch (_: Throwable) {}
+                            try { it.release() } catch (_: Throwable) {}
+                            try { tempFile.delete() } catch (_: Throwable) {}
+                            if (mediaPlayerRef.value == it) {
+                                mediaPlayerRef.value = null
+                            }
+                            if (sessionId == currentAudioSessionId && isTtsSpeaking && showTtsDock) {
+                                speakWithSystemTts(p, sessionId)
+                            }
+                            true
+                        }
+
+                        if (!isActive || sessionId != currentAudioSessionId || !showTtsDock || !isTtsSpeaking) {
+                            try { mp.release() } catch (_: Throwable) {}
+                            if (mediaPlayerRef.value == mp) mediaPlayerRef.value = null
+                            try { tempFile.delete() } catch (_: Throwable) {}
+                            return@launch
+                        }
+
+                        // Ensure system TTS is silenced before MediaPlayer starts
+                        try { ttsRef.value?.stop() } catch (_: Throwable) {}
+
+                        mp.start()
+                    } catch (_: Exception) {
+                        try { mp.release() } catch (_: Throwable) {}
+                        if (mediaPlayerRef.value == mp) mediaPlayerRef.value = null
+                        if (sessionId == currentAudioSessionId && isTtsSpeaking && showTtsDock) {
+                            speakWithSystemTts(p, sessionId)
+                        }
                     }
                 } else {
-                    tts.speak(p, TextToSpeech.QUEUE_FLUSH, null, "lumina_tts_$speakingParaIdx")
-                    isTtsSpeaking = true
+                    if (sessionId == currentAudioSessionId && isTtsSpeaking && showTtsDock) {
+                        speakWithSystemTts(p, sessionId)
+                    }
                 }
             } else {
-                isTtsSpeaking = false
+                speakWithSystemTts(p, sessionId)
             }
+        }
+    }
+
+    triggerSpeakNextParaAction = { triggerSpeakNextPara() }
+
+    val speakNextPara = rememberUpdatedState { triggerSpeakNextPara() }
+
+    LaunchedEffect(showTtsDock) {
+        if (!showTtsDock) {
+            stopAllAudio()
         }
     }
 
     DisposableEffect(context, disableTts) {
         if (disableTts) {
-            ttsRef.value?.stop()
+            stopAllAudio()
             ttsRef.value?.shutdown()
             ttsRef.value = null
             isTtsInitialized.value = false
             onDispose {}
         } else {
-            val tts = TextToSpeech(context) { status ->
+            var localTts: TextToSpeech? = null
+            localTts = TextToSpeech(context) { status ->
                 if (status == TextToSpeech.SUCCESS) {
-                    val engine = ttsRef.value
+                    val engine = localTts ?: ttsRef.value
                     val effLang = repository?.getEffectiveLanguage() ?: book.language
                     val targetLocale = if (effLang.isNotBlank() && effLang != "auto") {
                         try { Locale.forLanguageTag(effLang) } catch (_: Exception) { Locale.getDefault() }
@@ -391,7 +571,7 @@ fun ReaderScreen(
                     }
                     engine?.language = targetLocale
                     engine?.setPitch(1.0f)
-                    engine?.setSpeechRate(0.95f)
+                    engine?.setSpeechRate(ttsSpeed)
                     try {
                         val voices = engine?.voices
                         val naturalVoice = voices?.filter {
@@ -406,44 +586,57 @@ fun ReaderScreen(
                     isTtsInitialized.value = true
                 }
             }
-            tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            localTts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) {
-                    isTtsSpeaking = true
+                    if (utteranceId?.startsWith("lumina_tts_${currentAudioSessionId}_") == true && showTtsDock) {
+                        isTtsSpeaking = true
+                    }
                 }
 
                 override fun onDone(utteranceId: String?) {
                     coroutineScope.launch {
-                        val chapter = book.chapters.getOrNull(speakingChapterIdx)
-                        if (chapter != null && speakingParaIdx + 1 < chapter.paragraphs.size) {
-                            speakingParaIdx++
-                            speakNextPara.value()
-                        } else if (speakingChapterIdx + 1 < book.chapters.size) {
-                            speakingChapterIdx++
-                            speakingParaIdx = 0
-                            speakNextPara.value()
-                        } else {
-                            isTtsSpeaking = false
+                        if (utteranceId?.startsWith("lumina_tts_${currentAudioSessionId}_") == true
+                            && isTtsSpeaking
+                            && showTtsDock) {
+                            advanceToNextParagraph()
                         }
                     }
                 }
 
                 @Deprecated("Deprecated in Java")
                 override fun onError(utteranceId: String?) {
-                    isTtsSpeaking = false
+                    if (utteranceId?.startsWith("lumina_tts_${currentAudioSessionId}_") == true) {
+                        isTtsSpeaking = false
+                    }
                 }
             })
-            ttsRef.value = tts
+            ttsRef.value = localTts
 
             onDispose {
-                tts.stop()
-                tts.shutdown()
+                stopAllAudio()
+                localTts.shutdown()
             }
         }
     }
     
     DisposableEffect(Unit) {
         onDispose {
+            stopAllAudio()
             assistantService.stopListening()
+        }
+    }
+
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP || event == androidx.lifecycle.Lifecycle.Event.ON_DESTROY) {
+                stopAllAudio()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            stopAllAudio()
         }
     }
 
@@ -477,9 +670,11 @@ fun ReaderScreen(
             inBookCurrentMatchIndex = 0
         } else if (isFullscreen) {
             onToggleFullscreen()
+        } else if (showTtsDock) {
+            showTtsDock = false
+            stopAllAudio()
         } else {
-            ttsRef.value?.stop()
-            isTtsSpeaking = false
+            stopAllAudio()
             onBackToLibrary()
         }
     }
@@ -696,6 +891,10 @@ fun ReaderScreen(
         when (action) {
             GestureAction.TOGGLE_AUTOSCROLL -> {
                 isAutoScrolling = !isAutoScrolling
+                if (isAutoScrolling) {
+                    showTtsDock = false
+                    stopAllAudio()
+                }
                 Toast.makeText(context, if (isAutoScrolling) "Auto-scroll started" else "Auto-scroll stopped", Toast.LENGTH_SHORT).show()
             }
             GestureAction.SUMMON_ORB -> {
@@ -709,14 +908,17 @@ fun ReaderScreen(
                 speakingChapterIdx = chapIdx
                 speakingParaIdx = pIdx
                 showTtsDock = true
+                isTtsSpeaking = true
                 speakNextPara.value()
             }
             GestureAction.IN_BOOK_SEARCH -> {
                 showInBookSearchDialog = true
             }
             GestureAction.PREVIOUS_CHAPTER -> {
+                stopAllAudio()
                 val prev = (chapIdx - 1).coerceAtLeast(0)
                 speakingChapterIdx = prev
+                speakingParaIdx = 0
                 activeChapterTitle = book.chapters.getOrNull(prev)?.title ?: ""
                 if (readingMode == ReadingMode.SCROLL) {
                     var target = 0
@@ -732,8 +934,10 @@ fun ReaderScreen(
                 }
             }
             GestureAction.NEXT_CHAPTER -> {
+                stopAllAudio()
                 val next = (chapIdx + 1).coerceAtMost(book.chapters.size - 1)
                 speakingChapterIdx = next
+                speakingParaIdx = 0
                 activeChapterTitle = book.chapters.getOrNull(next)?.title ?: ""
                 if (readingMode == ReadingMode.SCROLL) {
                     var target = 0
@@ -829,18 +1033,22 @@ fun ReaderScreen(
                 when (action.action.lowercase()) {
                     "play", "start", "resume" -> {
                         showTtsDock = true
+                        isTtsSpeaking = true
                         speakNextPara.value()
                     }
                     "stop", "pause" -> {
-                        ttsRef.value?.stop()
-                        isTtsSpeaking = false
+                        stopAllAudio()
                     }
                     "next" -> {
+                        stopAllAudio()
                         speakingParaIdx++
+                        isTtsSpeaking = true
                         speakNextPara.value()
                     }
                     "prev", "previous" -> {
+                        stopAllAudio()
                         speakingParaIdx = (speakingParaIdx - 1).coerceAtLeast(0)
+                        isTtsSpeaking = true
                         speakNextPara.value()
                     }
                 }
@@ -848,10 +1056,15 @@ fun ReaderScreen(
             is AssistantAction.ToggleAutoScroll -> {
                 if (readingMode == ReadingMode.SCROLL) {
                     isAutoScrolling = action.enable
+                    if (isAutoScrolling) {
+                        showTtsDock = false
+                        stopAllAudio()
+                    }
                     Toast.makeText(context, if (action.enable) "Auto-scroll started" else "Auto-scroll stopped", Toast.LENGTH_SHORT).show()
                 }
             }
             is AssistantAction.NextChapter -> {
+                stopAllAudio()
                 val next = (speakingChapterIdx + 1).coerceAtMost(book.chapters.size - 1)
                 speakingChapterIdx = next
                 speakingParaIdx = 0
@@ -879,6 +1092,7 @@ fun ReaderScreen(
                 }
             }
             is AssistantAction.PreviousChapter -> {
+                stopAllAudio()
                 val prev = (speakingChapterIdx - 1).coerceAtLeast(0)
                 speakingChapterIdx = prev
                 speakingParaIdx = 0
@@ -906,6 +1120,7 @@ fun ReaderScreen(
                 }
             }
             is AssistantAction.NavigateChapter -> {
+                stopAllAudio()
                 val target = action.targetIndex.coerceIn(0, book.chapters.size - 1)
                 speakingChapterIdx = target
                 speakingParaIdx = 0
@@ -937,8 +1152,7 @@ fun ReaderScreen(
                     showTtsDock = true
                     speakNextPara.value()
                 } else {
-                    ttsRef.value?.stop()
-                    isTtsSpeaking = false
+                    stopAllAudio()
                 }
             }
             is AssistantAction.AddNote -> {
@@ -1873,7 +2087,7 @@ fun ReaderScreen(
 
         // TOP HEADER BAR: Distraction-Free Header (Zero buttons, clean title & chapter)
         ReaderTopBar(
-            isUiVisible = isUiVisible,
+            isUiVisible = isUiVisible && !isAutoScrolling,
             readingMode = readingMode,
             voiceState = voiceState,
             showInBookSearchDialog = showInBookSearchDialog,
@@ -1904,7 +2118,7 @@ fun ReaderScreen(
 
         // UNIFIED FLOATING BOTTOM DOCK: Progress Bar Extension + Navigation Bar
         ReaderBottomDock(
-            isUiVisible = isUiVisible,
+            isUiVisible = isUiVisible && !isAutoScrolling,
             readingMode = readingMode,
             voiceState = voiceState,
             progressBottomInset = progressBottomInset,
@@ -1933,7 +2147,10 @@ fun ReaderScreen(
                     "Saved paragraph ${currentScrollPos + 1} (${currentProgressPct}%)"
                 }
             },
-            onBackToLibrary = onBackToLibrary,
+            onBackToLibrary = {
+                stopAllAudio()
+                onBackToLibrary()
+            },
             onOpenToc = { showTocSheet = true },
             onOpenBookmarks = onOpenBookmarks,
             onOpenReadingSettings = onOpenAppearance,
@@ -1941,7 +2158,7 @@ fun ReaderScreen(
         )
 
         // Floating Assistant Orb (movable, smart inward arc, docked dot, renders on top of bottom docks)
-        if (showFloatingAssistant && !isFullscreen && assistantOrbStyle != "TOP_BAR_BUTTON") {
+        if (showFloatingAssistant && !isFullscreen && !isAutoScrolling && assistantOrbStyle != "TOP_BAR_BUTTON") {
             FloatingAssistantOrb(
                 readingMode = readingMode,
                 onToggleReadingMode = {
@@ -1956,9 +2173,9 @@ fun ReaderScreen(
                 onToggleTts = {
                     showTtsDock = true
                     if (isTtsSpeaking) {
-                        ttsRef.value?.stop()
-                        isTtsSpeaking = false
+                        stopAllAudio()
                     } else {
+                        isTtsSpeaking = true
                         speakNextPara.value()
                     }
                 },
@@ -2036,34 +2253,38 @@ fun ReaderScreen(
 
         // EXPANDABLE FLOATING TTS AUDIO PLAYER DOCK
         ReaderTtsDock(
-            showTtsDock = showTtsDock,
+            showTtsDock = showTtsDock && !isAutoScrolling,
             speakingParaIdx = speakingParaIdx,
             isTtsSpeaking = isTtsSpeaking,
             ttsSpeed = ttsSpeed,
             bottomPadding = selectionMenuBottomPadding,
             onClose = {
                 showTtsDock = false
-                ttsRef.value?.stop()
-                isTtsSpeaking = false
+                stopAllAudio()
             },
             onPrevPara = {
+                stopAllAudio()
                 speakingParaIdx = (speakingParaIdx - 1).coerceAtLeast(0)
+                isTtsSpeaking = true
                 speakNextPara.value()
             },
             onTogglePlayPause = {
                 if (isTtsSpeaking) {
-                    ttsRef.value?.stop()
-                    isTtsSpeaking = false
+                    stopAllAudio()
                 } else {
+                    isTtsSpeaking = true
                     speakNextPara.value()
                 }
             },
             onNextPara = {
+                stopAllAudio()
                 speakingParaIdx++
+                isTtsSpeaking = true
                 speakNextPara.value()
             },
             onSpeedChange = { sp ->
                 ttsSpeed = sp
+                repository?.setTtsSpeed(sp)
                 ttsRef.value?.setSpeechRate(sp)
             },
             modifier = Modifier
@@ -2074,8 +2295,9 @@ fun ReaderScreen(
         // AUTO-SCROLL FLOATING INDICATOR PILL
         ReaderAutoScrollPill(
             isAutoScrolling = isAutoScrolling,
-            bottomPadding = selectionMenuBottomPadding,
-            onPause = { isAutoScrolling = false },
+            currentSpeed = autoScrollSpeed,
+            bottomPadding = if (isUiVisible && !isAutoScrolling) selectionMenuBottomPadding else progressBottomInset + 16.dp,
+            onSpeedCycle = { repository?.cycleAutoScrollSpeed() },
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .zIndex(185f)
@@ -2134,6 +2356,7 @@ fun ReaderScreen(
                 bookTitle = book.title,
                 currentChapterIndex = book.chapters.indexOfFirst { it.title == activeChapterTitle }.coerceAtLeast(0),
                 onSelectChapter = { idx ->
+                    stopAllAudio()
                     activeChapterTitle = book.chapters.getOrNull(idx)?.title ?: "Chapter ${idx + 1}"
                     speakingChapterIdx = idx
                     speakingParaIdx = 0
