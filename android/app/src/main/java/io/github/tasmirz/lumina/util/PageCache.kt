@@ -52,7 +52,7 @@ object PageCache {
         isLandscape: Boolean = false,
         isStrictPaged: Boolean = false
     ): List<Pair<String, String>>? {
-        val key = "v17_${bookId}_${chaptersCount}_${fontSize}_${if (isLandscape) "land" else "port"}_${if (isStrictPaged) "strict" else "scroll"}"
+        val key = "v19_${bookId}_${chaptersCount}_${fontSize}_${if (isLandscape) "land" else "port"}_${if (isStrictPaged) "strict" else "scroll"}"
         return cache.get(key)
     }
 
@@ -65,7 +65,7 @@ object PageCache {
         dbHelper: LuminaDatabaseHelper? = null,
         context: android.content.Context? = null
     ): List<Pair<String, String>> {
-        val key = "v17_${bookId}_${chapters.size}_${fontSize}_${if (isLandscape) "land" else "port"}_${if (isStrictPaged) "strict" else "scroll"}"
+        val key = "v19_${bookId}_${chapters.size}_${fontSize}_${if (isLandscape) "land" else "port"}_${if (isStrictPaged) "strict" else "scroll"}"
         val cached = cache.get(key)
         if (cached != null) return cached
 
@@ -121,7 +121,7 @@ object PageCache {
         activeChapterIndex: Int = 0,
         onActiveChapterReady: ((List<Pair<String, String>>) -> Unit)? = null
     ): List<Pair<String, String>> = withContext(Dispatchers.Default) {
-        val key = "v17_${bookId}_${chapters.size}_${fontSize}_${if (isLandscape) "land" else "port"}_${if (isStrictPaged) "strict" else "scroll"}"
+        val key = "v19_${bookId}_${chapters.size}_${fontSize}_${if (isLandscape) "land" else "port"}_${if (isStrictPaged) "strict" else "scroll"}"
         val cached = cache.get(key)
         if (cached != null) {
             onActiveChapterReady?.invoke(cached)
@@ -199,18 +199,21 @@ object PageCache {
                 }
             } else {
                 when {
-                    fontSize <= 13 -> Pair(46, 26)
-                    fontSize <= 14 -> Pair(43, 24)
-                    fontSize <= 15 -> Pair(41, 23)
-                    fontSize <= 16 -> Pair(39, 22)
-                    fontSize <= 17 -> Pair(37, 21)
-                    fontSize <= 18 -> Pair(36, 20)
-                    fontSize <= 19 -> Pair(34, 19)
-                    fontSize <= 20 -> Pair(32, 18)
-                    fontSize <= 21 -> Pair(30, 17)
-                    fontSize <= 23 -> Pair(28, 15)
-                    fontSize <= 25 -> Pair(25, 14)
-                    else -> Pair(22, 13)
+                    fontSize <= 13 -> Pair(44, 23)
+                    fontSize <= 14 -> Pair(41, 21)
+                    fontSize <= 15 -> Pair(38, 20)
+                    fontSize <= 16 -> Pair(36, 19)
+                    fontSize <= 17 -> Pair(34, 18)
+                    fontSize <= 18 -> Pair(32, 17)
+                    fontSize <= 19 -> Pair(30, 16)
+                    fontSize <= 20 -> Pair(28, 15)
+                    fontSize <= 21 -> Pair(27, 14)
+                    fontSize <= 22 -> Pair(26, 14)
+                    fontSize <= 23 -> Pair(25, 13)
+                    fontSize <= 24 -> Pair(24, 12)
+                    fontSize <= 25 -> Pair(23, 12)
+                    fontSize <= 27 -> Pair(21, 11)
+                    else -> Pair(20, 10)
                 }
             }
 
@@ -336,17 +339,17 @@ object PageCache {
             // PAGED + SCROLL ENGINE (Whole paragraphs preserved; overflows scrollable)
             // ═════════════════════════════════════════════════════════════════
             val baseTarget = when {
-                fontSize <= 13 -> 1250
-                fontSize <= 14 -> 1150
-                fontSize <= 15 -> 1040
-                fontSize <= 16 -> 940
-                fontSize <= 17 -> 850
-                fontSize <= 18 -> 780
-                fontSize <= 19 -> 710
-                fontSize <= 21 -> 620
-                fontSize <= 23 -> 520
-                fontSize <= 25 -> 440
-                else -> 370
+                fontSize <= 13 -> 1050
+                fontSize <= 14 -> 950
+                fontSize <= 15 -> 860
+                fontSize <= 16 -> 760
+                fontSize <= 17 -> 680
+                fontSize <= 18 -> 600
+                fontSize <= 19 -> 540
+                fontSize <= 21 -> 460
+                fontSize <= 23 -> 390
+                fontSize <= 25 -> 330
+                else -> 280
             }
             val targetCharsPerPage = if (isLandscape) {
                 (baseTarget * 0.85f).toInt().coerceAtLeast(350)

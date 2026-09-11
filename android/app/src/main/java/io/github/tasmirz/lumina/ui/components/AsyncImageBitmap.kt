@@ -25,7 +25,8 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
 
-private val bitmapCache = object : android.util.LruCache<String, Bitmap>(60) {}
+private val bitmapCache = object : android.util.LruCache<String, Bitmap>(30) {}
+private val failedSources = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
 private val coverDownloadSemaphore = Semaphore(3)
 
 private fun sha256Hex(input: String): String {
@@ -34,7 +35,7 @@ private fun sha256Hex(input: String): String {
     return digest.joinToString("") { "%02x".format(it) }
 }
 
-private fun decodeSampledBitmapFromFile(file: File, maxWidth: Int = 450, maxHeight: Int = 650): Bitmap? {
+private fun decodeSampledBitmapFromFile(file: File, maxWidth: Int = 300, maxHeight: Int = 420): Bitmap? {
     return try {
         val opt = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.absolutePath, opt)
@@ -52,7 +53,7 @@ private fun decodeSampledBitmapFromFile(file: File, maxWidth: Int = 450, maxHeig
     }
 }
 
-private fun decodeSampledBitmapFromByteArray(bytes: ByteArray, maxWidth: Int = 450, maxHeight: Int = 650): Bitmap? {
+private fun decodeSampledBitmapFromByteArray(bytes: ByteArray, maxWidth: Int = 300, maxHeight: Int = 420): Bitmap? {
     return try {
         val opt = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opt)
@@ -73,16 +74,19 @@ private fun decodeSampledBitmapFromByteArray(bytes: ByteArray, maxWidth: Int = 4
 @Composable
 fun rememberBookImage(source: String): Bitmap? {
     val context = androidx.compose.ui.platform.LocalContext.current.applicationContext
-    var bitmap by remember(source) { mutableStateOf(bitmapCache.get(source)) }
+    var bitmap by remember(source) { mutableStateOf(if (source.isNotBlank()) bitmapCache.get(source) else null) }
+
+    if (source.isBlank() || failedSources.contains(source)) {
+        return null
+    }
 
     LaunchedEffect(source) {
-        if (source.isBlank()) {
-            bitmap = null
-            return@LaunchedEffect
-        }
         val cached = bitmapCache.get(source)
         if (cached != null) {
             bitmap = cached
+            return@LaunchedEffect
+        }
+        if (source.isBlank() || failedSources.contains(source)) {
             return@LaunchedEffect
         }
         withContext(Dispatchers.IO) {
@@ -177,9 +181,11 @@ fun rememberBookImage(source: String): Bitmap? {
                     withContext(Dispatchers.Main) {
                         bitmap = decoded
                     }
+                } else {
+                    failedSources.add(source)
                 }
             } catch (_: Throwable) {
-                // Ignore load error safely (prevent OOM crashes)
+                failedSources.add(source)
             }
         }
     }

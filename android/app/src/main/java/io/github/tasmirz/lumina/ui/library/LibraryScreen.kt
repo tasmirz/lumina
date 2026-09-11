@@ -800,15 +800,23 @@ fun LibraryScreen(
 
                                         Spacer(modifier = Modifier.height(10.dp))
 
-                                        LinearProgressIndicator(
-                                            progress = { (activeBook.progress / 100f).coerceIn(0f, 1f) },
+                                        Box(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .height(4.dp)
-                                                .clip(RoundedCornerShape(2.dp)),
-                                            color = MaterialTheme.colorScheme.secondary,
-                                            trackColor = MaterialTheme.colorScheme.surfaceVariant
-                                        )
+                                                .clip(RoundedCornerShape(2.dp))
+                                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                        ) {
+                                            val frac = (activeBook.progress / 100f).coerceIn(0f, 1f)
+                                            if (frac > 0f) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth(fraction = frac)
+                                                        .fillMaxHeight()
+                                                        .background(MaterialTheme.colorScheme.secondary)
+                                                )
+                                            }
+                                        }
 
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Row(
@@ -941,15 +949,23 @@ fun LibraryScreen(
 
                         Spacer(modifier = Modifier.height(6.dp))
 
-                        LinearProgressIndicator(
-                            progress = { (book.progress / 100f).coerceIn(0f, 1f) },
+                        Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(3.dp)
-                                .clip(RoundedCornerShape(2.dp)),
-                            color = MaterialTheme.colorScheme.secondary,
-                            trackColor = MaterialTheme.colorScheme.surfaceVariant
-                        )
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            val frac = (book.progress / 100f).coerceIn(0f, 1f)
+                            if (frac > 0f) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth(fraction = frac)
+                                        .fillMaxHeight()
+                                        .background(MaterialTheme.colorScheme.secondary)
+                                )
+                            }
+                        }
 
                         Spacer(modifier = Modifier.height(6.dp))
                         Row(
