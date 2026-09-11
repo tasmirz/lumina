@@ -166,15 +166,7 @@ class MainActivity : ComponentActivity() {
             val readerSettings by bookRepository.readerSettings.collectAsStateWithLifecycle()
             val books by bookRepository.books.collectAsStateWithLifecycle()
             val activeBookId by bookRepository.activeBookId.collectAsStateWithLifecycle()
-            val rawActiveBook = books.find { it.id == activeBookId } ?: books.firstOrNull() ?: bookRepository.getActiveBook()
-            val activeBook = remember(rawActiveBook?.id, rawActiveBook?.chapters?.size) {
-                if (rawActiveBook == null) null
-                else if (rawActiveBook.chapters.isNotEmpty()) rawActiveBook
-                else {
-                    val cached = bookRepository.getCachedChapters(rawActiveBook.id)
-                    if (cached != null && cached.isNotEmpty()) rawActiveBook.copy(chapters = cached) else rawActiveBook
-                }
-            }
+            val activeBook = books.find { it.id == activeBookId } ?: books.firstOrNull()
             val bookmarks by bookRepository.bookmarks.collectAsStateWithLifecycle()
             val wishlistBooks by bookRepository.wishlistBooks.collectAsStateWithLifecycle()
             val completedBookIds by bookRepository.completedBookIds.collectAsStateWithLifecycle()
@@ -562,10 +554,12 @@ class MainActivity : ComponentActivity() {
                     }
 
                     // Dictionary Bottom Sheet
+                    if (activeWordDefinition != null) {
                         DictionarySheet(
                             definition = activeWordDefinition,
                             onDismiss = { activeWordDefinition = null }
                         )
+                    }
 
                         // Bookmarks Bottom Sheet
                         if (showBookmarksSheet) {

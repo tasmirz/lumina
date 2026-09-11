@@ -42,7 +42,10 @@ private fun decodeSampledBitmapFromFile(file: File, maxWidth: Int = 450, maxHeig
         while (opt.outWidth / sample > maxWidth || opt.outHeight / sample > maxHeight) {
             sample *= 2
         }
-        val decodeOpt = BitmapFactory.Options().apply { inSampleSize = sample }
+        val decodeOpt = BitmapFactory.Options().apply {
+            inSampleSize = sample
+            inPreferredConfig = Bitmap.Config.RGB_565
+        }
         BitmapFactory.decodeFile(file.absolutePath, decodeOpt)
     } catch (_: Throwable) {
         null
@@ -57,7 +60,10 @@ private fun decodeSampledBitmapFromByteArray(bytes: ByteArray, maxWidth: Int = 4
         while (opt.outWidth / sample > maxWidth || opt.outHeight / sample > maxHeight) {
             sample *= 2
         }
-        val decodeOpt = BitmapFactory.Options().apply { inSampleSize = sample }
+        val decodeOpt = BitmapFactory.Options().apply {
+            inSampleSize = sample
+            inPreferredConfig = Bitmap.Config.RGB_565
+        }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOpt)
     } catch (_: Throwable) {
         null

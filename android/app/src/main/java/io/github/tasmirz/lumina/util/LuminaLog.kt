@@ -32,25 +32,41 @@ object LuminaLog {
 
     init {
         logScope.launch {
+            val pendingBuffer = ArrayList<String>()
             for (line in logChannel) {
-                writeLineToFile(line)
+                val file = logFile
+                if (file == null) {
+                    pendingBuffer.add(line)
+                    if (pendingBuffer.size > 2000) pendingBuffer.removeAt(0)
+                } else {
+                    if (pendingBuffer.isNotEmpty()) {
+                        for (p in pendingBuffer) {
+                            writeLineToFile(p, file)
+                        }
+                        pendingBuffer.clear()
+                    }
+                    writeLineToFile(line, file)
+                }
             }
         }
     }
 
     fun init(context: Context) {
-        try {
-            val logDir = LuminaStorageManager.getPersistentLogsDirectory(context)
-            logFile = File(logDir, "lumina.log")
-            i("LuminaLog", "=== Lumina Session Started ===")
-            i("LuminaLog", "Persistent log path: ${logFile?.absolutePath}")
-        } catch (e: Throwable) {
-            Log.w(TAG, "Failed initializing persistent log file: ${e.message}")
+        logScope.launch {
+            try {
+                val logDir = LuminaStorageManager.getPersistentLogsDirectory(context)
+                val file = File(logDir, "lumina.log")
+                logFile = file
+                i("LuminaLog", "=== Lumina Session Started ===")
+                i("LuminaLog", "Persistent log path: ${file.absolutePath}")
+            } catch (e: Throwable) {
+                Log.w(TAG, "Failed initializing persistent log file: ${e.message}")
+            }
         }
     }
 
-    private fun writeLineToFile(line: String) {
-        val file = logFile ?: return
+    private fun writeLineToFile(line: String, targetFile: File? = logFile) {
+        val file = targetFile ?: logFile ?: return
         try {
             if (file.exists() && file.length() > MAX_LOG_SIZE_BYTES) {
                 val backup = File(file.parentFile, "lumina.log.old")

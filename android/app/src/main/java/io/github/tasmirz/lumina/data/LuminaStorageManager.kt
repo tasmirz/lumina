@@ -35,6 +35,7 @@ object LuminaStorageManager {
     private fun canWriteToDir(dir: File): Boolean {
         return try {
             if (!dir.exists() && !dir.mkdirs()) return false
+            if (dir.canWrite()) return true
             val probe = File(dir, ".probe_${System.currentTimeMillis()}")
             if (probe.createNewFile()) {
                 probe.delete()
@@ -54,12 +55,12 @@ object LuminaStorageManager {
      */
     fun getPersistentEpubDirectory(context: Context?): File {
         cachedPersistentDir?.let { cached ->
-            if (cached.exists() && cached.isDirectory && canWriteToDir(cached)) return cached
+            if (cached.exists() && cached.isDirectory) return cached
         }
 
         synchronized(this) {
             cachedPersistentDir?.let { cached ->
-                if (cached.exists() && cached.isDirectory && canWriteToDir(cached)) return cached
+                if (cached.exists() && cached.isDirectory) return cached
             }
 
             // 1. Linux / Desktop / JVM / Termux environment
