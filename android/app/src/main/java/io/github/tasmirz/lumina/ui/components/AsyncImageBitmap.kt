@@ -17,6 +17,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import io.github.tasmirz.lumina.data.EpubParser
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import java.io.ByteArrayOutputStream
@@ -25,7 +26,14 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
 
-private val bitmapCache = object : android.util.LruCache<String, Bitmap>(30) {}
+private val maxMemoryKb = (Runtime.getRuntime().maxMemory() / 1024).toInt()
+private val cacheSizeKb = (maxMemoryKb / 8).coerceIn(4096, 32768)
+
+private val bitmapCache = object : android.util.LruCache<String, Bitmap>(cacheSizeKb) {
+    override fun sizeOf(key: String, value: Bitmap): Int {
+        return (value.byteCount / 1024).coerceAtLeast(1)
+    }
+}
 private val failedSources = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
 private val coverDownloadSemaphore = Semaphore(3)
 
@@ -35,37 +43,71 @@ private fun sha256Hex(input: String): String {
     return digest.joinToString("") { "%02x".format(it) }
 }
 
-private fun decodeSampledBitmapFromFile(file: File, maxWidth: Int = 300, maxHeight: Int = 420): Bitmap? {
+private fun decodeSampledBitmapFromFile(file: File, maxWidth: Int = 360, maxHeight: Int = 540): Bitmap? {
     return try {
         val opt = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.absolutePath, opt)
+        val origW = opt.outWidth
+        val origH = opt.outHeight
+        if (origW <= 0 || origH <= 0) return null
+
         var sample = 1
-        while (opt.outWidth / sample > maxWidth || opt.outHeight / sample > maxHeight) {
+        while (origW / sample > maxWidth * 2 || origH / sample > maxHeight * 2) {
             sample *= 2
         }
         val decodeOpt = BitmapFactory.Options().apply {
             inSampleSize = sample
             inPreferredConfig = Bitmap.Config.RGB_565
         }
-        BitmapFactory.decodeFile(file.absolutePath, decodeOpt)
+        val decoded = BitmapFactory.decodeFile(file.absolutePath, decodeOpt) ?: return null
+
+        if (decoded.width > maxWidth || decoded.height > maxHeight) {
+            val scale = minOf(maxWidth.toFloat() / decoded.width, maxHeight.toFloat() / decoded.height)
+            val targetW = (decoded.width * scale).toInt().coerceAtLeast(1)
+            val targetH = (decoded.height * scale).toInt().coerceAtLeast(1)
+            val scaled = Bitmap.createScaledBitmap(decoded, targetW, targetH, true)
+            if (scaled != decoded) {
+                decoded.recycle()
+            }
+            scaled
+        } else {
+            decoded
+        }
     } catch (_: Throwable) {
         null
     }
 }
 
-private fun decodeSampledBitmapFromByteArray(bytes: ByteArray, maxWidth: Int = 300, maxHeight: Int = 420): Bitmap? {
+private fun decodeSampledBitmapFromByteArray(bytes: ByteArray, maxWidth: Int = 360, maxHeight: Int = 540): Bitmap? {
     return try {
         val opt = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opt)
+        val origW = opt.outWidth
+        val origH = opt.outHeight
+        if (origW <= 0 || origH <= 0) return null
+
         var sample = 1
-        while (opt.outWidth / sample > maxWidth || opt.outHeight / sample > maxHeight) {
+        while (origW / sample > maxWidth * 2 || origH / sample > maxHeight * 2) {
             sample *= 2
         }
         val decodeOpt = BitmapFactory.Options().apply {
             inSampleSize = sample
             inPreferredConfig = Bitmap.Config.RGB_565
         }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOpt)
+        val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOpt) ?: return null
+
+        if (decoded.width > maxWidth || decoded.height > maxHeight) {
+            val scale = minOf(maxWidth.toFloat() / decoded.width, maxHeight.toFloat() / decoded.height)
+            val targetW = (decoded.width * scale).toInt().coerceAtLeast(1)
+            val targetH = (decoded.height * scale).toInt().coerceAtLeast(1)
+            val scaled = Bitmap.createScaledBitmap(decoded, targetW, targetH, true)
+            if (scaled != decoded) {
+                decoded.recycle()
+            }
+            scaled
+        } else {
+            decoded
+        }
     } catch (_: Throwable) {
         null
     }
@@ -137,7 +179,7 @@ fun rememberBookImage(source: String): Bitmap? {
                                 if (bytes != null && bytes.isNotEmpty()) {
                                     try {
                                         val tempFile = File(coversDir, "${diskCacheFile.name}.tmp")
-                                        tempFile.writeBytes(bytes)
+                                        EpubParser.compressAndSaveCover(bytes, tempFile, maxDimension = 540, quality = 82)
                                         tempFile.renameTo(diskCacheFile)
                                     } catch (_: Exception) {}
                                     decodeSampledBitmapFromByteArray(bytes)

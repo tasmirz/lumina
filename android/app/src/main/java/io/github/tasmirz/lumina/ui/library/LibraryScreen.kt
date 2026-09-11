@@ -88,10 +88,22 @@ fun LibraryScreen(
 
     val filteredBooks = remember(books, searchQuery) {
         if (searchQuery.isBlank()) emptyList()
-        else books.filter {
-            it.title.contains(searchQuery, ignoreCase = true) ||
-            it.author.contains(searchQuery, ignoreCase = true) ||
-            it.id.contains(searchQuery, ignoreCase = true)
+        else {
+            val q = searchQuery.trim().lowercase()
+            books.filter {
+                it.title.contains(q, ignoreCase = true) ||
+                it.author.contains(q, ignoreCase = true) ||
+                it.id.contains(q, ignoreCase = true)
+            }.sortedWith(compareByDescending<Book> {
+                when {
+                    it.title.equals(q, ignoreCase = true) -> 1000
+                    it.title.startsWith(q, ignoreCase = true) -> 500
+                    it.author.equals(q, ignoreCase = true) -> 400
+                    it.title.contains(q, ignoreCase = true) -> 300
+                    it.author.contains(q, ignoreCase = true) -> 200
+                    else -> 0
+                }
+            }.thenBy { it.title })
         }
     }
 

@@ -32,6 +32,18 @@ data class OnlineBookItem(
 
 object OnlineEpubService {
 
+    var openLibraryApiKey: String = ""
+
+    fun formatArchiveAuthorizationHeader(apiKey: String): String? {
+        val trimmed = apiKey.trim()
+        if (trimmed.isBlank()) return null
+        return if (trimmed.startsWith("LOW ", ignoreCase = true) || trimmed.startsWith("Bearer ", ignoreCase = true)) {
+            trimmed
+        } else {
+            "LOW $trimmed"
+        }
+    }
+
     val curatedClassics = listOf(
         OnlineBookItem(
             id = "se-pride-and-prejudice",
@@ -117,6 +129,134 @@ object OnlineEpubService {
         return nsfwKeywords.any { combined.contains(it) }
     }
 
+    private val stopWords = setOf(
+        "the", "a", "an", "and", "or", "of", "in", "on", "at", "to", "by", "for", "with", "from", "as", "is", "it"
+    )
+
+    fun calculateRelevanceScore(book: OnlineBookItem, query: String): Float {
+        val qTrimmed = query.trim().lowercase()
+        if (qTrimmed.isEmpty()) return 0f
+
+        val titleLower = book.title.lowercase().trim()
+        val authorLower = book.author.lowercase().trim()
+        val tagLower = book.tag.lowercase().trim()
+
+        val allQTokens = qTrimmed.split(Regex("[^\\p{L}\\p{Nd}]+")).filter { it.isNotBlank() }
+        if (allQTokens.isEmpty()) return 0f
+
+        val meaningfulTokens = allQTokens.filterNot { stopWords.contains(it) }
+        val tokens = if (meaningfulTokens.isNotEmpty()) meaningfulTokens else allQTokens
+
+        val titleWords = titleLower.split(Regex("[^\\p{L}\\p{Nd}]+")).filter { it.isNotBlank() }
+        val authorWords = authorLower.split(Regex("[^\\p{L}\\p{Nd}]+")).filter { it.isNotBlank() }
+
+        var score = 0f
+        var titleMatches = 0
+        var authorMatches = 0
+
+        // 1. Exact full-query matches (Highest priority)
+        if (titleLower == qTrimmed) {
+            score += 1000f
+        } else if (titleLower.startsWith(qTrimmed)) {
+            score += 500f
+        } else if (titleLower.contains(qTrimmed)) {
+            score += 350f
+        }
+
+        if (authorLower == qTrimmed) {
+            score += 800f
+        } else if (authorLower.startsWith(qTrimmed)) {
+            score += 400f
+        } else if (authorLower.contains(qTrimmed)) {
+            score += 300f
+        }
+
+        // 2. Token-level matching
+        for (t in tokens) {
+            var matchedInTitle = false
+            var matchedInAuthor = false
+
+            if (titleWords.contains(t)) {
+                score += 80f
+                matchedInTitle = true
+            } else if (titleWords.any { it.startsWith(t) }) {
+                score += 45f
+                matchedInTitle = true
+            } else if (titleLower.contains(t)) {
+                score += 25f
+                matchedInTitle = true
+            }
+
+            if (authorWords.contains(t)) {
+                score += 60f
+                matchedInAuthor = true
+            } else if (authorWords.any { it.startsWith(t) }) {
+                score += 35f
+                matchedInAuthor = true
+            } else if (authorLower.contains(t)) {
+                score += 20f
+                matchedInAuthor = true
+            }
+
+            if (tagLower.contains(t)) {
+                score += 15f
+            }
+
+            if (matchedInTitle) titleMatches++
+            if (matchedInAuthor) authorMatches++
+        }
+
+        val totalMatchedTokens = (0 until tokens.size).count { idx ->
+            val t = tokens[idx]
+            titleLower.contains(t) || authorLower.contains(t) || tagLower.contains(t)
+        }
+
+        // If not a single significant token matches anywhere in title/author/tag, score is 0
+        if (totalMatchedTokens == 0 && !titleLower.contains(qTrimmed) && !authorLower.contains(qTrimmed)) {
+            return 0f
+        }
+
+        // Coverage bonus (all tokens matched)
+        val coverageRatio = totalMatchedTokens.toFloat() / tokens.size
+        score += coverageRatio * 200f
+        if (coverageRatio >= 1.0f) {
+            score += 150f
+        }
+
+        // Title length compactness bonus (favors exact titles over long descriptions/anthologies)
+        if (titleLower.contains(qTrimmed) && titleLower.isNotEmpty()) {
+            val lengthRatio = (qTrimmed.length.toFloat() / titleLower.length.toFloat()).coerceIn(0f, 1f)
+            score += lengthRatio * 80f
+        }
+
+        // Source quality / curation weight
+        when (book.source) {
+            OnlineCatalogSource.STANDARD_EBOOKS -> score += 30f
+            OnlineCatalogSource.GUTENBERG -> score += 20f
+            OnlineCatalogSource.OPEN_LIBRARY -> score += 10f
+            OnlineCatalogSource.INTERNET_ARCHIVE -> score += 5f
+            else -> {}
+        }
+
+        // Popularity tie-breaker
+        if (book.downloadCount > 0) {
+            score += (kotlin.math.log10(book.downloadCount.toDouble() + 1.0) * 5.0).toFloat()
+        }
+
+        return score
+    }
+
+    fun rankAndFilterResults(results: List<OnlineBookItem>, query: String): List<OnlineBookItem> {
+        val cleanQuery = query.trim()
+        if (cleanQuery.isBlank()) return results
+
+        return results
+            .map { it to calculateRelevanceScore(it, cleanQuery) }
+            .filter { (_, score) -> score > 0f } // Filter out non-matching books sent by loose providers
+            .sortedByDescending { it.second }
+            .map { it.first }
+    }
+
     suspend fun searchBooks(query: String, source: OnlineCatalogSource = OnlineCatalogSource.ALL): List<OnlineBookItem> = kotlinx.coroutines.coroutineScope {
         val cleanQuery = query.trim()
         if (cleanQuery.isBlank()) {
@@ -146,9 +286,11 @@ object OnlineEpubService {
         openLibraryDeferred?.await()?.let { results.addAll(it) }
         archiveDeferred?.await()?.let { results.addAll(it) }
 
-        results
+        val filtered = results
             .filterNot { isNsfw(it.title, it.author, it.tag) }
             .distinctBy { it.id }
+
+        rankAndFilterResults(filtered, cleanQuery)
     }
 
     private fun searchGutenberg(query: String): List<OnlineBookItem> {
@@ -251,6 +393,9 @@ object OnlineEpubService {
                 connectTimeout = 7000
                 readTimeout = 7000
                 setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
+                formatArchiveAuthorizationHeader(openLibraryApiKey)?.let { auth ->
+                    setRequestProperty("Authorization", auth)
+                }
             }
             if (conn.responseCode != 200) return emptyList()
 
@@ -292,6 +437,9 @@ object OnlineEpubService {
                 connectTimeout = 7000
                 readTimeout = 7000
                 setRequestProperty("User-Agent", "LuminaEpubReader/1.0 (https://github.com/tasmirz/lumina)")
+                formatArchiveAuthorizationHeader(openLibraryApiKey)?.let { auth ->
+                    setRequestProperty("Authorization", auth)
+                }
             }
             if (conn.responseCode != 200) return emptyList()
 
@@ -343,6 +491,11 @@ object OnlineEpubService {
                     readTimeout = 20000
                     setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
                     setRequestProperty("Accept", "application/epub+zip,application/octet-stream,*/*")
+                    if (currentUrl.contains("archive.org") || currentUrl.contains("openlibrary.org")) {
+                        formatArchiveAuthorizationHeader(openLibraryApiKey)?.let { auth ->
+                            setRequestProperty("Authorization", auth)
+                        }
+                    }
                 }
                 val code = conn.responseCode
                 if (code in 300..399) {

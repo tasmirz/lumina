@@ -269,6 +269,7 @@ data class ReaderSettings(
     val orbLandscapeY: Float = -1f,
     val orbColor: OrbColor = OrbColor.THEME,
     val orbOpacity: Float = 0.85f,
-    val preferredLanguage: String = "auto"
+    val preferredLanguage: String = "auto",
+    val openLibraryApiKey: String = ""
 )
 

@@ -65,7 +65,9 @@ fun ReaderBottomDock(
     val currentOnToggleNavBar by rememberUpdatedState(onToggleNavBar)
     val currentOnForceSavePosition by rememberUpdatedState(onForceSavePosition)
 
-    val isVisible = (isUiVisible || readingMode == ReadingMode.PAGED) && voiceState == AssistantVoiceState.IDLE
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    val isVisible = (if (isLandscape) isUiVisible else (isUiVisible || readingMode == ReadingMode.PAGED)) && voiceState == AssistantVoiceState.IDLE
 
     LaunchedEffect(showReadTillFeedback) {
         if (showReadTillFeedback) {

@@ -1,6 +1,9 @@
 package io.github.tasmirz.lumina.data
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.os.Build
 import io.github.tasmirz.lumina.model.Book
 import io.github.tasmirz.lumina.model.Chapter
 import java.io.File
@@ -10,6 +13,101 @@ import java.net.URLDecoder
 import java.util.zip.ZipInputStream
 
 object EpubParser {
+
+    /**
+     * Compresses and scales down cover images to optimized WebP/JPEG for fast, zero-jank gallery rendering.
+     */
+    fun compressAndSaveCover(
+        inputBytes: ByteArray,
+        destFile: File,
+        maxDimension: Int = 640,
+        quality: Int = 82
+    ): Boolean {
+        if (inputBytes.isEmpty()) return false
+        return try {
+            val boundsOpt = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(inputBytes, 0, inputBytes.size, boundsOpt)
+            val origW = boundsOpt.outWidth
+            val origH = boundsOpt.outHeight
+            if (origW <= 0 || origH <= 0) {
+                destFile.writeBytes(inputBytes)
+                return true
+            }
+
+            var sampleSize = 1
+            while (origW / sampleSize > maxDimension * 2 || origH / sampleSize > maxDimension * 2) {
+                sampleSize *= 2
+            }
+
+            val decodeOpt = BitmapFactory.Options().apply {
+                inSampleSize = sampleSize
+                inPreferredConfig = Bitmap.Config.RGB_565
+            }
+            val decoded = BitmapFactory.decodeByteArray(inputBytes, 0, inputBytes.size, decodeOpt)
+                ?: run {
+                    destFile.writeBytes(inputBytes)
+                    return true
+                }
+
+            val finalBitmap = if (decoded.width > maxDimension || decoded.height > maxDimension) {
+                val scale = maxDimension.toFloat() / maxOf(decoded.width, decoded.height)
+                val targetW = (decoded.width * scale).toInt().coerceAtLeast(1)
+                val targetH = (decoded.height * scale).toInt().coerceAtLeast(1)
+                val scaled = Bitmap.createScaledBitmap(decoded, targetW, targetH, true)
+                if (scaled != decoded) {
+                    decoded.recycle()
+                }
+                scaled
+            } else {
+                decoded
+            }
+
+            val format = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                Bitmap.CompressFormat.WEBP_LOSSY
+            } else {
+                @Suppress("DEPRECATION")
+                Bitmap.CompressFormat.WEBP
+            }
+
+            val compressFormat = if (destFile.name.endsWith(".jpg", ignoreCase = true) || destFile.name.endsWith(".jpeg", ignoreCase = true)) {
+                Bitmap.CompressFormat.JPEG
+            } else {
+                format
+            }
+
+            FileOutputStream(destFile).use { outStream ->
+                finalBitmap.compress(compressFormat, quality, outStream)
+                outStream.flush()
+            }
+            finalBitmap.recycle()
+            true
+        } catch (_: Throwable) {
+            try {
+                destFile.writeBytes(inputBytes)
+                true
+            } catch (_: Throwable) {
+                false
+            }
+        }
+    }
+
+    fun compressExistingCoverFile(file: File, maxDimension: Int = 640, quality: Int = 82): Boolean {
+        if (!file.exists() || file.length() < 100 * 1024L) return false
+        return try {
+            val bytes = file.readBytes()
+            val temp = File(file.parentFile, "${file.name}.tmp")
+            val ok = compressAndSaveCover(bytes, temp, maxDimension, quality)
+            if (ok && temp.exists() && temp.length() > 0L && temp.length() < file.length()) {
+                temp.renameTo(file)
+                true
+            } else {
+                temp.delete()
+                false
+            }
+        } catch (_: Throwable) {
+            false
+        }
+    }
 
     /**
      * Ultra-fast lightweight metadata-only parser.
@@ -133,11 +231,8 @@ object EpubParser {
                                 val ext = if (coverZipEntry.name.endsWith(".png", ignoreCase = true)) "png" else "jpg"
                                 val coverFile = File(coversDir, "${bookId}_cover.$ext")
                                 if (!coverFile.exists() || coverFile.length() == 0L) {
-                                    zip.getInputStream(coverZipEntry).use { input ->
-                                        FileOutputStream(coverFile).use { output ->
-                                            input.copyTo(output)
-                                        }
-                                    }
+                                    val bytes = zip.getInputStream(coverZipEntry).use { it.readBytes() }
+                                    compressAndSaveCover(bytes, coverFile, maxDimension = 640, quality = 82)
                                 }
                                 if (coverFile.exists() && coverFile.length() > 0L) {
                                     coverUrl = coverFile.absolutePath
@@ -433,8 +528,10 @@ object EpubParser {
                     val coversDir = File(context.filesDir, "covers").apply { mkdirs() }
                     val ext = if (coverEntryKey.endsWith(".png", ignoreCase = true)) "png" else "jpg"
                     val coverFile = File(coversDir, "${bookId}_cover.$ext")
-                    FileOutputStream(coverFile).use { it.write(coverBytes) }
-                    coverUrl = coverFile.absolutePath
+                    compressAndSaveCover(coverBytes, coverFile, maxDimension = 640, quality = 82)
+                    if (coverFile.exists() && coverFile.length() > 0L) {
+                        coverUrl = coverFile.absolutePath
+                    }
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }

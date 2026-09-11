@@ -278,6 +278,11 @@ class BookRepository private constructor(private val context: Context) {
     private val _geminiApiKey = MutableStateFlow(prefs.getString("gemini_api_key", "") ?: "")
     val geminiApiKey: StateFlow<String> = _geminiApiKey.asStateFlow()
 
+    private val _openLibraryApiKey = MutableStateFlow(prefs.getString("open_library_api_key", "") ?: "").also {
+        OnlineEpubService.openLibraryApiKey = it.value
+    }
+    val openLibraryApiKey: StateFlow<String> = _openLibraryApiKey.asStateFlow()
+
     private val _aiProvider = MutableStateFlow(
         try {
             AiProvider.valueOf(prefs.getString("ai_provider", AiProvider.GEMINI.name) ?: AiProvider.GEMINI.name)
@@ -397,7 +402,8 @@ class BookRepository private constructor(private val context: Context) {
             aiBaseUrl = prefs.getString("ai_base_url", "https://api.openai.com/v1") ?: "https://api.openai.com/v1",
             aiModel = prefs.getString("ai_model", null).let { if (it.isNullOrBlank()) "gemini-3.1-flash-lite" else it },
             assistantOrbStyle = prefs.getString("assistant_orb_style", "EDGE_DOT") ?: "EDGE_DOT",
-            preferredLanguage = prefs.getString("preferred_language", "auto") ?: "auto"
+            preferredLanguage = prefs.getString("preferred_language", "auto") ?: "auto",
+            openLibraryApiKey = prefs.getString("open_library_api_key", "") ?: ""
         )
     }
 
@@ -462,18 +468,25 @@ class BookRepository private constructor(private val context: Context) {
         isLandscape: Boolean,
         isStrictPaged: Boolean,
         activeChapterIndex: Int = 0,
+        screenWidthDp: Int = 0,
+        screenHeightDp: Int = 0,
         onActiveChapterReady: ((List<Pair<String, String>>) -> Unit)? = null,
         onAllPagesReady: ((List<Pair<String, String>>) -> Unit)? = null
     ) {
         repoScope.launch(Dispatchers.Default) {
             val chapters = if (book.chapters.isNotEmpty()) book.chapters else getChaptersForBook(book.id)
             if (chapters.isEmpty()) return@launch
+            val config = context.resources?.configuration
+            val sw = if (screenWidthDp > 0) screenWidthDp else (config?.screenWidthDp ?: 0)
+            val sh = if (screenHeightDp > 0) screenHeightDp else (config?.screenHeightDp ?: 0)
             val allPages = PageCache.getOrComputeAsync(
                 bookId = book.id,
                 chapters = chapters,
                 fontSize = fontSize,
                 isLandscape = isLandscape,
                 isStrictPaged = isStrictPaged,
+                screenWidthDp = sw,
+                screenHeightDp = sh,
                 dbHelper = dbHelper,
                 context = context,
                 activeChapterIndex = activeChapterIndex,
@@ -514,6 +527,18 @@ class BookRepository private constructor(private val context: Context) {
 
             try {
                 syncSettings()
+            } catch (_: Exception) {}
+
+            // Background compression pass on legacy / uncompressed cover files to reclaim storage
+            try {
+                val coversDir = File(context.filesDir, "covers")
+                if (coversDir.exists() && coversDir.isDirectory) {
+                    coversDir.listFiles()?.forEach { file ->
+                        if (file.isFile && file.length() > 120 * 1024L) {
+                            EpubParser.compressExistingCoverFile(file, maxDimension = 640, quality = 82)
+                        }
+                    }
+                }
             } catch (_: Exception) {}
 
             // Only if library is completely empty (e.g. fresh install with no backup),
@@ -695,6 +720,7 @@ class BookRepository private constructor(private val context: Context) {
         settings.put("ai_model", _aiModel.value)
         settings.put("ai_base_url", _aiBaseUrl.value)
         settings.put("gemini_api_key", _geminiApiKey.value)
+        settings.put("open_library_api_key", _openLibraryApiKey.value)
         settings.put("background_texture", _backgroundTexture.value.name)
         settings.put("custom_bg_uri", _customBgUri.value)
         settings.put("custom_bg_color", _customBgColor.value)
@@ -803,6 +829,7 @@ class BookRepository private constructor(private val context: Context) {
                 if (s.has("ai_model")) setAiModel(s.getString("ai_model"))
                 if (s.has("ai_base_url")) setAiBaseUrl(s.getString("ai_base_url"))
                 if (s.has("gemini_api_key")) setGeminiApiKey(s.getString("gemini_api_key"))
+                if (s.has("open_library_api_key")) setOpenLibraryApiKey(s.getString("open_library_api_key"))
                 if (s.has("background_texture")) {
                     try { setBackgroundTexture(BackgroundTexture.valueOf(s.getString("background_texture"))) } catch (_: Exception) {}
                 }
@@ -1530,6 +1557,14 @@ class BookRepository private constructor(private val context: Context) {
         persistSettingToDb("gemini_api_key", key)
     }
 
+    fun setOpenLibraryApiKey(key: String) {
+        _openLibraryApiKey.value = key
+        OnlineEpubService.openLibraryApiKey = key
+        updateReaderSettings { it.copy(openLibraryApiKey = key) }
+        prefs.edit().putString("open_library_api_key", key).apply()
+        persistSettingToDb("open_library_api_key", key)
+    }
+
     fun setLastTab(tab: String) {
         prefs.edit().putString("last_screen_tab", tab).apply()
     }
@@ -2165,6 +2200,24 @@ class BookRepository private constructor(private val context: Context) {
                     persistSettingToDb("gemini_api_key", prefsKey)
                 }
             }
+            dbSettings["open_library_api_key"]?.let { dbKey ->
+                if (dbKey.isNotBlank()) {
+                    s = s.copy(openLibraryApiKey = dbKey)
+                    prefs.edit().putString("open_library_api_key", dbKey).apply()
+                } else {
+                    val prefsKey = prefs.getString("open_library_api_key", "") ?: ""
+                    if (prefsKey.isNotBlank()) {
+                        s = s.copy(openLibraryApiKey = prefsKey)
+                        persistSettingToDb("open_library_api_key", prefsKey)
+                    }
+                }
+            } ?: run {
+                val prefsKey = prefs.getString("open_library_api_key", "") ?: ""
+                if (prefsKey.isNotBlank()) {
+                    s = s.copy(openLibraryApiKey = prefsKey)
+                    persistSettingToDb("open_library_api_key", prefsKey)
+                }
+            }
 
             // Atomic update to readerSettings Flow
             _readerSettings.value = s
@@ -2221,6 +2274,8 @@ class BookRepository private constructor(private val context: Context) {
             _aiModel.value = s.aiModel
             _aiBaseUrl.value = s.aiBaseUrl
             _geminiApiKey.value = s.geminiApiKey
+            _openLibraryApiKey.value = s.openLibraryApiKey
+            OnlineEpubService.openLibraryApiKey = s.openLibraryApiKey
         } else {
             // Initial seed into SQLite in a single transaction
             val s = _readerSettings.value
@@ -2275,7 +2330,8 @@ class BookRepository private constructor(private val context: Context) {
                 "ai_provider" to s.aiProvider.name,
                 "ai_model" to s.aiModel,
                 "ai_base_url" to s.aiBaseUrl,
-                "gemini_api_key" to s.geminiApiKey
+                "gemini_api_key" to s.geminiApiKey,
+                "open_library_api_key" to s.openLibraryApiKey
             )
             dbHelper.setSettings(initialMap)
         }

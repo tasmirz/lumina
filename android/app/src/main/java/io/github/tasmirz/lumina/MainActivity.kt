@@ -189,6 +189,7 @@ class MainActivity : ComponentActivity() {
             val orbMenuSize = readerSettings.orbMenuSize
             val orbColor = readerSettings.orbColor
             val geminiApiKey = readerSettings.geminiApiKey
+            val openLibraryApiKey = readerSettings.openLibraryApiKey
             val quickThemes = readerSettings.quickThemes
             val quickFonts = readerSettings.quickFonts
             val orbActionOrder = readerSettings.orbActionOrder
@@ -227,9 +228,10 @@ class MainActivity : ComponentActivity() {
                 bookRepository.setLastTab(currentTab.name)
             }
 
-            LaunchedEffect(isFullscreen) {
+            val isReadingMode = currentTab == ScreenTab.READER
+            LaunchedEffect(isReadingMode, isFullscreen) {
                 val insetsController = WindowCompat.getInsetsController(window, window.decorView)
-                if (isFullscreen) {
+                if (isReadingMode || isFullscreen) {
                     insetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
                     insetsController.hide(WindowInsetsCompat.Type.statusBars())
                 } else {
@@ -663,6 +665,8 @@ class MainActivity : ComponentActivity() {
                                 onAiModelChange = { bookRepository.setAiModel(it) },
                                 geminiApiKey = geminiApiKey,
                                 onGeminiApiKeyChange = { bookRepository.setGeminiApiKey(it) },
+                                openLibraryApiKey = openLibraryApiKey,
+                                onOpenLibraryApiKeyChange = { bookRepository.setOpenLibraryApiKey(it) },
                                 onBack = { showAdvancedSettingsScreen = false }
                             )
                         }

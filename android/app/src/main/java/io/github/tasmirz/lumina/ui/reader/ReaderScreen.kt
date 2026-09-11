@@ -1,10 +1,15 @@
 package io.github.tasmirz.lumina.ui.reader
 
 import android.Manifest
+import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.ContextWrapper
 import android.widget.Toast
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import java.io.File
 import io.github.tasmirz.lumina.data.EdgeTtsService
 import io.github.tasmirz.lumina.data.LuminaAudioService
@@ -72,6 +77,8 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.FindInPage
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalConfiguration
@@ -185,7 +192,12 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.launch
-private fun findPageForLocation(
+internal fun cleanAlpha(s: String): String = s.lowercase()
+    .replace(Regex("[^a-z0-9\\s]"), " ")
+    .replace(Regex("\\s+"), " ")
+    .trim()
+
+internal fun findPageForLocation(
     pages: List<Pair<String, String>>,
     chapterIdx: Int,
     chapters: List<Chapter>,
@@ -196,43 +208,111 @@ private fun findPageForLocation(
     val targetChapter = chapters.getOrNull(chapterIdx)
     val chapterTitle = targetChapter?.title ?: ""
 
-    // 1. Try finding page by snippet within the target chapter
-    if (topSnippet.isNotBlank() && chapterTitle.isNotBlank()) {
-        val searchSnippet = topSnippet.take(25).trim()
-        val foundBySnippet = pages.indexOfFirst { page ->
-            page.first == chapterTitle && page.second.contains(searchSnippet)
-        }
-        if (foundBySnippet >= 0) return foundBySnippet
+    fun clean(s: String) = s.replace("“", "\"")
+        .replace("”", "\"")
+        .replace("‘", "'")
+        .replace("’", "'")
+        .replace("—", "-")
+        .replace("–", "-")
+        .replace(Regex("\\s+"), " ")
+        .trim()
+        .lowercase()
 
-        if (searchSnippet.length > 12) {
-            val shortSnippet = searchSnippet.take(12)
-            val foundShort = pages.indexOfFirst { page ->
-                page.first == chapterTitle && page.second.contains(shortSnippet)
+    val cleanedSnippet = clean(topSnippet.trim())
+    val alphaSnippet = cleanAlpha(topSnippet.trim())
+
+    // 1. Try finding page by snippet within the target chapter (multiple lengths)
+    if (cleanedSnippet.isNotBlank()) {
+        for (len in listOf(40, 30, 20, 14, 10)) {
+            val snip = cleanedSnippet.take(len).trim()
+            if (snip.length >= 8) {
+                val found = pages.indexOfFirst { (title, content) ->
+                    (chapterTitle.isBlank() || title.equals(chapterTitle, ignoreCase = true)) &&
+                        clean(content).contains(snip)
+                }
+                if (found >= 0) return found
             }
-            if (foundShort >= 0) return foundShort
+        }
+        for (len in listOf(40, 30, 20, 14, 10)) {
+            val snip = alphaSnippet.take(len).trim()
+            if (snip.length >= 8) {
+                val found = pages.indexOfFirst { (title, content) ->
+                    (chapterTitle.isBlank() || title.equals(chapterTitle, ignoreCase = true)) &&
+                        cleanAlpha(content).contains(snip)
+                }
+                if (found >= 0) return found
+            }
+        }
+
+        // Global search across all pages by snippet (in case chapter title naming slightly differs)
+        for (len in listOf(30, 20, 14, 10)) {
+            val snip = cleanedSnippet.take(len).trim()
+            if (snip.length >= 8) {
+                val foundGlobal = pages.indexOfFirst { clean(it.second).contains(snip) }
+                if (foundGlobal >= 0) return foundGlobal
+            }
+        }
+        for (len in listOf(30, 20, 14, 10)) {
+            val snip = alphaSnippet.take(len).trim()
+            if (snip.length >= 8) {
+                val foundGlobal = pages.indexOfFirst { cleanAlpha(it.second).contains(snip) }
+                if (foundGlobal >= 0) return foundGlobal
+            }
         }
     }
 
     // 2. Try finding page by paragraph text
-    val paraText = targetChapter?.paragraphs?.getOrNull(paraIdx)?.trim() ?: ""
-    if (paraText.isNotBlank()) {
-        val snippetFromPara = paraText.take(25).trim()
-        val foundByPara = pages.indexOfFirst { page ->
-            page.first == chapterTitle && page.second.contains(snippetFromPara)
+    val rawPara = targetChapter?.paragraphs?.getOrNull(paraIdx)?.trim() ?: ""
+    val cleanedPara = clean(rawPara)
+    val alphaPara = cleanAlpha(rawPara)
+    if (cleanedPara.isNotBlank()) {
+        for (len in listOf(35, 24, 14, 8)) {
+            val paraSnip = cleanedPara.take(len).trim()
+            if (paraSnip.length >= 6) {
+                val foundByPara = pages.indexOfFirst { (title, content) ->
+                    (chapterTitle.isBlank() || title.equals(chapterTitle, ignoreCase = true)) &&
+                        clean(content).contains(paraSnip)
+                }
+                if (foundByPara >= 0) return foundByPara
+            }
         }
-        if (foundByPara >= 0) return foundByPara
+        for (len in listOf(35, 24, 14, 8)) {
+            val paraSnip = alphaPara.take(len).trim()
+            if (paraSnip.length >= 6) {
+                val foundByPara = pages.indexOfFirst { (title, content) ->
+                    (chapterTitle.isBlank() || title.equals(chapterTitle, ignoreCase = true)) &&
+                        cleanAlpha(content).contains(paraSnip)
+                }
+                if (foundByPara >= 0) return foundByPara
+            }
+        }
+        // Global search by paragraph
+        for (len in listOf(24, 14, 8)) {
+            val paraSnip = cleanedPara.take(len).trim()
+            if (paraSnip.length >= 6) {
+                val foundGlobalPara = pages.indexOfFirst { clean(it.second).contains(paraSnip) }
+                if (foundGlobalPara >= 0) return foundGlobalPara
+            }
+        }
+        for (len in listOf(24, 14, 8)) {
+            val paraSnip = alphaPara.take(len).trim()
+            if (paraSnip.length >= 6) {
+                val foundGlobalPara = pages.indexOfFirst { cleanAlpha(it.second).contains(paraSnip) }
+                if (foundGlobalPara >= 0) return foundGlobalPara
+            }
+        }
     }
 
     // 3. If it's the very start of chapter, return first page of chapter
     if (paraIdx == 0 && chapterTitle.isNotBlank()) {
-        val firstPage = pages.indexOfFirst { it.first == chapterTitle }
+        val firstPage = pages.indexOfFirst { it.first.equals(chapterTitle, ignoreCase = true) }
         if (firstPage >= 0) return firstPage
     }
 
     // 4. Estimate page within the chapter proportionally
-    val firstPageOfChap = pages.indexOfFirst { it.first == chapterTitle }
+    val firstPageOfChap = pages.indexOfFirst { it.first.equals(chapterTitle, ignoreCase = true) }
     if (firstPageOfChap >= 0) {
-        val lastPageOfChap = pages.indexOfLast { it.first == chapterTitle }
+        val lastPageOfChap = pages.indexOfLast { it.first.equals(chapterTitle, ignoreCase = true) }
         val chapPageCount = lastPageOfChap - firstPageOfChap + 1
         val totalParasInChap = maxOf(targetChapter?.paragraphs?.size ?: 1, 1)
         val estimatedOffset = ((paraIdx.toFloat() / totalParasInChap) * chapPageCount).toInt()
@@ -260,10 +340,11 @@ private fun findScrollIndexForLocation(
 
     var safeParaIdx = paraIdx.coerceIn(0, chapter.paragraphs.size - 1)
     if (topSnippet.isNotBlank()) {
-        val snippet = topSnippet.take(25).trim()
+        val snippet = topSnippet.take(30).trim()
+        val cleanSnip = cleanAlpha(snippet)
         val foundIdx = chapter.paragraphs.indexOfFirst { p ->
-            val pt = p.trim()
-            pt.contains(snippet) || (snippet.length > 12 && pt.contains(snippet.take(12)))
+            val cp = cleanAlpha(p)
+            cp.contains(cleanSnip.take(20)) || (cleanSnip.length >= 10 && cp.contains(cleanSnip.take(10)))
         }
         if (foundIdx >= 0) {
             safeParaIdx = foundIdx
@@ -271,6 +352,15 @@ private fun findScrollIndexForLocation(
     }
 
     return chapStartOffset + 1 + safeParaIdx
+}
+
+private fun Context.findActivity(): Activity? {
+    var ctx = this
+    while (ctx is ContextWrapper) {
+        if (ctx is Activity) return ctx
+        ctx = ctx.baseContext
+    }
+    return null
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -316,6 +406,23 @@ fun ReaderScreen(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+
+    // Distraction-Free Reading: Hide the notification/status bar in reading mode
+    DisposableEffect(Unit) {
+        val window = context.findActivity()?.window
+        if (window != null) {
+            val insetsController = WindowCompat.getInsetsController(window, window.decorView)
+            insetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            insetsController.hide(WindowInsetsCompat.Type.statusBars())
+        }
+        onDispose {
+            val window = context.findActivity()?.window
+            if (window != null) {
+                val insetsController = WindowCompat.getInsetsController(window, window.decorView)
+                insetsController.show(WindowInsetsCompat.Type.statusBars())
+            }
+        }
+    }
 
     // Settings collected from repository
     val horizontalPaddingState = repository?.horizontalPadding?.collectAsState(initial = 22)
@@ -697,35 +804,60 @@ fun ReaderScreen(
     val effectiveStartPadding = if (isLandscape) landscapeSidePaddingStart else horizontalPadding.dp
     val effectiveEndPadding = if (isLandscape) landscapeSidePaddingEnd else horizontalPadding.dp
 
+    val screenWidthDp = configuration.screenWidthDp
+    val screenHeightDp = configuration.screenHeightDp
+
+    val currentConfigKey = "${fontSize}_${isLandscape}_${screenWidthDp}_${screenHeightDp}"
+    var pagesConfigKey by remember { mutableStateOf(currentConfigKey) }
+
     // Prepared pages for Paged Mode with smart character/sentence budgeting so text never overflows
     // Non-blocking in-memory cache lookup on composition; background precomputation via getOrComputeAsync
-    var pages by remember(book.id, book.chapters.size, fontSize, readingMode, isLandscape) {
-        mutableStateOf(
-            if (isPagedReading) {
-                PageCache.getCached(book.id, book.chapters.size, fontSize, isLandscape, isStrictPaged) ?: emptyList()
-            } else {
-                emptyList()
-            }
-        )
+    var pages by remember(book.id, book.chapters.size, fontSize, readingMode, isLandscape, screenWidthDp, screenHeightDp, horizontalPadding, verticalPadding, lineHeightMultiplier, paragraphSpacingMultiplier) {
+        val cached = if (isPagedReading) {
+            PageCache.getCached(
+                bookId = book.id,
+                chaptersCount = book.chapters.size,
+                fontSize = fontSize,
+                isLandscape = isLandscape,
+                isStrictPaged = isStrictPaged,
+                screenWidthDp = screenWidthDp,
+                screenHeightDp = screenHeightDp,
+                horizontalPaddingDp = horizontalPadding,
+                verticalPaddingDp = verticalPadding,
+                paragraphSpacingMultiplier = paragraphSpacingMultiplier
+            )
+        } else null
+        if (cached != null) {
+            pagesConfigKey = currentConfigKey
+        }
+        mutableStateOf(cached ?: emptyList())
     }
 
-    LaunchedEffect(book.id, book.chapters.size, fontSize, readingMode, isLandscape, isPagedReading) {
-        if (isPagedReading && pages.isEmpty() && book.chapters.isNotEmpty()) {
+    LaunchedEffect(book.id, book.chapters.size, fontSize, readingMode, isLandscape, isPagedReading, screenWidthDp, screenHeightDp, horizontalPadding, verticalPadding, lineHeightMultiplier, paragraphSpacingMultiplier) {
+        if (isPagedReading && (pages.isEmpty() || pagesConfigKey != currentConfigKey) && book.chapters.isNotEmpty()) {
             val allPages = PageCache.getOrComputeAsync(
                 bookId = book.id,
                 chapters = book.chapters,
                 fontSize = fontSize,
                 isLandscape = isLandscape,
                 isStrictPaged = isStrictPaged,
+                screenWidthDp = screenWidthDp,
+                screenHeightDp = screenHeightDp,
+                horizontalPaddingDp = horizontalPadding,
+                verticalPaddingDp = verticalPadding,
+                lineHeightMultiplier = lineHeightMultiplier,
+                paragraphSpacingMultiplier = paragraphSpacingMultiplier,
                 dbHelper = repository?.dbHelper,
                 activeChapterIndex = book.currentChapter,
                 onActiveChapterReady = { activePages ->
-                    if (pages.isEmpty()) {
+                    if (pages.isEmpty() || pagesConfigKey != currentConfigKey) {
                         pages = activePages
+                        pagesConfigKey = currentConfigKey
                     }
                 }
             )
             pages = allPages
+            pagesConfigKey = currentConfigKey
         }
     }
 
@@ -758,7 +890,18 @@ fun ReaderScreen(
     var currentVisibleParaIdx by remember { mutableIntStateOf(initialParaIdx) }
     var currentTopSnippet by remember { mutableStateOf(initialSnippet) }
 
+    // Persistent reading anchor that survives font zooming and screen orientation changes
+    var anchorSnippet by rememberSaveable { mutableStateOf(initialSnippet) }
+    var anchorChapterIdx by rememberSaveable { mutableIntStateOf(initialChapIdx) }
+    var anchorParaIdx by rememberSaveable { mutableIntStateOf(initialParaIdx) }
+
+    var isPinching by remember { mutableStateOf(false) }
+    var activePagedTextLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
+    var activeTextBoundsInRoot by remember { mutableStateOf<Rect?>(null) }
+
     var prevReadingMode by remember { mutableStateOf(readingMode) }
+    var lastAnchoredFontSize by remember { mutableIntStateOf(fontSize) }
+    var lastAnchoredLandscape by remember { mutableStateOf(isLandscape) }
     var pendingTargetSync by remember { mutableStateOf(false) }
 
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = book.scrollPos)
@@ -767,15 +910,24 @@ fun ReaderScreen(
         pageCount = { pages.size }
     )
 
+    // Detect font zoom or screen rotation changes to trigger re-anchoring to the exact reading position
+    LaunchedEffect(fontSize, isLandscape) {
+        if (fontSize != lastAnchoredFontSize || isLandscape != lastAnchoredLandscape) {
+            lastAnchoredFontSize = fontSize
+            lastAnchoredLandscape = isLandscape
+            pendingTargetSync = true
+        }
+    }
+
     LaunchedEffect(readingMode) {
         if (readingMode == prevReadingMode) return@LaunchedEffect
         prevReadingMode = readingMode
 
         if (readingMode == ReadingMode.SCROLL) {
             val targetScroll = findScrollIndexForLocation(
-                chapterIdx = currentVisibleChapterIdx,
-                paraIdx = currentVisibleParaIdx,
-                topSnippet = currentTopSnippet,
+                chapterIdx = anchorChapterIdx,
+                paraIdx = anchorParaIdx,
+                topSnippet = anchorSnippet,
                 chapters = book.chapters,
                 chapterOffsets = chapterCumulativeParaOffsets
             )
@@ -784,10 +936,10 @@ fun ReaderScreen(
             if (pages.isNotEmpty()) {
                 val targetPage = findPageForLocation(
                     pages = pages,
-                    chapterIdx = currentVisibleChapterIdx,
+                    chapterIdx = anchorChapterIdx,
                     chapters = book.chapters,
-                    paraIdx = currentVisibleParaIdx,
-                    topSnippet = currentTopSnippet
+                    paraIdx = anchorParaIdx,
+                    topSnippet = anchorSnippet
                 )
                 pagerState.scrollToPage(targetPage.coerceIn(0, maxOf(0, pages.size - 1)))
             } else {
@@ -796,16 +948,19 @@ fun ReaderScreen(
         }
     }
 
-    LaunchedEffect(pages.size, readingMode) {
-        if (isPagedReading && pendingTargetSync && pages.isNotEmpty()) {
+    // When pages or pendingTargetSync changes, restore pager to the exact anchored paragraph/snippet
+    LaunchedEffect(pages, pagesConfigKey, pendingTargetSync, isPinching, currentConfigKey) {
+        if (isPagedReading && pendingTargetSync && !isPinching && pages.isNotEmpty() && pagesConfigKey == currentConfigKey) {
             val targetPage = findPageForLocation(
                 pages = pages,
-                chapterIdx = currentVisibleChapterIdx,
+                chapterIdx = anchorChapterIdx,
                 chapters = book.chapters,
-                paraIdx = currentVisibleParaIdx,
-                topSnippet = currentTopSnippet
+                paraIdx = anchorParaIdx,
+                topSnippet = anchorSnippet
             )
-            pagerState.scrollToPage(targetPage.coerceIn(0, maxOf(0, pages.size - 1)))
+            if (targetPage in pages.indices) {
+                pagerState.scrollToPage(targetPage)
+            }
             pendingTargetSync = false
         }
     }
@@ -1217,6 +1372,31 @@ fun ReaderScreen(
 
     val view = LocalView.current
 
+    val progressBottomInset = max(
+        max(
+            WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(),
+            WindowInsets.mandatorySystemGestures.asPaddingValues().calculateBottomPadding()
+        ),
+        16.dp
+    )
+    val statusBarTopInset = max(
+        max(
+            WindowInsets.statusBars.asPaddingValues().calculateTopPadding(),
+            WindowInsets.displayCutout.asPaddingValues().calculateTopPadding()
+        ),
+        14.dp
+    )
+
+    val currentFontSize by rememberUpdatedState(fontSize)
+    val currentReadingMode by rememberUpdatedState(readingMode)
+    val currentIsPagedReading by rememberUpdatedState(isPagedReading)
+    val currentPages by rememberUpdatedState(pages)
+    val currentChapters by rememberUpdatedState(book.chapters)
+    val currentOnFontSizeChange by rememberUpdatedState(onFontSizeChange)
+    val currentTopInsetPx = with(density) { statusBarTopInset.toPx() }
+    val currentBottomInsetPx = with(density) { progressBottomInset.toPx() }
+    val currentHeaderOffsetPx = with(density) { 90.dp.toPx() }
+
     CompositionLocalProvider(
         LocalTextToolbar provides customTextToolbar,
         LocalClipboard provides customClipboard,
@@ -1228,40 +1408,157 @@ fun ReaderScreen(
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background)
                 .nestedScroll(nestedScrollConnection)
-                .pointerInput(fontSize) {
+                .pointerInput(Unit) {
                     awaitEachGesture {
                         var cumulativeZoom = 1.0f
-                        do {
-                            val event = awaitPointerEvent()
-                            if (event.changes.size >= 2) {
-                                val p0 = event.changes[0].position
-                                val p1 = event.changes[1].position
-                                val prevP0 = event.changes[0].previousPosition
-                                val prevP1 = event.changes[1].previousPosition
-                                val currentDist = (p0 - p1).getDistance()
-                                val prevDist = (prevP0 - prevP1).getDistance()
-                                if (prevDist > 0f) {
-                                    val scale = currentDist / prevDist
-                                    cumulativeZoom *= scale
-                                    if (cumulativeZoom > 1.15f) {
-                                        val newSize = (fontSize + 1).coerceAtMost(36)
-                                        if (newSize != fontSize) {
-                                            onFontSizeChange(newSize)
-                                            view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                        var pinchStarted = false
+                        var currentTargetFontSize = currentFontSize
+
+                        try {
+                            do {
+                                val event = awaitPointerEvent()
+                                val downPointers = event.changes.filter { it.pressed }
+                                if (downPointers.size >= 2) {
+                                    val p0 = downPointers[0].position
+                                    val p1 = downPointers[1].position
+                                    val prevP0 = downPointers[0].previousPosition
+                                    val prevP1 = downPointers[1].previousPosition
+                                    val currentDist = (p0 - p1).getDistance()
+                                    val prevDist = (prevP0 - prevP1).getDistance()
+
+                                    val avgTouchX = (p0.x + p1.x) / 2f
+                                    val avgTouchY = (p0.y + p1.y) / 2f
+
+                                    if (!pinchStarted) {
+                                        pinchStarted = true
+                                        isPinching = true
+
+                                        val activePages = currentPages
+                                        val curPage = pagerState.currentPage
+                                        if (currentIsPagedReading && curPage in activePages.indices) {
+                                            val (cTitle, pageContent) = activePages[curPage]
+                                            val isChapterHeaderPage = pageContent.startsWith("CHAPTER_START:::") || pageContent.startsWith("TITLE:::")
+                                            val pageBody = if (isChapterHeaderPage) pageContent.substringAfterLast(":::") else pageContent
+                                            val cIdx = currentChapters.indexOfFirst { it.title == cTitle }.coerceAtLeast(0)
+                                            val chap = currentChapters.getOrNull(cIdx)
+
+                                            var targetSnippet = ""
+                                            var targetParaIdx = 0
+
+                                            val rawParas = pageBody.split(Regex("\n\n+|\n")).map { it.trim() }.filter { it.isNotEmpty() }
+                                            if (rawParas.isNotEmpty()) {
+                                                val headerOffsetPx = if (isChapterHeaderPage) currentHeaderOffsetPx else 0f
+                                                val effectiveTop = currentTopInsetPx + headerOffsetPx
+                                                val usableHeight = (screenHeightPx - effectiveTop - currentBottomInsetPx).coerceAtLeast(100f)
+                                                val touchFraction = ((avgTouchY - effectiveTop) / usableHeight).coerceIn(0f, 0.999f)
+
+                                                val weights = rawParas.map { it.length.toFloat().coerceAtLeast(20f) }
+                                                val totalWeight = weights.sum().coerceAtLeast(1f)
+                                                val targetThreshold = touchFraction * totalWeight
+
+                                                var accumWeight = 0f
+                                                var selectedPara = rawParas.first()
+                                                for (i in rawParas.indices) {
+                                                    accumWeight += weights[i]
+                                                    if (accumWeight >= targetThreshold || i == rawParas.size - 1) {
+                                                        selectedPara = rawParas[i]
+                                                        break
+                                                    }
+                                                }
+
+                                                val exactPara = selectedPara.trim()
+                                                if (exactPara.isNotBlank()) {
+                                                    targetSnippet = exactPara.take(80)
+                                                    val cleanExact = cleanAlpha(exactPara)
+                                                    val foundIdx = chap?.paragraphs?.indexOfFirst { fullPara ->
+                                                        val cleanFull = cleanAlpha(fullPara)
+                                                        cleanFull.contains(cleanExact.take(30)) || cleanExact.contains(cleanFull.take(30)) ||
+                                                        (cleanExact.length >= 15 && cleanFull.contains(cleanExact.take(15)))
+                                                    } ?: -1
+                                                    if (foundIdx >= 0) {
+                                                        targetParaIdx = foundIdx
+                                                    }
+                                                }
+                                            }
+
+                                            if (targetSnippet.isBlank() && pageBody.isNotBlank()) {
+                                                targetSnippet = pageBody.trim().take(80)
+                                            }
+
+                                            if (targetSnippet.isNotBlank()) {
+                                                anchorSnippet = targetSnippet
+                                                anchorChapterIdx = cIdx
+                                                anchorParaIdx = targetParaIdx
+                                                currentTopSnippet = targetSnippet
+                                            }
+                                        } else if (currentReadingMode == ReadingMode.SCROLL) {
+                                            val visibleItems = listState.layoutInfo.visibleItemsInfo
+                                            val touchedItem = visibleItems.find { avgTouchY >= it.offset && avgTouchY <= it.offset + it.size }
+                                                ?: visibleItems.firstOrNull()
+
+                                            if (touchedItem != null) {
+                                                val itemIdx = touchedItem.index
+                                                val binIdx = chapterCumulativeParaOffsets.binarySearch(itemIdx)
+                                                val cIdx = if (binIdx >= 0) binIdx else (-binIdx - 2).coerceIn(0, currentChapters.size - 1)
+                                                val pIdx = (itemIdx - chapterCumulativeParaOffsets.getOrElse(cIdx) { 0 } - 1).coerceAtLeast(0)
+                                                val paraText = currentChapters.getOrNull(cIdx)?.paragraphs?.getOrNull(pIdx) ?: ""
+                                                val snip = paraText.trim().take(80)
+
+                                                anchorSnippet = snip
+                                                anchorChapterIdx = cIdx
+                                                anchorParaIdx = pIdx
+                                                currentTopSnippet = snip
+
+                                                // Center the paragraph immediately at touch start
+                                                val viewportH = listState.layoutInfo.viewportSize.height
+                                                val centerOffset = (viewportH - touchedItem.size) / 2
+                                                coroutineScope.launch {
+                                                    listState.scrollToItem(itemIdx, scrollOffset = -centerOffset)
+                                                }
+                                            }
                                         }
-                                        cumulativeZoom = 1.0f
-                                    } else if (cumulativeZoom < 0.85f) {
-                                        val newSize = (fontSize - 1).coerceAtLeast(12)
-                                        if (newSize != fontSize) {
-                                            onFontSizeChange(newSize)
-                                            view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                                        }
-                                        cumulativeZoom = 1.0f
                                     }
-                                    event.changes.forEach { it.consume() }
+
+                                    if (prevDist > 0f) {
+                                        val scale = currentDist / prevDist
+                                        cumulativeZoom *= scale
+                                        if (cumulativeZoom > 1.15f) {
+                                            val newSize = (currentTargetFontSize + 1).coerceAtMost(36)
+                                            if (newSize != currentTargetFontSize) {
+                                                currentTargetFontSize = newSize
+                                                currentOnFontSizeChange(newSize)
+                                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                            }
+                                            cumulativeZoom = 1.0f
+                                        } else if (cumulativeZoom < 0.85f) {
+                                            val newSize = (currentTargetFontSize - 1).coerceAtLeast(12)
+                                            if (newSize != currentTargetFontSize) {
+                                                currentTargetFontSize = newSize
+                                                currentOnFontSizeChange(newSize)
+                                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                            }
+                                            cumulativeZoom = 1.0f
+                                        }
+                                    }
+                                    downPointers.forEach { it.consume() }
+                                }
+                            } while (event.changes.any { it.pressed })
+                        } finally {
+                            // Touch end / zoom pinch end: Bring to its screen!
+                            if (pinchStarted) {
+                                isPinching = false
+                                pendingTargetSync = true
+
+                                if (currentReadingMode == ReadingMode.SCROLL) {
+                                    val targetScroll = chapterCumulativeParaOffsets.getOrElse(anchorChapterIdx) { 0 } + anchorParaIdx + 1
+                                    val viewportH = listState.layoutInfo.viewportSize.height
+                                    val centerOffset = (viewportH * 0.35f).roundToInt()
+                                    coroutineScope.launch {
+                                        listState.scrollToItem(targetScroll.coerceIn(0, maxOf(0, totalScrollItems - 1)), scrollOffset = -centerOffset)
+                                    }
                                 }
                             }
-                        } while (event.changes.any { it.pressed })
+                        }
                     }
                 }
         ) {
@@ -1347,21 +1644,6 @@ fun ReaderScreen(
             BackgroundTexture.NONE -> {}
         }
 
-        val progressBottomInset = max(
-            max(
-                WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(),
-                WindowInsets.mandatorySystemGestures.asPaddingValues().calculateBottomPadding()
-            ),
-            16.dp
-        )
-        val statusBarTopInset = max(
-            max(
-                WindowInsets.statusBars.asPaddingValues().calculateTopPadding(),
-                WindowInsets.displayCutout.asPaddingValues().calculateTopPadding()
-            ),
-            14.dp
-        )
-
         if (readingMode == ReadingMode.SCROLL) {
                     LaunchedEffect(listState) {
                         snapshotFlow { listState.firstVisibleItemIndex }
@@ -1374,7 +1656,13 @@ fun ReaderScreen(
                                 currentVisibleChapterIdx = currentChap
                                 currentVisibleParaIdx = paraIdx
                                 val paraText = book.chapters.getOrNull(currentChap)?.paragraphs?.getOrNull(paraIdx) ?: ""
-                                currentTopSnippet = paraText.trim().take(40)
+                                val snip = paraText.trim().take(50)
+                                currentTopSnippet = snip
+                                if (!isPinching) {
+                                    anchorSnippet = snip
+                                    anchorChapterIdx = currentChap
+                                    anchorParaIdx = paraIdx
+                                }
 
                                 val newTitle = book.chapters.getOrNull(currentChap)?.title ?: "Chapter 1"
                                 if (activeChapterTitle != newTitle) {
@@ -1667,7 +1955,7 @@ fun ReaderScreen(
                             if (currentProgressPct != progress) {
                                 currentProgressPct = progress
                             }
-                            val currentPageChapTitle = pages.getOrNull(currentPage)?.first ?: "Chapter 1"
+                            val (currentPageChapTitle, pageContent) = pages[currentPage]
                             if (activeChapterTitle != currentPageChapTitle) {
                                 activeChapterTitle = currentPageChapTitle
                             }
@@ -1675,6 +1963,32 @@ fun ReaderScreen(
                             if (speakingChapterIdx != chapIdx) {
                                 speakingChapterIdx = chapIdx
                             }
+
+                            // Extract the top text snippet of the currently visible page to anchor zoom & landscape changes
+                            val pageBody = if (pageContent.startsWith("CHAPTER_START:::") || pageContent.startsWith("TITLE:::")) {
+                                pageContent.substringAfterLast(":::")
+                            } else {
+                                pageContent
+                            }
+                            val cleanSnippet = pageBody.trim().take(60)
+                            if (!isPinching) {
+                                if (cleanSnippet.isNotBlank()) {
+                                    anchorSnippet = cleanSnippet
+                                    currentTopSnippet = cleanSnippet
+                                }
+                                anchorChapterIdx = chapIdx
+                                currentVisibleChapterIdx = chapIdx
+
+                                val chap = book.chapters.getOrNull(chapIdx)
+                                if (chap != null && cleanSnippet.isNotBlank()) {
+                                    val foundPara = chap.paragraphs.indexOfFirst { it.contains(cleanSnippet.take(25)) }
+                                    if (foundPara >= 0) {
+                                        anchorParaIdx = foundPara
+                                        currentVisibleParaIdx = foundPara
+                                    }
+                                }
+                            }
+
                             delay(800)
                             onPositionChange(chapIdx, currentPage, 0, progress)
                         }
@@ -1689,17 +2003,20 @@ fun ReaderScreen(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(
-                                    top = if (isUiVisible || readingMode == ReadingMode.PAGED) {
-                                        statusBarTopInset + 42.dp + (verticalPadding * 0.35f).dp
+                                    top = if (isLandscape) {
+                                        if (isUiVisible) statusBarTopInset + 48.dp + (verticalPadding * 0.25f).dp
+                                        else statusBarTopInset + 16.dp + (verticalPadding * 0.25f).dp
                                     } else {
-                                        statusBarTopInset + 12.dp + (verticalPadding * 0.4f).dp
+                                        if (isUiVisible || readingMode == ReadingMode.PAGED) statusBarTopInset + 54.dp + (verticalPadding * 0.35f).dp
+                                        else statusBarTopInset + 24.dp + (verticalPadding * 0.35f).dp
                                     },
-                                    bottom = if (readingMode == ReadingMode.PAGED) {
-                                        progressBottomInset + 56.dp + (verticalPadding * 0.35f).dp
-                                    } else if (isUiVisible) {
-                                        progressBottomInset + 52.dp + (verticalPadding * 0.4f).dp
+                                    bottom = if (isLandscape) {
+                                        if (isUiVisible) progressBottomInset + 54.dp + (verticalPadding * 0.25f).dp
+                                        else progressBottomInset + 12.dp + (verticalPadding * 0.25f).dp
                                     } else {
-                                        progressBottomInset + 20.dp + (verticalPadding * 0.4f).dp
+                                        if (readingMode == ReadingMode.PAGED) progressBottomInset + 52.dp + (verticalPadding * 0.35f).dp
+                                        else if (isUiVisible) progressBottomInset + 50.dp + (verticalPadding * 0.35f).dp
+                                        else progressBottomInset + 18.dp + (verticalPadding * 0.35f).dp
                                     },
                                     start = effectiveStartPadding,
                                     end = effectiveEndPadding
@@ -1906,20 +2223,38 @@ fun ReaderScreen(
                                     ) {
                                         Text(
                                             text = annotatedContent,
-                                            onTextLayout = { pagedTextLayoutResult = it },
+                                            onTextLayout = { layoutResult ->
+                                                pagedTextLayoutResult = layoutResult
+                                                if (pageIdx == pagerState.currentPage) {
+                                                    activePagedTextLayoutResult = layoutResult
+                                                }
+                                            },
                                             fontFamily = fontFamily,
                                             fontSize = fontSize.sp,
                                             lineHeight = (fontSize * lineHeightMultiplier).sp,
                                             letterSpacing = letterSpacing.sp,
                                             textAlign = contentTextAlign,
                                             color = MaterialTheme.colorScheme.onBackground,
-                                            modifier = Modifier.fillMaxWidth()
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .onGloballyPositioned { coords ->
+                                                    if (pageIdx == pagerState.currentPage) {
+                                                        activeTextBoundsInRoot = coords.boundsInRoot()
+                                                    }
+                                                }
                                         )
                                     }
-                                    Spacer(
-                                        modifier = Modifier
+                                    val tapSpacerModifier = if (readingMode == ReadingMode.PAGED_SCROLL) {
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(min = 40.dp)
+                                    } else {
+                                        Modifier
                                             .weight(1f)
                                             .fillMaxWidth()
+                                    }
+                                    Spacer(
+                                        modifier = tapSpacerModifier
                                             .pointerInput(gestureDoubleTap, gestureSingleTap) {
                                                 detectTapGestures(
                                                     onDoubleTap = { executeGestureAction(gestureDoubleTap) },

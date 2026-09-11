@@ -92,6 +92,8 @@ class LuminaDownloadService : Service() {
             ).apply {
                 description = "Shows progress and status of EPUB book downloads"
                 setShowBadge(false)
+                setSound(null, null)
+                enableVibration(false)
             }
             notificationManager.createNotificationChannel(channel)
         }
@@ -119,14 +121,22 @@ class LuminaDownloadService : Service() {
     ) {
         val notificationId = NOTIFICATION_ID_BASE + (bookId.hashCode() and 0x7FFF)
 
-        // Initial notification
-        val initialNotif = buildProgressNotification(title, 0, "Starting download...")
-        startForeground(notificationId, initialNotif)
+        // Initial notification - immediately attach foreground
+        val initialNotif = buildProgressNotification(title, -1, "Starting download...")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                notificationId,
+                initialNotif,
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            )
+        } else {
+            startForeground(notificationId, initialNotif)
+        }
 
         _downloadStates.value = _downloadStates.value + (bookId to DownloadProgressState(
             bookId = bookId,
             title = title,
-            progress = 0
+            progress = -1
         ))
 
         serviceScope.launch {
@@ -139,7 +149,8 @@ class LuminaDownloadService : Service() {
                     destFile.parentFile?.mkdirs()
                 } catch (_: Throwable) {}
 
-                var lastReportedPercent = -1
+                var lastReportedPercent = -2
+                var lastReportedBytes = 0L
                 var lastUpdateTime = 0L
 
                 val downloadSuccess = executeDownload(
@@ -148,15 +159,30 @@ class LuminaDownloadService : Service() {
                     onProgress = { bytesRead, totalBytes ->
                         val percent = if (totalBytes > 0) ((bytesRead * 100) / totalBytes).toInt().coerceIn(0, 100) else -1
                         val now = System.currentTimeMillis()
-                        if (percent != lastReportedPercent && (now - lastUpdateTime > 350 || percent == 100)) {
+
+                        val isFirst = lastReportedPercent == -2
+                        val isComplete = percent == 100 || (totalBytes > 0 && bytesRead >= totalBytes)
+                        val percentChanged = percent >= 0 && percent != lastReportedPercent
+                        val timeElapsed = now - lastUpdateTime >= 250
+                        val bytesAdvanced = (bytesRead - lastReportedBytes) >= 32768
+
+                        if (isFirst || isComplete || (timeElapsed && (percentChanged || bytesAdvanced || percent < 0))) {
                             lastReportedPercent = percent
+                            lastReportedBytes = bytesRead
                             lastUpdateTime = now
+
                             _downloadStates.value = _downloadStates.value + (bookId to DownloadProgressState(
                                 bookId = bookId,
                                 title = title,
-                                progress = percent
+                                progress = if (percent >= 0) percent else -1
                             ))
-                            val progressText = if (percent >= 0) "$percent% • ${formatBytes(bytesRead)}" else formatBytes(bytesRead)
+
+                            val progressText = if (totalBytes > 0 && percent >= 0) {
+                                "$percent% • ${formatBytes(bytesRead)} of ${formatBytes(totalBytes)}"
+                            } else {
+                                "${formatBytes(bytesRead)} downloaded"
+                            }
+
                             notificationManager.notify(
                                 notificationId,
                                 buildProgressNotification(title, percent, progressText)
@@ -171,6 +197,12 @@ class LuminaDownloadService : Service() {
                         destFile.delete()
                         throw IllegalStateException("Downloaded file is not a valid EPUB archive (server may have sent an HTML error or block page).")
                     }
+
+                    // Intermediate progress while parsing
+                    notificationManager.notify(
+                        notificationId,
+                        buildProgressNotification(title, 100, "Processing book library...")
+                    )
 
                     // Parse and insert into repository singleton
                     val repository = BookRepository.getInstance(applicationContext)
@@ -267,6 +299,12 @@ class LuminaDownloadService : Service() {
         destFile: File,
         onProgress: (bytesRead: Long, totalBytes: Long) -> Unit
     ): Boolean {
+        val openLibraryApiKey = try {
+            BookRepository.getInstance(applicationContext).openLibraryApiKey.value
+        } catch (_: Exception) {
+            OnlineEpubService.openLibraryApiKey
+        }
+
         var currentUrl = downloadUrl.trim()
         if (currentUrl.contains("standardebooks.org") && !currentUrl.contains("source=download") && currentUrl.endsWith(".epub")) {
             currentUrl = if (currentUrl.contains("?")) "$currentUrl&source=download" else "$currentUrl?source=download"
@@ -281,6 +319,11 @@ class LuminaDownloadService : Service() {
                 readTimeout = 30000
                 setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36")
                 setRequestProperty("Accept", "application/epub+zip,application/octet-stream,*/*")
+                if (currentUrl.contains("archive.org") || currentUrl.contains("openlibrary.org")) {
+                    OnlineEpubService.formatArchiveAuthorizationHeader(openLibraryApiKey)?.let { auth ->
+                        setRequestProperty("Authorization", auth)
+                    }
+                }
             }
 
             val code = conn.responseCode
@@ -368,11 +411,14 @@ class LuminaDownloadService : Service() {
             .setContentIntent(openAppIntent)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
 
         if (percent >= 0) {
             builder.setProgress(100, percent, false)
         } else {
-            builder.setProgress(100, 0, true)
+            builder.setProgress(0, 0, true)
         }
         return builder.build()
     }
@@ -388,7 +434,9 @@ class LuminaDownloadService : Service() {
             .setContentTitle("Download Complete")
             .setContentText("\"$title\" is ready to read in your Library.")
             .setContentIntent(openAppIntent)
+            .setOngoing(false)
             .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .build()
     }
 
@@ -418,7 +466,9 @@ class LuminaDownloadService : Service() {
             .setContentTitle("Download Failed: $title")
             .setContentText(reason)
             .setStyle(NotificationCompat.BigTextStyle().bigText("Failed to download \"$title\":\n$reason"))
+            .setOngoing(false)
             .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .addAction(android.R.drawable.ic_menu_rotate, "Retry", retryPendingIntent)
             .build()
     }

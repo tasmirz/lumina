@@ -189,4 +189,18 @@ class EpubParserTest {
             tempFile.delete()
         }
     }
+
+    @Test
+    fun testCompressAndSaveCoverSafeFallback() {
+        val dest = java.io.File.createTempFile("cover_test", ".jpg")
+        try {
+            val dummyBytes = "fake_image_bytes".toByteArray()
+            val success = EpubParser.compressAndSaveCover(dummyBytes, dest, maxDimension = 640)
+            assertTrue(success)
+            assertTrue(dest.exists())
+            assertTrue(dest.length() > 0)
+        } finally {
+            dest.delete()
+        }
+    }
 }
