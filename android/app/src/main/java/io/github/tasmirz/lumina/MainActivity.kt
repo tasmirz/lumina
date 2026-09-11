@@ -1,6 +1,9 @@
 package io.github.tasmirz.lumina
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -9,9 +12,11 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import io.github.tasmirz.lumina.data.LuminaDownloadService
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -212,6 +217,17 @@ class MainActivity : ComponentActivity() {
             var activeWordDefinition by remember { mutableStateOf<WordDefinition?>(null) }
 
             val coroutineScope = rememberCoroutineScope()
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                val notificationPermissionLauncher = rememberLauncherForActivityResult(
+                    ActivityResultContracts.RequestPermission()
+                ) { _ -> }
+                LaunchedEffect(Unit) {
+                    if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                }
+            }
 
             LaunchedEffect(currentTab) {
                 bookRepository.setLastTab(currentTab.name)
@@ -664,46 +680,19 @@ class MainActivity : ComponentActivity() {
                                     epubPickerLauncher.launch("*/*")
                                 },
                                 onBookDownloaded = { onlineBook ->
-                                    coroutineScope.launch {
-                                        Toast.makeText(this@MainActivity, "Downloading \"${onlineBook.title}\"...", Toast.LENGTH_SHORT).show()
-                                        val finalBook = withContext(Dispatchers.IO) {
-                                            try {
-                                                val epubDir = File(applicationContext.filesDir, "epubs").apply { if (!exists()) mkdirs() }
-                                                val cleanName = onlineBook.title.replace(Regex("[^a-zA-Z0-9.-]"), "_") + ".epub"
-                                                val destFile = File(epubDir, "${System.currentTimeMillis()}_$cleanName")
-
-                                                val stream = OnlineEpubService.downloadEpubStream(onlineBook.epubDownloadUrl)
-                                                if (stream != null) {
-                                                    destFile.outputStream().use { output ->
-                                                        stream.copyTo(output)
-                                                    }
-                                                    destFile.inputStream().use { savedStream ->
-                                                        val parsed = EpubParser.parseEpub(savedStream, cleanName, applicationContext)
-                                                        val readyBook = (if (onlineBook.coverUrl.isNotBlank() && parsed.coverUrl.startsWith("http")) {
-                                                            parsed.copy(coverUrl = onlineBook.coverUrl)
-                                                        } else parsed).copy(
-                                                            filePath = destFile.absolutePath,
-                                                            fileSize = destFile.length(),
-                                                            isDownloaded = true,
-                                                            downloadUrl = onlineBook.epubDownloadUrl
-                                                        )
-                                                        bookRepository.addBook(readyBook)
-                                                        readyBook
-                                                    }
-                                                } else null
-                                            } catch (e: Exception) {
-                                                e.printStackTrace()
-                                                null
-                                            }
-                                        }
-                                        if (finalBook != null) {
-                                            showAddBookSheet = false
-                                            currentTab = ScreenTab.READER
-                                            Toast.makeText(this@MainActivity, "Opened \"${finalBook.title}\"", Toast.LENGTH_SHORT).show()
-                                        } else {
-                                            Toast.makeText(this@MainActivity, "Download failed. Please check connection.", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
+                                    LuminaDownloadService.downloadBook(
+                                        context = this@MainActivity,
+                                        bookId = onlineBook.id,
+                                        title = onlineBook.title,
+                                        author = onlineBook.author,
+                                        coverUrl = onlineBook.coverUrl,
+                                        downloadUrl = onlineBook.epubDownloadUrl
+                                    )
+                                    Toast.makeText(
+                                        this@MainActivity,
+                                        "Downloading \"${onlineBook.title}\"... Check notification for progress.",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
                                 }
                             )
                         }
