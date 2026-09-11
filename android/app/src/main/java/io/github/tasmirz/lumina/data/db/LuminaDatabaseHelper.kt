@@ -1119,6 +1119,17 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
         db.update(TABLE_BOOKS, values, "$COL_BOOK_ID = ?", arrayOf(bookId))
     }
 
+    fun updateBookFilePath(bookId: String, newPath: String, fileSize: Long = 0L) {
+        val db = writableDatabase
+        val values = ContentValues().apply {
+            put(COL_BOOK_FILE_PATH, newPath)
+            if (fileSize > 0L) {
+                put(COL_BOOK_FILE_SIZE, fileSize)
+            }
+        }
+        db.update(TABLE_BOOKS, values, "$COL_BOOK_ID = ?", arrayOf(bookId))
+    }
+
     fun updateBookProgress(
         bookId: String,
         currentChapter: Int,

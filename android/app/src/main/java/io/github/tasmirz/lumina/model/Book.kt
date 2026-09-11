@@ -1,5 +1,6 @@
 package io.github.tasmirz.lumina.model
 
+import androidx.compose.runtime.Immutable
 import io.github.tasmirz.lumina.data.AiProvider
 
 enum class HighlightColor(val colorValue: Long, val displayName: String) {
@@ -107,6 +108,7 @@ enum class GestureAction(val displayName: String) {
     NONE("None (Disabled)")
 }
 
+@Immutable
 data class Chapter(
     val title: String,
     val subtitle: String = "",
@@ -114,6 +116,7 @@ data class Chapter(
     val paragraphs: List<String> = emptyList()
 )
 
+@Immutable
 data class Bookmark(
     val id: Long = System.currentTimeMillis(),
     val bookTitle: String,
@@ -125,25 +128,26 @@ data class Bookmark(
     val pageNumber: Int = 0
 )
 
+@Immutable
 data class Book(
     val id: String,
     val title: String,
     val author: String,
     val coverUrl: String = "",
-    var lastRead: String = "Just now",
-    var progress: Int = 0,
-    var readTimeLeft: String = "15m left",
-    var currentChapter: Int = 0,
-    var currentPage: Int = 0,
-    var scrollPos: Int = 0,
+    val lastRead: String = "Just now",
+    val progress: Int = 0,
+    val readTimeLeft: String = "15m left",
+    val currentChapter: Int = 0,
+    val currentPage: Int = 0,
+    val scrollPos: Int = 0,
     val chapters: List<Chapter> = emptyList(),
-    var filePath: String = "",
-    var isDownloaded: Boolean = false,
-    var downloadUrl: String = "",
-    var fileSize: Long = 0L,
-    var characterCheckpointChapter: Int = 0,
-    var characterCheckpointPage: Int = 0,
-    var language: String = "en"
+    val filePath: String = "",
+    val isDownloaded: Boolean = false,
+    val downloadUrl: String = "",
+    val fileSize: Long = 0L,
+    val characterCheckpointChapter: Int = 0,
+    val characterCheckpointPage: Int = 0,
+    val language: String = "en"
 )
 
 data class WordDefinition(
@@ -203,6 +207,7 @@ data class BookLore(
     val createdAt: Long = System.currentTimeMillis()
 )
 
+@Immutable
 data class ReadingPosition(
     val bookId: String = "",
     val chapterIndex: Int = 0,
@@ -211,6 +216,7 @@ data class ReadingPosition(
     val progressPct: Int = 0
 )
 
+@Immutable
 data class ReaderSettings(
     val fontSize: Int = 18,
     val readingMode: ReadingMode = ReadingMode.SCROLL,

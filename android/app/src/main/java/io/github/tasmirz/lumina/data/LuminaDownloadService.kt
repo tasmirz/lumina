@@ -131,7 +131,7 @@ class LuminaDownloadService : Service() {
 
         serviceScope.launch {
             try {
-                val epubDir = File(filesDir, "epubs").apply { if (!exists()) mkdirs() }
+                val epubDir = LuminaStorageManager.getPersistentEpubDirectory(this@LuminaDownloadService)
                 val cleanName = title.replace(Regex("[^a-zA-Z0-9.-]"), "_") + ".epub"
                 val destFile = File(epubDir, "${System.currentTimeMillis()}_$cleanName")
 

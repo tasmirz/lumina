@@ -445,6 +445,10 @@ class BookRepository(private val context: Context) {
 
     init {
         repoScope.launch(Dispatchers.IO) {
+            try {
+                LuminaStorageManager.migrateLegacyFiles(context)
+            } catch (_: Exception) {}
+
             val loadedBooks = loadAllBooks()
             val loadedBookmarks = loadPersistedBookmarks()
             val loadedWishlist = try { dbHelper.getAllWishlist() } catch (_: Exception) { emptyList() }
@@ -471,6 +475,10 @@ class BookRepository(private val context: Context) {
 
             try {
                 syncSettings()
+            } catch (_: Exception) {}
+
+            try {
+                autoScanAndLoadPersistentEpubs()
             } catch (_: Exception) {}
         }
     }
@@ -1002,18 +1010,14 @@ class BookRepository(private val context: Context) {
     }
 
     fun resetReadingProgress() {
-        _books.value.forEach { b ->
-            b.progress = 0
-            b.currentChapter = 0
-            b.currentPage = 0
-            b.scrollPos = 0
+        _books.value = _books.value.map { b ->
             prefs.edit()
                 .putInt("${b.id}_chapter", 0)
                 .putInt("${b.id}_page", 0)
                 .putInt("${b.id}_scroll", 0)
                 .apply()
+            b.copy(progress = 0, currentChapter = 0, currentPage = 0, scrollPos = 0)
         }
-        _books.value = _books.value.toList()
     }
 
     fun indexBookIfNeeded(book: Book) {
@@ -1713,7 +1717,7 @@ class BookRepository(private val context: Context) {
             } else {
                 "${fileName ?: "Imported"}.epub"
             }
-            val epubDir = File(context.filesDir, "epubs").apply { if (!exists()) mkdirs() }
+            val epubDir = LuminaStorageManager.getPersistentEpubDirectory(context)
             val destFile = File(epubDir, "${System.currentTimeMillis()}_$cleanName")
 
             context.contentResolver.openInputStream(uri)?.use { input ->
@@ -1792,9 +1796,108 @@ class BookRepository(private val context: Context) {
         } catch (_: Exception) {}
 
         val fromDb = try { dbHelper.getAllBooks() } catch (_: Exception) { emptyList() }
-        return fromDb.filterNot { b ->
+        val searchDirs = LuminaStorageManager.getAllSearchDirectories(context)
+
+        val resolvedBooks = fromDb.map { b ->
+            if (!b.filePath.isNullOrBlank() && File(b.filePath).exists()) {
+                b
+            } else {
+                // Attempt recovery: check if a file with matching name or ID exists in persistent storage
+                val originalFileName = b.filePath.substringAfterLast('/')
+                var recoveredFile: File? = null
+                for (dir in searchDirs) {
+                    if (originalFileName.isNotBlank()) {
+                        val candidate = File(dir, originalFileName)
+                        if (candidate.exists() && candidate.length() > 0L) {
+                            recoveredFile = candidate
+                            break
+                        }
+                    }
+                    val idCandidate = File(dir, "${b.id}.epub")
+                    if (idCandidate.exists() && idCandidate.length() > 0L) {
+                        recoveredFile = idCandidate
+                        break
+                    }
+                }
+                if (recoveredFile != null) {
+                    val updated = b.copy(filePath = recoveredFile.absolutePath, fileSize = recoveredFile.length())
+                    try {
+                        dbHelper.updateBookFilePath(updated.id, recoveredFile.absolutePath, recoveredFile.length())
+                    } catch (_: Exception) {}
+                    updated
+                } else {
+                    b
+                }
+            }
+        }
+
+        return resolvedBooks.filterNot { b ->
             b.id in setOf("book-kafka", "book-alice", "book-artofwar", "1", "2", "3", "demo-kafka", "demo-alice", "demo-artofwar") ||
             ((b.filePath.isNullOrBlank() || !File(b.filePath).exists()) && !b.isDownloaded)
+        }
+    }
+
+    suspend fun autoScanAndLoadPersistentEpubs() = withContext(Dispatchers.IO) {
+        try {
+            val scannedFiles = LuminaStorageManager.scanEpubFiles(context)
+            if (scannedFiles.isEmpty()) return@withContext
+
+            val currentBooks = _books.value
+            val existingPaths = currentBooks.mapNotNull { it.filePath.takeIf { p -> p.isNotBlank() } }
+                .map { try { File(it).canonicalPath } catch (_: Exception) { it } }.toSet()
+            val existingTitles = currentBooks.map { it.title.trim().lowercase() }.toSet()
+            val deletedIds = prefs.getStringSet("deleted_book_ids", emptySet()) ?: emptySet()
+
+            for (epubFile in scannedFiles) {
+                val canonical = try { epubFile.canonicalPath } catch (_: Exception) { epubFile.absolutePath }
+                if (canonical in existingPaths) continue
+
+                // Check if already in SQLite db
+                val dbMatch = dbHelper.getAllBooks().find {
+                    it.filePath.equals(canonical, ignoreCase = true) ||
+                    (it.filePath.isNotBlank() && it.filePath.substringAfterLast('/') == epubFile.name)
+                }
+                if (dbMatch != null) {
+                    if (dbMatch.filePath != canonical) {
+                        dbHelper.updateBookFilePath(dbMatch.id, canonical, epubFile.length())
+                        val updated = dbMatch.copy(filePath = canonical, fileSize = epubFile.length())
+                        if (_books.value.none { it.id == updated.id }) {
+                            _books.value = _books.value + updated
+                        }
+                    }
+                    continue
+                }
+
+                // If user previously deleted this book explicitly by ID, do not re-import unless filename changed
+                if (epubFile.nameWithoutExtension in deletedIds) continue
+
+                // Parse and add new book
+                try {
+                    epubFile.inputStream().use { stream ->
+                        val parsed = EpubParser.parseEpub(stream, epubFile.name, context)
+                        if (parsed.title.trim().lowercase() in existingTitles) {
+                            return@use
+                        }
+                        val bookToSave = parsed.copy(
+                            filePath = epubFile.absolutePath,
+                            fileSize = epubFile.length(),
+                            isDownloaded = false
+                        )
+                        addBook(bookToSave)
+                        android.util.Log.i("BookRepository", "Auto-loaded EPUB from persistent storage: ${epubFile.name} as \"${bookToSave.title}\"")
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("BookRepository", "Failed to auto-load EPUB ${epubFile.name}: ${e.message}")
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("BookRepository", "Error in autoScanAndLoadPersistentEpubs: ${e.message}")
+        }
+    }
+
+    fun scanAndSyncPersistentEpubs() {
+        repoScope.launch(Dispatchers.IO) {
+            autoScanAndLoadPersistentEpubs()
         }
     }
 

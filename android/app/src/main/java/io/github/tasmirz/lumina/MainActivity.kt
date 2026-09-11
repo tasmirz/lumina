@@ -165,7 +165,7 @@ class MainActivity : ComponentActivity() {
             val books by bookRepository.books.collectAsStateWithLifecycle()
             val activeBookId by bookRepository.activeBookId.collectAsStateWithLifecycle()
             val rawActiveBook = books.find { it.id == activeBookId } ?: books.firstOrNull() ?: bookRepository.getActiveBook()
-            val activeBook = remember(rawActiveBook?.id, rawActiveBook?.chapters?.size, books) {
+            val activeBook = remember(rawActiveBook?.id, rawActiveBook?.chapters?.size) {
                 if (rawActiveBook == null) null
                 else if (rawActiveBook.chapters.isNotEmpty()) rawActiveBook
                 else {
