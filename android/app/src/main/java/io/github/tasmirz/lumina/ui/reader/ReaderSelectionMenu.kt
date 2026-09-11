@@ -12,6 +12,8 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -222,14 +224,16 @@ fun ReaderSelectionMenu(
             ) {
                 Row(
                     modifier = Modifier
-                        .padding(horizontal = 10.dp, vertical = 4.dp)
-                        .fillMaxWidth(),
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(end = 6.dp)
                     ) {
                         Box(
                             modifier = Modifier
@@ -266,98 +270,117 @@ fun ReaderSelectionMenu(
                         )
                     }
 
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        // Bookmark & Name button: opens inline quick naming prompt
-                        IconButton(
-                            onClick = {
-                                showNamingPrompt = !showNamingPrompt
-                                if (showNamingPrompt && bookmarkNameDraft.isBlank()) {
-                                    val words = selectedText.trim().split(Regex("\\s+")).take(5).joinToString(" ")
-                                    bookmarkNameDraft = words
-                                }
+                    Box(
+                        modifier = Modifier
+                            .height(24.dp)
+                            .width(1.dp)
+                            .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    )
+
+                    // Bookmark & Name button: opens inline quick naming prompt
+                    IconButton(
+                        onClick = {
+                            showNamingPrompt = !showNamingPrompt
+                            if (showNamingPrompt && bookmarkNameDraft.isBlank()) {
+                                val words = selectedText.trim().split(Regex("\\s+")).take(5).joinToString(" ")
+                                bookmarkNameDraft = words
                             }
-                        ) {
-                            Icon(
-                                imageVector = if (showNamingPrompt) Icons.Default.BookmarkAdded else Icons.Default.BookmarkAdd,
-                                contentDescription = "Bookmark / Name",
-                                tint = if (showNamingPrompt) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary
+                        }
+                    ) {
+                        Icon(
+                            imageVector = if (showNamingPrompt) Icons.Default.BookmarkAdded else Icons.Default.BookmarkAdd,
+                            contentDescription = "Bookmark / Name",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+
+                    // Read from here: starts TTS from the selected paragraph
+                    IconButton(
+                        onClick = {
+                            onReadFromHere(selectedText)
+                            onDismiss()
+                            Toast.makeText(context, "Reading aloud from selection", Toast.LENGTH_SHORT).show()
+                        }
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "Read from here", tint = MaterialTheme.colorScheme.primary)
+                    }
+
+                    // Note button: directly inspect or attach full note
+                    IconButton(
+                        onClick = {
+                            val mark = activeBookmark ?: Bookmark(
+                                bookTitle = bookTitle,
+                                chapter = selectedChapterTitle.ifBlank { activeChapterTitle },
+                                quote = selectedText,
+                                color = HighlightColor.GOLD,
+                                timestamp = "Just now",
+                                pageNumber = activePage
                             )
+                            if (activeBookmark == null) {
+                                onAddBookmark(selectedText, HighlightColor.GOLD, activePage, "")
+                            }
+                            onOpenNoteModal(mark)
+                            onDismiss()
                         }
+                    ) {
+                        Icon(Icons.Default.EditNote, contentDescription = "Add Note / Inspect", tint = MaterialTheme.colorScheme.secondary)
+                    }
 
-                        // Read from here: starts TTS from the selected paragraph
+                    if (activeBookmark != null) {
                         IconButton(
                             onClick = {
-                                onReadFromHere(selectedText)
+                                onRemoveBookmark(activeBookmark.id)
                                 onDismiss()
-                                Toast.makeText(context, "Reading aloud from selection", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Removed highlight", Toast.LENGTH_SHORT).show()
                             }
                         ) {
-                            Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "Read from here", tint = MaterialTheme.colorScheme.primary)
+                            Icon(Icons.Default.Delete, contentDescription = "Remove Highlight", tint = MaterialTheme.colorScheme.error)
                         }
+                    }
 
-                        // Note button: directly inspect or attach full note
-                        IconButton(
-                            onClick = {
-                                val mark = activeBookmark ?: Bookmark(
-                                    bookTitle = bookTitle,
-                                    chapter = selectedChapterTitle.ifBlank { activeChapterTitle },
-                                    quote = selectedText,
-                                    color = HighlightColor.GOLD,
-                                    timestamp = "Just now",
-                                    pageNumber = activePage
-                                )
-                                if (activeBookmark == null) {
-                                    onAddBookmark(selectedText, HighlightColor.GOLD, activePage, "")
-                                }
-                                onOpenNoteModal(mark)
-                                onDismiss()
-                            }
-                        ) {
-                            Icon(Icons.Default.EditNote, contentDescription = "Add Note / Inspect", tint = MaterialTheme.colorScheme.secondary)
+                    IconButton(
+                        onClick = {
+                            val firstWord = selectedText.trim().split("\\s+".toRegex()).firstOrNull()?.replace("[^a-zA-Z]".toRegex(), "") ?: selectedText
+                            onLookupWord(firstWord.ifBlank { selectedText.trim() })
+                            onDismiss()
                         }
+                    ) {
+                        Icon(Icons.Default.Spellcheck, contentDescription = "Word Meaning", tint = MaterialTheme.colorScheme.primary)
+                    }
 
-                        if (activeBookmark != null) {
-                            IconButton(
-                                onClick = {
-                                    onRemoveBookmark(activeBookmark.id)
-                                    onDismiss()
-                                    Toast.makeText(context, "Removed highlight", Toast.LENGTH_SHORT).show()
-                                }
-                            ) {
-                                Icon(Icons.Default.Delete, contentDescription = "Remove Highlight", tint = MaterialTheme.colorScheme.error)
-                            }
+                    // Regular Plain Text Copy
+                    IconButton(
+                        onClick = {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(ClipData.newPlainText("Text", selectedText))
+                            onDismiss()
+                            Toast.makeText(context, "Copied text", Toast.LENGTH_SHORT).show()
                         }
+                    ) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = "Copy Plain Text", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
 
-                        IconButton(
-                            onClick = {
-                                val firstWord = selectedText.trim().split("\\s+".toRegex()).firstOrNull()?.replace("[^a-zA-Z]".toRegex(), "") ?: selectedText
-                                onLookupWord(firstWord.ifBlank { selectedText.trim() })
-                                onDismiss()
-                            }
-                        ) {
-                            Icon(Icons.Default.Spellcheck, contentDescription = "Word Meaning", tint = MaterialTheme.colorScheme.primary)
+                    // Copy with Citation
+                    IconButton(
+                        onClick = {
+                            val formatted = CitationHelper.formatCitation(
+                                quote = selectedText,
+                                author = author,
+                                bookTitle = bookTitle,
+                                chapterTitle = selectedChapterTitle.ifBlank { activeChapterTitle }
+                            )
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(ClipData.newPlainText("Citation", formatted))
+                            onDismiss()
+                            Toast.makeText(context, "Copied with citation reference!", Toast.LENGTH_SHORT).show()
                         }
+                    ) {
+                        Icon(Icons.Default.FormatQuote, contentDescription = "Cite Quote", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
 
-                        IconButton(
-                            onClick = {
-                                val formatted = CitationHelper.formatCitation(
-                                    quote = selectedText,
-                                    author = author,
-                                    bookTitle = bookTitle,
-                                    chapterTitle = selectedChapterTitle.ifBlank { activeChapterTitle }
-                                )
-                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                clipboard.setPrimaryClip(ClipData.newPlainText("Citation", formatted))
-                                onDismiss()
-                                Toast.makeText(context, "Copied with citation reference!", Toast.LENGTH_SHORT).show()
-                            }
-                        ) {
-                            Icon(Icons.Default.FormatQuote, contentDescription = "Cite Quote")
-                        }
-
-                        IconButton(onClick = onDismiss) {
-                            Icon(Icons.Default.Close, contentDescription = "Close Menu")
-                        }
+                    // Close Menu
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "Close Menu", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
