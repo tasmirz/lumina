@@ -32,6 +32,21 @@ object LuminaStorageManager {
         }
     }
 
+    private fun canWriteToDir(dir: File): Boolean {
+        return try {
+            if (!dir.exists() && !dir.mkdirs()) return false
+            val probe = File(dir, ".probe_${System.currentTimeMillis()}")
+            if (probe.createNewFile()) {
+                probe.delete()
+                true
+            } else {
+                false
+            }
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
     /**
      * Resolves the primary persistent EPUB storage directory.
      * On Android: /sdcard/Lumina/epubs (Environment.getExternalStorageDirectory() / Documents)
@@ -39,12 +54,12 @@ object LuminaStorageManager {
      */
     fun getPersistentEpubDirectory(context: Context?): File {
         cachedPersistentDir?.let { cached ->
-            if (cached.exists() && cached.isDirectory) return cached
+            if (cached.exists() && cached.isDirectory && canWriteToDir(cached)) return cached
         }
 
         synchronized(this) {
             cachedPersistentDir?.let { cached ->
-                if (cached.exists() && cached.isDirectory) return cached
+                if (cached.exists() && cached.isDirectory && canWriteToDir(cached)) return cached
             }
 
             // 1. Linux / Desktop / JVM / Termux environment
@@ -52,7 +67,7 @@ object LuminaStorageManager {
             if (!userHome.isNullOrBlank() && userHome != "/" && !userHome.startsWith("/data/user") && !userHome.startsWith("/data/data")) {
                 try {
                     val homeDir = File(userHome, EPUB_DIR_NAME)
-                    if (homeDir.exists() || homeDir.mkdirs()) {
+                    if (canWriteToDir(homeDir)) {
                         cachedPersistentDir = homeDir
                         return homeDir
                     }
@@ -64,9 +79,9 @@ object LuminaStorageManager {
             // 2. Android Shared Home Storage (/sdcard/Lumina/epubs)
             try {
                 val extStorage = Environment.getExternalStorageDirectory()
-                if (extStorage != null && (extStorage.canWrite() || Environment.MEDIA_MOUNTED == Environment.getExternalStorageState())) {
+                if (extStorage != null) {
                     val primaryDir = File(extStorage, EPUB_DIR_NAME)
-                    if (primaryDir.exists() || primaryDir.mkdirs()) {
+                    if (canWriteToDir(primaryDir)) {
                         cachedPersistentDir = primaryDir
                         return primaryDir
                     }
@@ -80,7 +95,7 @@ object LuminaStorageManager {
                 val docsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
                 if (docsDir != null) {
                     val luminaDocsDir = File(docsDir, EPUB_DIR_NAME)
-                    if (luminaDocsDir.exists() || luminaDocsDir.mkdirs()) {
+                    if (canWriteToDir(luminaDocsDir)) {
                         cachedPersistentDir = luminaDocsDir
                         return luminaDocsDir
                     }
@@ -95,7 +110,7 @@ object LuminaStorageManager {
                     val extFiles = context.getExternalFilesDir(null)
                     if (extFiles != null) {
                         val appExtDir = File(extFiles, "epubs")
-                        if (appExtDir.exists() || appExtDir.mkdirs()) {
+                        if (canWriteToDir(appExtDir)) {
                             cachedPersistentDir = appExtDir
                             return appExtDir
                         }
@@ -107,11 +122,10 @@ object LuminaStorageManager {
                 // 5. Internal private sandbox fallback
                 try {
                     val internalDir = File(context.filesDir, "epubs")
-                    if (!internalDir.exists()) {
-                        internalDir.mkdirs()
+                    if (internalDir.exists() || internalDir.mkdirs()) {
+                        cachedPersistentDir = internalDir
+                        return internalDir
                     }
-                    cachedPersistentDir = internalDir
-                    return internalDir
                 } catch (e: Throwable) {
                     logW(TAG, "Could not access filesDir: ${e.message}")
                 }

@@ -132,8 +132,12 @@ class LuminaDownloadService : Service() {
         serviceScope.launch {
             try {
                 val epubDir = LuminaStorageManager.getPersistentEpubDirectory(this@LuminaDownloadService)
-                val cleanName = title.replace(Regex("[^a-zA-Z0-9.-]"), "_") + ".epub"
-                val destFile = File(epubDir, "${System.currentTimeMillis()}_$cleanName")
+                val sanitized = title.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim()
+                val cleanName = (if (sanitized.isNotBlank()) sanitized else "book_${System.currentTimeMillis()}") + ".epub"
+                var destFile = File(epubDir, "${System.currentTimeMillis()}_$cleanName")
+                try {
+                    destFile.parentFile?.mkdirs()
+                } catch (_: Throwable) {}
 
                 var lastReportedPercent = -1
                 var lastUpdateTime = 0L
@@ -168,19 +172,51 @@ class LuminaDownloadService : Service() {
                         throw IllegalStateException("Downloaded file is not a valid EPUB archive (server may have sent an HTML error or block page).")
                     }
 
-                    // Parse and insert into repository
-                    val repository = BookRepository(applicationContext)
+                    // Parse and insert into repository singleton
+                    val repository = BookRepository.getInstance(applicationContext)
                     destFile.inputStream().use { stream ->
                         val parsed = EpubParser.parseEpub(stream, cleanName, applicationContext)
-                        val readyBook = (if (coverUrl.isNotBlank() && parsed.coverUrl.startsWith("http")) {
-                            parsed.copy(coverUrl = coverUrl)
-                        } else parsed).copy(
+                        val finalId = if (bookId.isNotBlank()) bookId else parsed.id
+                        val finalTitle = if (parsed.title.isNotBlank() && !parsed.title.startsWith("Document:", ignoreCase = true)) {
+                            parsed.title
+                        } else if (title.isNotBlank()) {
+                            title
+                        } else {
+                            parsed.title
+                        }
+                        val finalAuthor = if (parsed.author.isNotBlank() && parsed.author != "Unknown Author") {
+                            parsed.author
+                        } else if (author.isNotBlank()) {
+                            author
+                        } else {
+                            parsed.author
+                        }
+                        val finalCover = if (coverUrl.isNotBlank() && (parsed.coverUrl.isBlank() || parsed.coverUrl.startsWith("http"))) {
+                            coverUrl
+                        } else {
+                            parsed.coverUrl
+                        }
+
+                        val readyBook = parsed.copy(
+                            id = finalId,
+                            title = finalTitle,
+                            author = finalAuthor,
+                            coverUrl = finalCover,
                             filePath = destFile.absolutePath,
                             fileSize = destFile.length(),
                             isDownloaded = true,
                             downloadUrl = downloadUrl
                         )
                         repository.addBook(readyBook)
+
+                        // If book was in wishlist, update wishlist
+                        try {
+                            val wishlist = repository.wishlistBooks.value
+                            val matchInWishlist = wishlist.find { it.id == finalId || it.title.equals(finalTitle, ignoreCase = true) }
+                            if (matchInWishlist != null) {
+                                repository.removeFromWishlist(matchInWishlist.id)
+                            }
+                        } catch (_: Throwable) {}
                     }
 
                     _downloadStates.value = _downloadStates.value + (bookId to DownloadProgressState(

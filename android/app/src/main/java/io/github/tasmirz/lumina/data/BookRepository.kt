@@ -21,7 +21,24 @@ import io.github.tasmirz.lumina.data.db.LuminaDatabaseHelper
 import io.github.tasmirz.lumina.util.PageCache
 import io.github.tasmirz.lumina.util.SimpleLruCache
 
-class BookRepository(private val context: Context) {
+class BookRepository private constructor(private val context: Context) {
+
+    companion object {
+        @Volatile
+        private var instance: BookRepository? = null
+
+        fun getInstance(context: Context): BookRepository {
+            return instance ?: synchronized(this) {
+                instance ?: BookRepository(context.applicationContext).also { instance = it }
+            }
+        }
+
+        operator fun invoke(context: Context): BookRepository = getInstance(context)
+
+        fun resetInstanceForTesting() {
+            instance = null
+        }
+    }
 
     val dbHelper = LuminaDatabaseHelper(context)
 
