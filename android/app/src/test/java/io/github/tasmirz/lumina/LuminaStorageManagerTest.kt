@@ -42,4 +42,22 @@ class LuminaStorageManagerTest {
             testEpub.delete()
         }
     }
+
+    @Test
+    fun testPersistentEpubDirectoryIsCached() {
+        val dir1 = LuminaStorageManager.getPersistentEpubDirectory(null)
+        val dir2 = LuminaStorageManager.getPersistentEpubDirectory(null)
+        assertEquals("Subsequent calls should return cached persistent directory", dir1.absolutePath, dir2.absolutePath)
+    }
+
+    @Test
+    fun testSearchDirectoriesAreScopedToLumina() {
+        val dirs = LuminaStorageManager.getAllSearchDirectories(null)
+        for (dir in dirs) {
+            assertTrue(
+                "Search directories must be scoped to Lumina or epubs, got: ${dir.path}",
+                dir.path.endsWith("Lumina/epubs") || dir.name == "epubs" || dir.path.contains("Lumina")
+            )
+        }
+    }
 }

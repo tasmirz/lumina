@@ -10,6 +10,12 @@ object LuminaStorageManager {
     private const val TAG = "LuminaStorageManager"
     const val EPUB_DIR_NAME = "Lumina/epubs"
 
+    @Volatile
+    private var cachedPersistentDir: File? = null
+
+    @Volatile
+    private var legacyMigrationCompleted: Boolean = false
+
     private fun logW(tag: String, msg: String) {
         try {
             Log.w(tag, msg)
@@ -32,76 +38,94 @@ object LuminaStorageManager {
      * On Linux / Desktop / JVM: ~/Lumina/epubs
      */
     fun getPersistentEpubDirectory(context: Context?): File {
-        // 1. Linux / Desktop / JVM / Termux environment
-        val userHome = System.getProperty("user.home")
-        if (!userHome.isNullOrBlank() && userHome != "/" && !userHome.startsWith("/data/user") && !userHome.startsWith("/data/data")) {
+        cachedPersistentDir?.let { cached ->
+            if (cached.exists() && cached.isDirectory) return cached
+        }
+
+        synchronized(this) {
+            cachedPersistentDir?.let { cached ->
+                if (cached.exists() && cached.isDirectory) return cached
+            }
+
+            // 1. Linux / Desktop / JVM / Termux environment
+            val userHome = System.getProperty("user.home")
+            if (!userHome.isNullOrBlank() && userHome != "/" && !userHome.startsWith("/data/user") && !userHome.startsWith("/data/data")) {
+                try {
+                    val homeDir = File(userHome, EPUB_DIR_NAME)
+                    if (homeDir.exists() || homeDir.mkdirs()) {
+                        cachedPersistentDir = homeDir
+                        return homeDir
+                    }
+                } catch (e: Throwable) {
+                    logW(TAG, "Could not access user.home EPUB directory: ${e.message}")
+                }
+            }
+
+            // 2. Android Shared Home Storage (/sdcard/Lumina/epubs)
             try {
-                val homeDir = File(userHome, EPUB_DIR_NAME)
-                if (homeDir.exists() || homeDir.mkdirs()) {
-                    return homeDir
-                }
-            } catch (e: Throwable) {
-                logW(TAG, "Could not access user.home EPUB directory: ${e.message}")
-            }
-        }
-
-        // 2. Android Shared Home Storage (/sdcard/Lumina/epubs)
-        try {
-            val extStorage = Environment.getExternalStorageDirectory()
-            if (extStorage != null && (extStorage.canWrite() || Environment.MEDIA_MOUNTED == Environment.getExternalStorageState())) {
-                val primaryDir = File(extStorage, EPUB_DIR_NAME)
-                if (primaryDir.exists() || primaryDir.mkdirs()) {
-                    return primaryDir
-                }
-            }
-        } catch (e: Throwable) {
-            logW(TAG, "Could not access external storage directory: ${e.message}")
-        }
-
-        // 3. Android Public Documents directory (/sdcard/Documents/Lumina/epubs)
-        try {
-            val docsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
-            if (docsDir != null) {
-                val luminaDocsDir = File(docsDir, EPUB_DIR_NAME)
-                if (luminaDocsDir.exists() || luminaDocsDir.mkdirs()) {
-                    return luminaDocsDir
-                }
-            }
-        } catch (e: Throwable) {
-            logW(TAG, "Could not access public Documents directory: ${e.message}")
-        }
-
-        // 4. Android App-Specific External directory
-        if (context != null) {
-            try {
-                val extFiles = context.getExternalFilesDir(null)
-                if (extFiles != null) {
-                    val appExtDir = File(extFiles, "epubs")
-                    if (appExtDir.exists() || appExtDir.mkdirs()) {
-                        return appExtDir
+                val extStorage = Environment.getExternalStorageDirectory()
+                if (extStorage != null && (extStorage.canWrite() || Environment.MEDIA_MOUNTED == Environment.getExternalStorageState())) {
+                    val primaryDir = File(extStorage, EPUB_DIR_NAME)
+                    if (primaryDir.exists() || primaryDir.mkdirs()) {
+                        cachedPersistentDir = primaryDir
+                        return primaryDir
                     }
                 }
             } catch (e: Throwable) {
-                logW(TAG, "Could not access getExternalFilesDir: ${e.message}")
+                logW(TAG, "Could not access external storage directory: ${e.message}")
             }
 
-            // 5. Internal private sandbox fallback
+            // 3. Android Public Documents directory (/sdcard/Documents/Lumina/epubs)
             try {
-                val internalDir = File(context.filesDir, "epubs")
-                if (!internalDir.exists()) {
-                    internalDir.mkdirs()
+                val docsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
+                if (docsDir != null) {
+                    val luminaDocsDir = File(docsDir, EPUB_DIR_NAME)
+                    if (luminaDocsDir.exists() || luminaDocsDir.mkdirs()) {
+                        cachedPersistentDir = luminaDocsDir
+                        return luminaDocsDir
+                    }
                 }
-                return internalDir
             } catch (e: Throwable) {
-                logW(TAG, "Could not access filesDir: ${e.message}")
+                logW(TAG, "Could not access public Documents directory: ${e.message}")
             }
-        }
 
-        return File(".", "Lumina/epubs").apply { mkdirs() }
+            // 4. Android App-Specific External directory
+            if (context != null) {
+                try {
+                    val extFiles = context.getExternalFilesDir(null)
+                    if (extFiles != null) {
+                        val appExtDir = File(extFiles, "epubs")
+                        if (appExtDir.exists() || appExtDir.mkdirs()) {
+                            cachedPersistentDir = appExtDir
+                            return appExtDir
+                        }
+                    }
+                } catch (e: Throwable) {
+                    logW(TAG, "Could not access getExternalFilesDir: ${e.message}")
+                }
+
+                // 5. Internal private sandbox fallback
+                try {
+                    val internalDir = File(context.filesDir, "epubs")
+                    if (!internalDir.exists()) {
+                        internalDir.mkdirs()
+                    }
+                    cachedPersistentDir = internalDir
+                    return internalDir
+                } catch (e: Throwable) {
+                    logW(TAG, "Could not access filesDir: ${e.message}")
+                }
+            }
+
+            val fallback = File(".", "Lumina/epubs").apply { mkdirs() }
+            cachedPersistentDir = fallback
+            return fallback
+        }
     }
 
     /**
      * Returns candidate directories where EPUBs might have been stored or imported.
+     * Strictly restricted to Lumina-dedicated storage folders to avoid scanning unrelated system folders.
      */
     fun getAllSearchDirectories(context: Context?): List<File> {
         val dirs = mutableListOf<File>()
@@ -112,7 +136,6 @@ object LuminaStorageManager {
             val extStorage = Environment.getExternalStorageDirectory()
             if (extStorage != null) {
                 dirs.add(File(extStorage, EPUB_DIR_NAME))
-                dirs.add(File(extStorage, "Books"))
             }
         } catch (_: Throwable) {}
 
@@ -120,14 +143,6 @@ object LuminaStorageManager {
             val docsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
             if (docsDir != null) {
                 dirs.add(File(docsDir, EPUB_DIR_NAME))
-                dirs.add(File(docsDir, "Books"))
-            }
-        } catch (_: Throwable) {}
-
-        try {
-            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            if (downloadsDir != null) {
-                dirs.add(File(downloadsDir, EPUB_DIR_NAME))
             }
         } catch (_: Throwable) {}
 
@@ -181,16 +196,25 @@ object LuminaStorageManager {
      * Migrates files from legacy internal storage (context.filesDir/epubs) to persistent storage.
      */
     fun migrateLegacyFiles(context: Context?) {
-        if (context == null) return
+        if (context == null || legacyMigrationCompleted) return
         val internalDir = try { File(context.filesDir, "epubs") } catch (_: Throwable) { null } ?: return
-        if (!internalDir.exists() || !internalDir.isDirectory) return
+        if (!internalDir.exists() || !internalDir.isDirectory) {
+            legacyMigrationCompleted = true
+            return
+        }
 
         val targetDir = getPersistentEpubDirectory(context)
-        if (try { targetDir.canonicalPath == internalDir.canonicalPath } catch (_: Throwable) { false }) return
+        if (try { targetDir.canonicalPath == internalDir.canonicalPath } catch (_: Throwable) { false }) {
+            legacyMigrationCompleted = true
+            return
+        }
 
         val internalFiles = internalDir.listFiles { f ->
             f.isFile && f.name.endsWith(".epub", ignoreCase = true)
-        } ?: return
+        } ?: run {
+            legacyMigrationCompleted = true
+            return
+        }
 
         for (file in internalFiles) {
             try {
@@ -203,5 +227,6 @@ object LuminaStorageManager {
                 logW(TAG, "Failed migrating legacy file ${file.name}: ${e.message}")
             }
         }
+        legacyMigrationCompleted = true
     }
 }

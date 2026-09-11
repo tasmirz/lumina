@@ -6,6 +6,7 @@ import android.net.Uri
 import io.github.tasmirz.lumina.model.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -445,10 +446,6 @@ class BookRepository(private val context: Context) {
 
     init {
         repoScope.launch(Dispatchers.IO) {
-            try {
-                LuminaStorageManager.migrateLegacyFiles(context)
-            } catch (_: Exception) {}
-
             val loadedBooks = loadAllBooks()
             val loadedBookmarks = loadPersistedBookmarks()
             val loadedWishlist = try { dbHelper.getAllWishlist() } catch (_: Exception) { emptyList() }
@@ -477,9 +474,18 @@ class BookRepository(private val context: Context) {
                 syncSettings()
             } catch (_: Exception) {}
 
-            try {
-                autoScanAndLoadPersistentEpubs()
-            } catch (_: Exception) {}
+            // Delay discovery and migration so initial frame composition, gestures, and UI responsiveness are completely fluid
+            repoScope.launch(Dispatchers.IO) {
+                delay(2500)
+                try {
+                    LuminaStorageManager.migrateLegacyFiles(context)
+                } catch (_: Exception) {}
+                try {
+                    autoScanAndLoadPersistentEpubs()
+                } catch (e: Exception) {
+                    android.util.Log.w("BookRepository", "Startup autoScan error: ${e.message}")
+                }
+            }
         }
     }
 
@@ -1848,22 +1854,29 @@ class BookRepository(private val context: Context) {
             val existingTitles = currentBooks.map { it.title.trim().lowercase() }.toSet()
             val deletedIds = prefs.getStringSet("deleted_book_ids", emptySet()) ?: emptySet()
 
+            // Pre-index SQLite books once to avoid querying SQLite inside the loop
+            val dbBooks = try { dbHelper.getAllBooks() } catch (_: Exception) { emptyList() }
+            val dbPathMap = dbBooks.filter { it.filePath.isNotBlank() }.associateBy {
+                try { File(it.filePath).canonicalPath } catch (_: Exception) { it.filePath }
+            }
+            val dbFileNameMap = dbBooks.filter { it.filePath.isNotBlank() }.associateBy {
+                it.filePath.substringAfterLast('/')
+            }
+
+            val newlyDiscoveredBooks = mutableListOf<Book>()
+            val updatedBooks = mutableListOf<Book>()
+
             for (epubFile in scannedFiles) {
                 val canonical = try { epubFile.canonicalPath } catch (_: Exception) { epubFile.absolutePath }
                 if (canonical in existingPaths) continue
 
-                // Check if already in SQLite db
-                val dbMatch = dbHelper.getAllBooks().find {
-                    it.filePath.equals(canonical, ignoreCase = true) ||
-                    (it.filePath.isNotBlank() && it.filePath.substringAfterLast('/') == epubFile.name)
-                }
+                // Check if already in SQLite db via fast in-memory map lookup
+                val dbMatch = dbPathMap[canonical] ?: dbFileNameMap[epubFile.name]
                 if (dbMatch != null) {
                     if (dbMatch.filePath != canonical) {
                         dbHelper.updateBookFilePath(dbMatch.id, canonical, epubFile.length())
                         val updated = dbMatch.copy(filePath = canonical, fileSize = epubFile.length())
-                        if (_books.value.none { it.id == updated.id }) {
-                            _books.value = _books.value + updated
-                        }
+                        updatedBooks.add(updated)
                     }
                     continue
                 }
@@ -1871,7 +1884,7 @@ class BookRepository(private val context: Context) {
                 // If user previously deleted this book explicitly by ID, do not re-import unless filename changed
                 if (epubFile.nameWithoutExtension in deletedIds) continue
 
-                // Parse and add new book
+                // Parse and stage new book without triggering activeBook changes or recomposition storms
                 try {
                     epubFile.inputStream().use { stream ->
                         val parsed = EpubParser.parseEpub(stream, epubFile.name, context)
@@ -1883,11 +1896,35 @@ class BookRepository(private val context: Context) {
                             fileSize = epubFile.length(),
                             isDownloaded = false
                         )
-                        addBook(bookToSave)
+                        // Save directly to SQLite and cache chapters
+                        dbHelper.insertOrUpdateBook(bookToSave, bookToSave.filePath, bookToSave.isDownloaded, bookToSave.downloadUrl, bookToSave.fileSize)
+                        if (bookToSave.chapters.isNotEmpty()) {
+                            chapterCache.put(bookToSave.id, bookToSave.chapters)
+                        }
+                        newlyDiscoveredBooks.add(bookToSave)
                         android.util.Log.i("BookRepository", "Auto-loaded EPUB from persistent storage: ${epubFile.name} as \"${bookToSave.title}\"")
                     }
                 } catch (e: Exception) {
                     android.util.Log.w("BookRepository", "Failed to auto-load EPUB ${epubFile.name}: ${e.message}")
+                }
+            }
+
+            // Single atomic state update to _books.value at the end of the scan
+            if (newlyDiscoveredBooks.isNotEmpty() || updatedBooks.isNotEmpty()) {
+                withContext(Dispatchers.Main) {
+                    var merged = _books.value
+                    if (updatedBooks.isNotEmpty()) {
+                        val updatedMap = updatedBooks.associateBy { it.id }
+                        merged = merged.map { updatedMap[it.id] ?: it }
+                    }
+                    if (newlyDiscoveredBooks.isNotEmpty()) {
+                        val existingIds = merged.map { it.id }.toSet()
+                        val toAppend = newlyDiscoveredBooks.filterNot { it.id in existingIds }
+                        if (toAppend.isNotEmpty()) {
+                            merged = merged + toAppend
+                        }
+                    }
+                    _books.value = merged
                 }
             }
         } catch (e: Exception) {
