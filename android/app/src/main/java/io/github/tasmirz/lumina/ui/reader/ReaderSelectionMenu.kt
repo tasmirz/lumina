@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -24,12 +25,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.tasmirz.lumina.model.Bookmark
 import io.github.tasmirz.lumina.model.HighlightColor
 import io.github.tasmirz.lumina.util.CitationHelper
+
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 
 @Composable
 fun ReaderSelectionMenu(
@@ -42,7 +48,7 @@ fun ReaderSelectionMenu(
     bookTitle: String,
     activeBookmark: Bookmark?,
     bottomPadding: Dp,
-    onAddBookmark: (String, HighlightColor, Int) -> Unit,
+    onAddBookmark: (String, HighlightColor, Int, String) -> Unit,
     onRemoveBookmark: (Long) -> Unit,
     onOpenNoteModal: (Bookmark) -> Unit,
     onReadFromHere: (String) -> Unit,
@@ -51,6 +57,9 @@ fun ReaderSelectionMenu(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    var showNamingPrompt by rememberSaveable(selectedText) { mutableStateOf(false) }
+    var bookmarkNameDraft by rememberSaveable(selectedText) { mutableStateOf("") }
+    var selectedColor by rememberSaveable(selectedText) { mutableStateOf(HighlightColor.GOLD) }
 
     AnimatedVisibility(
         visible = showSelectionMenu,
@@ -59,136 +68,258 @@ fun ReaderSelectionMenu(
         modifier = modifier
             .padding(bottom = bottomPadding, start = 14.dp, end = 14.dp)
     ) {
-        Card(
-            shape = RoundedCornerShape(24.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .widthIn(max = 420.dp)
-                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f), RoundedCornerShape(24.dp))
         ) {
-            Row(
+            // Inline Quick Naming Prompt Card
+            AnimatedVisibility(
+                visible = showNamingPrompt,
+                enter = slideInVertically { it } + fadeIn(),
+                exit = slideOutVertically { it } + fadeOut()
+            ) {
+                Card(
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp)
+                        .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), RoundedCornerShape(20.dp))
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Name Bookmark",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                listOf(
+                                    HighlightColor.GOLD to Color(0xFFD4AF37),
+                                    HighlightColor.ROSE to Color(0xFFE5B7B7),
+                                    HighlightColor.SAGE to Color(0xFFB2C2B2)
+                                ).forEach { (colorEnum, cVal) ->
+                                    Box(
+                                        modifier = Modifier
+                                            .size(18.dp)
+                                            .clip(CircleShape)
+                                            .background(cVal)
+                                            .then(
+                                                if (selectedColor == colorEnum) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                                                else Modifier
+                                            )
+                                            .clickable { selectedColor = colorEnum }
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = bookmarkNameDraft,
+                                onValueChange = { bookmarkNameDraft = it },
+                                placeholder = { Text("Bookmark title / note...", fontSize = 13.sp) },
+                                singleLine = true,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .heightIn(min = 46.dp),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+                                )
+                            )
+                            FilledIconButton(
+                                onClick = {
+                                    val title = bookmarkNameDraft.trim()
+                                    onAddBookmark(selectedText, selectedColor, activePage, title)
+                                    showNamingPrompt = false
+                                    bookmarkNameDraft = ""
+                                    onDismiss()
+                                    Toast.makeText(context, if (title.isNotBlank()) "Saved bookmark: $title" else "Bookmark saved", Toast.LENGTH_SHORT).show()
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.size(42.dp)
+                            ) {
+                                Icon(Icons.Default.Check, contentDescription = "Save Bookmark", tint = MaterialTheme.colorScheme.onPrimary)
+                            }
+                            IconButton(
+                                onClick = {
+                                    showNamingPrompt = false
+                                    bookmarkNameDraft = ""
+                                },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(Icons.Default.Close, contentDescription = "Cancel", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Main Selection Toolbar Card
+            Card(
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
                 modifier = Modifier
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
-                    .fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                    .fillMaxWidth()
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f), RoundedCornerShape(24.dp))
             ) {
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    modifier = Modifier
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                        .fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    //Text("Highlight:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Box(
-                        modifier = Modifier
-                            .size(22.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFFD4AF37))
-                            .clickable {
-                                onAddBookmark(selectedText, HighlightColor.GOLD, activePage)
-                                onDismiss()
-                                Toast.makeText(context, "Added Gold highlight", Toast.LENGTH_SHORT).show()
-                            }
-                    )
-                    Box(
-                        modifier = Modifier
-                            .size(22.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFFE5B7B7))
-                            .clickable {
-                                onAddBookmark(selectedText, HighlightColor.ROSE, activePage)
-                                onDismiss()
-                                Toast.makeText(context, "Added Rose highlight", Toast.LENGTH_SHORT).show()
-                            }
-                    )
-                    Box(
-                        modifier = Modifier
-                            .size(22.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFFB2C2B2))
-                            .clickable {
-                                onAddBookmark(selectedText, HighlightColor.SAGE, activePage)
-                                onDismiss()
-                                Toast.makeText(context, "Added Sage highlight", Toast.LENGTH_SHORT).show()
-                            }
-                    )
-                }
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    // Read from here: starts TTS from the selected paragraph
-                    IconButton(
-                        onClick = {
-                            onReadFromHere(selectedText)
-                            onDismiss()
-                            Toast.makeText(context, "Reading aloud from selection", Toast.LENGTH_SHORT).show()
-                        }
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.VolumeUp, contentDescription = "Read from here", tint = MaterialTheme.colorScheme.primary)
+                        Box(
+                            modifier = Modifier
+                                .size(22.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFFD4AF37))
+                                .clickable {
+                                    onAddBookmark(selectedText, HighlightColor.GOLD, activePage, "")
+                                    onDismiss()
+                                    Toast.makeText(context, "Added Gold highlight", Toast.LENGTH_SHORT).show()
+                                }
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(22.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFFE5B7B7))
+                                .clickable {
+                                    onAddBookmark(selectedText, HighlightColor.ROSE, activePage, "")
+                                    onDismiss()
+                                    Toast.makeText(context, "Added Rose highlight", Toast.LENGTH_SHORT).show()
+                                }
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(22.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFFB2C2B2))
+                                .clickable {
+                                    onAddBookmark(selectedText, HighlightColor.SAGE, activePage, "")
+                                    onDismiss()
+                                    Toast.makeText(context, "Added Sage highlight", Toast.LENGTH_SHORT).show()
+                                }
+                        )
                     }
 
-                    // Note button: directly inspect or attach note
-                    IconButton(
-                        onClick = {
-                            val mark = activeBookmark ?: Bookmark(
-                                bookTitle = bookTitle,
-                                chapter = selectedChapterTitle.ifBlank { activeChapterTitle },
-                                quote = selectedText,
-                                color = HighlightColor.GOLD,
-                                timestamp = "Just now",
-                                pageNumber = activePage
-                            )
-                            if (activeBookmark == null) {
-                                onAddBookmark(selectedText, HighlightColor.GOLD, activePage)
-                            }
-                            onOpenNoteModal(mark)
-                            onDismiss()
-                        }
-                    ) {
-                        Icon(Icons.Default.EditNote, contentDescription = "Add Note / Inspect", tint = MaterialTheme.colorScheme.secondary)
-                    }
-
-                    if (activeBookmark != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // Bookmark & Name button: opens inline quick naming prompt
                         IconButton(
                             onClick = {
-                                onRemoveBookmark(activeBookmark.id)
-                                onDismiss()
-                                Toast.makeText(context, "Removed highlight", Toast.LENGTH_SHORT).show()
+                                showNamingPrompt = !showNamingPrompt
+                                if (showNamingPrompt && bookmarkNameDraft.isBlank()) {
+                                    val words = selectedText.trim().split(Regex("\\s+")).take(5).joinToString(" ")
+                                    bookmarkNameDraft = words
+                                }
                             }
                         ) {
-                            Icon(Icons.Default.Delete, contentDescription = "Remove Highlight", tint = MaterialTheme.colorScheme.error)
-                        }
-                    }
-
-                    IconButton(
-                        onClick = {
-                            val firstWord = selectedText.trim().split("\\s+".toRegex()).firstOrNull()?.replace("[^a-zA-Z]".toRegex(), "") ?: selectedText
-                            onLookupWord(firstWord.ifBlank { selectedText.trim() })
-                            onDismiss()
-                        }
-                    ) {
-                        Icon(Icons.Default.Spellcheck, contentDescription = "Word Meaning", tint = MaterialTheme.colorScheme.primary)
-                    }
-
-                    IconButton(
-                        onClick = {
-                            val formatted = CitationHelper.formatCitation(
-                                quote = selectedText,
-                                author = author,
-                                bookTitle = bookTitle,
-                                chapterTitle = selectedChapterTitle.ifBlank { activeChapterTitle }
+                            Icon(
+                                imageVector = if (showNamingPrompt) Icons.Default.BookmarkAdded else Icons.Default.BookmarkAdd,
+                                contentDescription = "Bookmark / Name",
+                                tint = if (showNamingPrompt) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary
                             )
-                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            clipboard.setPrimaryClip(ClipData.newPlainText("Citation", formatted))
-                            onDismiss()
-                            Toast.makeText(context, "Copied with citation reference!", Toast.LENGTH_SHORT).show()
                         }
-                    ) {
-                        Icon(Icons.Default.FormatQuote, contentDescription = "Cite Quote")
-                    }
 
-                    IconButton(onClick = onDismiss) {
-                        Icon(Icons.Default.Close, contentDescription = "Close Menu")
+                        // Read from here: starts TTS from the selected paragraph
+                        IconButton(
+                            onClick = {
+                                onReadFromHere(selectedText)
+                                onDismiss()
+                                Toast.makeText(context, "Reading aloud from selection", Toast.LENGTH_SHORT).show()
+                            }
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "Read from here", tint = MaterialTheme.colorScheme.primary)
+                        }
+
+                        // Note button: directly inspect or attach full note
+                        IconButton(
+                            onClick = {
+                                val mark = activeBookmark ?: Bookmark(
+                                    bookTitle = bookTitle,
+                                    chapter = selectedChapterTitle.ifBlank { activeChapterTitle },
+                                    quote = selectedText,
+                                    color = HighlightColor.GOLD,
+                                    timestamp = "Just now",
+                                    pageNumber = activePage
+                                )
+                                if (activeBookmark == null) {
+                                    onAddBookmark(selectedText, HighlightColor.GOLD, activePage, "")
+                                }
+                                onOpenNoteModal(mark)
+                                onDismiss()
+                            }
+                        ) {
+                            Icon(Icons.Default.EditNote, contentDescription = "Add Note / Inspect", tint = MaterialTheme.colorScheme.secondary)
+                        }
+
+                        if (activeBookmark != null) {
+                            IconButton(
+                                onClick = {
+                                    onRemoveBookmark(activeBookmark.id)
+                                    onDismiss()
+                                    Toast.makeText(context, "Removed highlight", Toast.LENGTH_SHORT).show()
+                                }
+                            ) {
+                                Icon(Icons.Default.Delete, contentDescription = "Remove Highlight", tint = MaterialTheme.colorScheme.error)
+                            }
+                        }
+
+                        IconButton(
+                            onClick = {
+                                val firstWord = selectedText.trim().split("\\s+".toRegex()).firstOrNull()?.replace("[^a-zA-Z]".toRegex(), "") ?: selectedText
+                                onLookupWord(firstWord.ifBlank { selectedText.trim() })
+                                onDismiss()
+                            }
+                        ) {
+                            Icon(Icons.Default.Spellcheck, contentDescription = "Word Meaning", tint = MaterialTheme.colorScheme.primary)
+                        }
+
+                        IconButton(
+                            onClick = {
+                                val formatted = CitationHelper.formatCitation(
+                                    quote = selectedText,
+                                    author = author,
+                                    bookTitle = bookTitle,
+                                    chapterTitle = selectedChapterTitle.ifBlank { activeChapterTitle }
+                                )
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                clipboard.setPrimaryClip(ClipData.newPlainText("Citation", formatted))
+                                onDismiss()
+                                Toast.makeText(context, "Copied with citation reference!", Toast.LENGTH_SHORT).show()
+                            }
+                        ) {
+                            Icon(Icons.Default.FormatQuote, contentDescription = "Cite Quote")
+                        }
+
+                        IconButton(onClick = onDismiss) {
+                            Icon(Icons.Default.Close, contentDescription = "Close Menu")
+                        }
                     }
                 }
             }

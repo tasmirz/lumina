@@ -376,8 +376,8 @@ class MainActivity : ComponentActivity() {
                                         onPositionChange = { chap, page, scroll, pct ->
                                             bookRepository.updateReadingPosition(readerBook.id, chap, page, scroll, pct)
                                         },
-                                        onAddBookmark = { quote, color, page ->
-                                            bookRepository.addBookmark(quote, color, pageNumber = page)
+                                        onAddBookmark = { quote, color, page, note ->
+                                            bookRepository.addBookmark(quote, color, note = note, pageNumber = page)
                                         },
                                         onRemoveBookmark = { bookmarkId ->
                                             bookRepository.removeBookmark(bookmarkId)

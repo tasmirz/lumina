@@ -380,7 +380,7 @@ fun ReaderScreen(
     onModeChange: (ReadingMode) -> Unit,
     onBackToLibrary: () -> Unit,
     onPositionChange: (chapterIdx: Int, pageIdx: Int, scrollPos: Int, progressPct: Int) -> Unit,
-    onAddBookmark: (String, HighlightColor, Int) -> Unit = { _, _, _ -> },
+    onAddBookmark: (String, HighlightColor, Int, String) -> Unit = { _, _, _, _ -> },
     onRemoveBookmark: (Long) -> Unit,
     onUpdateBookmark: (Bookmark) -> Unit = {},
     onLookupWord: (String) -> Unit,
@@ -1047,7 +1047,7 @@ fun ReaderScreen(
             GestureAction.ADD_BOOKMARK -> {
                 val preview = book.chapters.getOrNull(chapIdx)?.paragraphs?.getOrNull(pIdx)?.take(60) ?: "Bookmark"
                 val activePage = if (readingMode != ReadingMode.SCROLL) pagerState.currentPage + 1 else book.currentPage + 1
-                onAddBookmark(preview, HighlightColor.GOLD, activePage)
+                onAddBookmark(preview, HighlightColor.GOLD, activePage, "")
                 Toast.makeText(context, "Bookmark added", Toast.LENGTH_SHORT).show()
             }
             GestureAction.NONE -> {}
@@ -1282,7 +1282,7 @@ fun ReaderScreen(
             }
             is AssistantAction.AddNote -> {
                 val activePage = if (readingMode != ReadingMode.SCROLL) pagerState.currentPage + 1 else book.currentPage + 1
-                onAddBookmark(action.noteContent, HighlightColor.GOLD, activePage)
+                onAddBookmark(action.noteContent, HighlightColor.GOLD, activePage, "")
             }
             is AssistantAction.Answer -> {}
         }
@@ -1994,7 +1994,16 @@ fun ReaderScreen(
                         }
                     }
 
-                    Box(modifier = Modifier.fillMaxSize()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .pointerInput(gestureDoubleTap, gestureSingleTap) {
+                                detectTapGestures(
+                                    onDoubleTap = { executeGestureAction(gestureDoubleTap) },
+                                    onTap = { executeGestureAction(gestureSingleTap) }
+                                )
+                            }
+                    ) {
                         HorizontalPager(
                             state = pagerState,
                             key = { pageIdx -> "paged_page_$pageIdx" },
@@ -2041,7 +2050,12 @@ fun ReaderScreen(
                                 Column(
                                     modifier = Modifier
                                         .fillMaxSize()
-                                        .clickable { showControls = !showControls },
+                                        .pointerInput(gestureDoubleTap, gestureSingleTap) {
+                                            detectTapGestures(
+                                                onDoubleTap = { executeGestureAction(gestureDoubleTap) },
+                                                onTap = { showControls = !showControls }
+                                            )
+                                        },
                                     verticalArrangement = Arrangement.Center,
                                     horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
@@ -2083,7 +2097,12 @@ fun ReaderScreen(
                                 Box(
                                     modifier = Modifier
                                         .fillMaxSize()
-                                        .clickable { showControls = !showControls },
+                                        .pointerInput(gestureDoubleTap, gestureSingleTap) {
+                                            detectTapGestures(
+                                                onDoubleTap = { executeGestureAction(gestureDoubleTap) },
+                                                onTap = { showControls = !showControls }
+                                            )
+                                        },
                                     contentAlignment = Alignment.Center
                                 ) {
                                     if (bitmap != null) {
@@ -2165,6 +2184,21 @@ fun ReaderScreen(
                                         .clipToBounds()
                                         .then(pagedScrollModifier)
                                         .padding(horizontal = 4.dp, vertical = 2.dp)
+                                        .pointerInput(gestureDoubleTap, gestureSingleTap) {
+                                            detectTapGestures(
+                                                onDoubleTap = { executeGestureAction(gestureDoubleTap) },
+                                                onTap = {
+                                                    if (isAutoScrolling) {
+                                                        isAutoScrolling = false
+                                                    } else if (showSelectionMenu) {
+                                                        showSelectionMenu = false
+                                                        selectedText = ""
+                                                    } else {
+                                                        executeGestureAction(gestureSingleTap)
+                                                    }
+                                                }
+                                            )
+                                        }
                                         .then(
                                             if (showTtsDock || isTtsSpeaking) {
                                                 val pagedChapIdx = book.chapters.indexOfFirst { it.title == chapTitle }.coerceAtLeast(0)
@@ -2284,14 +2318,19 @@ fun ReaderScreen(
                                 .fillMaxHeight()
                                 .width(60.dp)
                                 .align(Alignment.CenterStart)
-                                .pointerInput(isAutoScrolling) {
-                                    detectTapGestures {
-                                        if (isAutoScrolling) {
-                                            isAutoScrolling = false
-                                        } else if (pagerState.currentPage > 0) {
-                                            coroutineScope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
+                                .pointerInput(isAutoScrolling, gestureDoubleTap) {
+                                    detectTapGestures(
+                                        onDoubleTap = {
+                                            executeGestureAction(gestureDoubleTap)
+                                        },
+                                        onTap = {
+                                            if (isAutoScrolling) {
+                                                isAutoScrolling = false
+                                            } else if (pagerState.currentPage > 0) {
+                                                coroutineScope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
+                                            }
                                         }
-                                    }
+                                    )
                                 }
                         )
                         Box(
@@ -2299,14 +2338,19 @@ fun ReaderScreen(
                                 .fillMaxHeight()
                                 .width(60.dp)
                                 .align(Alignment.CenterEnd)
-                                .pointerInput(isAutoScrolling) {
-                                    detectTapGestures {
-                                        if (isAutoScrolling) {
-                                            isAutoScrolling = false
-                                        } else if (pagerState.currentPage < pages.size - 1) {
-                                            coroutineScope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
+                                .pointerInput(isAutoScrolling, gestureDoubleTap) {
+                                    detectTapGestures(
+                                        onDoubleTap = {
+                                            executeGestureAction(gestureDoubleTap)
+                                        },
+                                        onTap = {
+                                            if (isAutoScrolling) {
+                                                isAutoScrolling = false
+                                            } else if (pagerState.currentPage < pages.size - 1) {
+                                                coroutineScope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
+                                            }
                                         }
-                                    }
+                                    )
                                 }
                         )
                     }
@@ -2550,7 +2594,7 @@ fun ReaderScreen(
             bookTitle = book.title,
             activeBookmark = activeBookmark,
             bottomPadding = selectionMenuBottomPadding,
-            onAddBookmark = { text, color, page -> onAddBookmark(text, color, page) },
+            onAddBookmark = { text, color, page, note -> onAddBookmark(text, color, page, note) },
             onRemoveBookmark = { id -> onRemoveBookmark(id) },
             onOpenNoteModal = { mark ->
                 selectedBookmarkForModal = mark
