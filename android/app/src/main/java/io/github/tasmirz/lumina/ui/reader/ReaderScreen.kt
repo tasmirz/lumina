@@ -65,6 +65,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.text.selection.TextSelectionColors
@@ -1345,7 +1346,8 @@ fun ReaderScreen(
                     val scrollHorizontalPaddingStart = if (isLandscape) landscapeSidePaddingStart else horizontalPadding.dp
                     val scrollHorizontalPaddingEnd = if (isLandscape) landscapeSidePaddingEnd else horizontalPadding.dp
 
-                    LazyColumn(
+                    SelectionContainer(modifier = Modifier.fillMaxSize()) {
+                        LazyColumn(
                             state = listState,
                             contentPadding = PaddingValues(
                                 top = (76 + verticalPadding).dp,
@@ -1356,52 +1358,55 @@ fun ReaderScreen(
                             modifier = Modifier.fillMaxSize()
                         ) {
                         book.chapters.forEachIndexed { chapIdx, chapter ->
+                            val chapterBookmarks = bookmarksByChapter[chapter.title.trim().lowercase()] ?: emptyList()
                             item(key = "chap-header-$chapIdx", contentType = "chap_header") {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(top = if (chapIdx == 0) 16.dp else 48.dp, bottom = 28.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    if (chapIdx > 0) {
-                                        Box(
-                                            modifier = Modifier
-                                                .width(48.dp)
-                                                .height(1.dp)
-                                                .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                                        )
-                                        Spacer(modifier = Modifier.height(32.dp))
-                                    }
-                                    val eyebrowText = if (chapter.subtitle.isNotBlank() && chapter.subtitle.startsWith("Part", ignoreCase = true)) {
-                                        chapter.subtitle.uppercase()
-                                    } else {
-                                        book.title.uppercase()
-                                    }
-                                    Text(
-                                        text = eyebrowText,
-                                        fontFamily = FontFamily.SansSerif,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Normal,
-                                        letterSpacing = 2.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Text(
-                                        text = chapter.title,
-                                        fontFamily = FontFamily.Serif,
-                                        fontSize = 26.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        textAlign = TextAlign.Center,
-                                        color = MaterialTheme.colorScheme.onBackground
-                                    )
-                                    if (chapter.subtitle.isNotBlank() && !chapter.subtitle.startsWith("Part", ignoreCase = true)) {
-                                        Spacer(modifier = Modifier.height(4.dp))
+                                DisableSelection {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(top = if (chapIdx == 0) 16.dp else 48.dp, bottom = 28.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        if (chapIdx > 0) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .width(48.dp)
+                                                    .height(1.dp)
+                                                    .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                                            )
+                                            Spacer(modifier = Modifier.height(32.dp))
+                                        }
+                                        val eyebrowText = if (chapter.subtitle.isNotBlank() && chapter.subtitle.startsWith("Part", ignoreCase = true)) {
+                                            chapter.subtitle.uppercase()
+                                        } else {
+                                            book.title.uppercase()
+                                        }
                                         Text(
-                                            text = chapter.subtitle,
-                                            fontStyle = FontStyle.Italic,
-                                            fontSize = 14.sp,
+                                            text = eyebrowText,
+                                            fontFamily = FontFamily.SansSerif,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Normal,
+                                            letterSpacing = 2.sp,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Text(
+                                            text = chapter.title,
+                                            fontFamily = FontFamily.Serif,
+                                            fontSize = 26.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            textAlign = TextAlign.Center,
+                                            color = MaterialTheme.colorScheme.onBackground
+                                        )
+                                        if (chapter.subtitle.isNotBlank() && !chapter.subtitle.startsWith("Part", ignoreCase = true)) {
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                text = chapter.subtitle,
+                                                fontStyle = FontStyle.Italic,
+                                                fontSize = 14.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -1411,12 +1416,10 @@ fun ReaderScreen(
                                 key = { pIdx, _ -> "chap-${chapIdx}-para-${pIdx}" },
                                 contentType = { _, _ -> "paragraph" }
                             ) { pIdx, para ->
-                                val chapterBookmarks = remember(bookmarksByChapter, chapter.title) {
-                                    bookmarksByChapter[chapter.title.trim().lowercase()] ?: emptyList()
-                                }
-                                val matchingBookmarks = remember(para, chapterBookmarks) {
-                                    if (chapterBookmarks.isEmpty()) emptyList()
-                                    else chapterBookmarks.filter { b ->
+                                val matchingBookmarks = if (chapterBookmarks.isEmpty()) {
+                                    emptyList()
+                                } else {
+                                    chapterBookmarks.filter { b ->
                                         val q = b.quote.trim()
                                         q.isNotBlank() && para.contains(q, ignoreCase = true)
                                     }
@@ -1424,51 +1427,52 @@ fun ReaderScreen(
                                 val isBeingSpoken = isTtsSpeaking && speakingChapterIdx == chapIdx && speakingParaIdx == pIdx
 
                                 if (para.startsWith("[IMG:") && para.endsWith("]")) {
-                                    // Inline illustration with safe image loading and placeholder
-                                    val imgPath = para.removePrefix("[IMG:").removeSuffix("]")
-                                    val bitmap = rememberBookImage(imgPath)
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(vertical = 22.dp)
-                                            .clickable(
-                                                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                                                indication = null
-                                            ) {
-                                                if (showSelectionMenu) showSelectionMenu = false else showControls = !showControls
-                                            },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        if (bitmap != null) {
-                                            Image(
-                                                bitmap = bitmap.asImageBitmap(),
-                                                contentDescription = "Illustration",
-                                                contentScale = ContentScale.Fit,
-                                                modifier = Modifier
-                                                    .fillMaxWidth(0.94f)
-                                                    .clip(RoundedCornerShape(8.dp))
-                                            )
-                                        } else {
-                                            Surface(
-                                                shape = RoundedCornerShape(8.dp),
-                                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-                                                modifier = Modifier
-                                                    .fillMaxWidth(0.92f)
-                                                    .height(160.dp)
-                                            ) {
-                                                Box(contentAlignment = Alignment.Center) {
-                                                    Text(
-                                                        text = "Illustration",
-                                                        fontFamily = FontFamily.SansSerif,
-                                                        fontSize = 12.sp,
-                                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                                                    )
+                                    DisableSelection {
+                                        // Inline illustration with safe image loading and placeholder
+                                        val imgPath = para.removePrefix("[IMG:").removeSuffix("]")
+                                        val bitmap = rememberBookImage(imgPath)
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 22.dp)
+                                                .clickable(
+                                                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                                                    indication = null
+                                                ) {
+                                                    if (showSelectionMenu) showSelectionMenu = false else showControls = !showControls
+                                                },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            if (bitmap != null) {
+                                                Image(
+                                                    bitmap = bitmap.asImageBitmap(),
+                                                    contentDescription = "Illustration",
+                                                    contentScale = ContentScale.Fit,
+                                                    modifier = Modifier
+                                                        .fillMaxWidth(0.94f)
+                                                        .clip(RoundedCornerShape(8.dp))
+                                                )
+                                            } else {
+                                                Surface(
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                                    modifier = Modifier
+                                                        .fillMaxWidth(0.92f)
+                                                        .height(160.dp)
+                                                ) {
+                                                    Box(contentAlignment = Alignment.Center) {
+                                                        Text(
+                                                            text = "Illustration",
+                                                            fontFamily = FontFamily.SansSerif,
+                                                            fontSize = 12.sp,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }
                                     }
                                 } else {
-                                    // Text Paragraph — Highlights applied strictly to text spans, no block background
                                     val isDropCap = chapIdx == 0 && pIdx == 0 && para.length > 40 && !para.startsWith("[IMG:")
                                     val onBgColor = MaterialTheme.colorScheme.onBackground
                                     val secColor = MaterialTheme.colorScheme.secondary
@@ -1477,32 +1481,11 @@ fun ReaderScreen(
                                         currentMatch != null && currentMatch.chapterIndex == chapIdx && currentMatch.paragraphIndex == pIdx
                                     val activeSearchQ = if (showInBookSearchDialog) inBookSearchQuery.trim() else ""
 
-                                    val annotatedText = remember(
-                                        para, matchingBookmarks, isDropCap, fontSize, fontFamily, onBgColor,
-                                        activeSearchQ, isActiveMatch
-                                    ) {
-                                        buildHighlightedAnnotatedString(
-                                            text = para,
-                                            matchingBookmarks = matchingBookmarks,
-                                            onBookmarkClick = { bm ->
-                                                selectedBookmarkForModal = bm
-                                                showBookmarkDetailModal = true
-                                            },
-                                            isDropCap = isDropCap,
-                                            dropCapFontFamily = FontFamily.Serif,
-                                            dropCapFontSize = (fontSize * 2.2f).sp,
-                                            dropCapColor = secColor,
-                                            baseFontFamily = fontFamily,
-                                            baseFontSize = fontSize.sp,
-                                            baseTextColor = onBgColor,
-                                            searchQuery = activeSearchQ,
-                                            isActiveSearchMatch = isActiveMatch
-                                        )
-                                    }
+                                    val hasFormatting = matchingBookmarks.isNotEmpty() || isDropCap || isActiveMatch || activeSearchQ.isNotBlank()
 
                                     val textLayoutRef = remember { AtomicReference<TextLayoutResult?>(null) }
-
                                     val paraBottomSpacing = (fontSize * 0.85f * paragraphSpacingMultiplier).dp.coerceIn(8.dp, 42.dp)
+
                                     Column(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -1515,16 +1498,16 @@ fun ReaderScreen(
                                                         speakingChapterIdx = chapIdx
                                                         speakingParaIdx = pIdx
                                                         showTtsDock = true
-                                                        val chapter = book.chapters.getOrNull(chapIdx)
-                                                        if (chapter != null) {
+                                                        val chapterObj = book.chapters.getOrNull(chapIdx)
+                                                        if (chapterObj != null) {
                                                             LuminaAudioService.startOrUpdate(
                                                                 context = context,
                                                                 bookId = book.id,
                                                                 bookTitle = book.title,
                                                                 chapterIndex = chapIdx,
-                                                                chapterTitle = chapter.title,
+                                                                chapterTitle = chapterObj.title,
                                                                 paragraphIndex = pIdx,
-                                                                paragraphs = chapter.paragraphs,
+                                                                paragraphs = chapterObj.paragraphs,
                                                                 isEdgeTts = ttsEngine == "EDGE_NEURAL",
                                                                 voice = ttsEdgeVoice,
                                                                 speed = ttsSpeed
@@ -1534,9 +1517,29 @@ fun ReaderScreen(
                                                 } else Modifier
                                             )
                                     ) {
-                                        SelectionContainer(
-                                            modifier = Modifier.fillMaxWidth()
-                                        ) {
+                                        if (hasFormatting) {
+                                            val annotatedText = remember(
+                                                para, matchingBookmarks, isDropCap, fontSize, fontFamily, onBgColor,
+                                                activeSearchQ, isActiveMatch
+                                            ) {
+                                                buildHighlightedAnnotatedString(
+                                                    text = para,
+                                                    matchingBookmarks = matchingBookmarks,
+                                                    onBookmarkClick = { bm ->
+                                                        selectedBookmarkForModal = bm
+                                                        showBookmarkDetailModal = true
+                                                    },
+                                                    isDropCap = isDropCap,
+                                                    dropCapFontFamily = FontFamily.Serif,
+                                                    dropCapFontSize = (fontSize * 2.2f).sp,
+                                                    dropCapColor = secColor,
+                                                    baseFontFamily = fontFamily,
+                                                    baseFontSize = fontSize.sp,
+                                                    baseTextColor = onBgColor,
+                                                    searchQuery = activeSearchQ,
+                                                    isActiveSearchMatch = isActiveMatch
+                                                )
+                                            }
                                             Text(
                                                 text = annotatedText,
                                                 onTextLayout = { textLayoutRef.set(it) },
@@ -1545,8 +1548,21 @@ fun ReaderScreen(
                                                 textAlign = contentTextAlign,
                                                 modifier = Modifier.fillMaxWidth()
                                             )
+                                        } else {
+                                            Text(
+                                                text = para,
+                                                onTextLayout = { textLayoutRef.set(it) },
+                                                fontFamily = fontFamily,
+                                                fontSize = fontSize.sp,
+                                                color = onBgColor,
+                                                lineHeight = (fontSize * lineHeightMultiplier).sp,
+                                                letterSpacing = letterSpacing.sp,
+                                                textAlign = contentTextAlign,
+                                                modifier = Modifier.fillMaxWidth()
+                                            )
                                         }
                                     }
+                                }
                             }
                         }
                     }

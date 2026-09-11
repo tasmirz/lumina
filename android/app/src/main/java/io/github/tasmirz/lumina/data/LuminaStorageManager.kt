@@ -173,6 +173,16 @@ object LuminaStorageManager {
     }
 
     /**
+     * Returns persistent logging directory (/sdcard/Lumina/logs or ~/Lumina/logs).
+     */
+    fun getPersistentLogsDirectory(context: Context?): File {
+        val base = getPersistentLuminaDirectory(context)
+        val dir = File(base, "logs")
+        if (!dir.exists()) dir.mkdirs()
+        return dir
+    }
+
+    /**
      * Returns candidate directories where EPUBs might have been stored or imported.
      * Strictly restricted to Lumina-dedicated storage folders to avoid scanning unrelated system folders.
      */

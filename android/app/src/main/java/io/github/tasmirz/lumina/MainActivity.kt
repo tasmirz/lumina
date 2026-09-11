@@ -154,6 +154,8 @@ class MainActivity : ComponentActivity() {
     @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        io.github.tasmirz.lumina.util.LuminaLog.init(applicationContext)
+        io.github.tasmirz.lumina.util.LuminaLog.i("MainActivity", "Lumina Application Starting")
         androidx.compose.foundation.ComposeFoundationFlags.isNewContextMenuEnabled = false
         enableEdgeToEdge()
         handleIncomingIntent(intent)

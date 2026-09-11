@@ -34,12 +34,12 @@ private fun sha256Hex(input: String): String {
     return digest.joinToString("") { "%02x".format(it) }
 }
 
-private fun decodeSampledBitmapFromFile(file: File): Bitmap? {
+private fun decodeSampledBitmapFromFile(file: File, maxWidth: Int = 450, maxHeight: Int = 650): Bitmap? {
     return try {
         val opt = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.absolutePath, opt)
         var sample = 1
-        while (opt.outWidth / sample > 1200 || opt.outHeight / sample > 1600) {
+        while (opt.outWidth / sample > maxWidth || opt.outHeight / sample > maxHeight) {
             sample *= 2
         }
         val decodeOpt = BitmapFactory.Options().apply { inSampleSize = sample }
@@ -49,12 +49,12 @@ private fun decodeSampledBitmapFromFile(file: File): Bitmap? {
     }
 }
 
-private fun decodeSampledBitmapFromByteArray(bytes: ByteArray): Bitmap? {
+private fun decodeSampledBitmapFromByteArray(bytes: ByteArray, maxWidth: Int = 450, maxHeight: Int = 650): Bitmap? {
     return try {
         val opt = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opt)
         var sample = 1
-        while (opt.outWidth / sample > 1200 || opt.outHeight / sample > 1600) {
+        while (opt.outWidth / sample > maxWidth || opt.outHeight / sample > maxHeight) {
             sample *= 2
         }
         val decodeOpt = BitmapFactory.Options().apply { inSampleSize = sample }

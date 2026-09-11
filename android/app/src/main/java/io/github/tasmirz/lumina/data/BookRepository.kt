@@ -487,6 +487,7 @@ class BookRepository private constructor(private val context: Context) {
 
     init {
         repoScope.launch(Dispatchers.IO) {
+            val startMs = System.currentTimeMillis()
             var loadedBooks = loadAllBooks()
             // If books are empty (fresh install / reinstall), restore from persistent backup on SD card / home storage
             if (loadedBooks.isEmpty()) {
@@ -509,6 +510,7 @@ class BookRepository private constructor(private val context: Context) {
             _wishlistBooks.value = loadedWishlist
             _completedBookIds.value = loadedCompleted
             _customThemes.value = loadedThemes
+            io.github.tasmirz.lumina.util.LuminaLog.perf("BookRepository.init", System.currentTimeMillis() - startMs, "Loaded ${loadedBooks.size} books, ${loadedBookmarks.size} bookmarks")
 
             try {
                 val curActiveId = _activeBookId.value.ifBlank { loadedBooks.firstOrNull()?.id ?: "" }
@@ -531,10 +533,13 @@ class BookRepository private constructor(private val context: Context) {
                 delay(1200)
                 try {
                     _activeBackgroundTask.value = "Scanning library for EPUBs..."
+                    io.github.tasmirz.lumina.util.LuminaLog.i("BookRepository", "Starting background library auto-scan")
+                    val scanStart = System.currentTimeMillis()
                     LuminaStorageManager.migrateLegacyFiles(context)
                     autoScanAndLoadPersistentEpubs()
+                    io.github.tasmirz.lumina.util.LuminaLog.perf("LibraryAutoScan", System.currentTimeMillis() - scanStart)
                 } catch (e: Exception) {
-                    android.util.Log.w("BookRepository", "Startup autoScan error: ${e.message}")
+                    io.github.tasmirz.lumina.util.LuminaLog.w("BookRepository", "Startup autoScan error", e)
                 } finally {
                     _activeBackgroundTask.value = null
                 }
@@ -1263,8 +1268,12 @@ class BookRepository private constructor(private val context: Context) {
         val id = _activeBookId.value
         val book = _books.value.find { it.id == id } ?: _books.value.firstOrNull() ?: return null
         if (book.chapters.isNotEmpty()) return book
-        val chaps = getChaptersForBook(book.id)
-        return if (chaps.isNotEmpty()) book.copy(chapters = chaps) else book
+        val cached = getCachedChapters(book.id)
+        if (cached != null && cached.isNotEmpty()) {
+            return book.copy(chapters = cached)
+        }
+        prefetchChapters(book.id)
+        return book
     }
 
     fun setActiveBook(bookId: String) {
