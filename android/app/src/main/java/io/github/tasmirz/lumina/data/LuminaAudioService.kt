@@ -13,7 +13,11 @@ import android.os.Build
 import android.os.IBinder
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.support.v4.media.MediaMetadataCompat
+import android.support.v4.media.session.MediaSessionCompat
+import android.support.v4.media.session.PlaybackStateCompat
 import androidx.core.app.NotificationCompat
+import androidx.media.app.NotificationCompat.MediaStyle
 import io.github.tasmirz.lumina.MainActivity
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -131,13 +135,44 @@ class LuminaAudioService : Service() {
     private var isSystemTtsReady = false
     private var currentSessionId = 0L
     private var playJob: Job? = null
+    private var mediaSession: MediaSessionCompat? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        initMediaSession()
         initSystemTts()
+    }
+
+    private fun initMediaSession() {
+        mediaSession = MediaSessionCompat(this, "LuminaAudioService").apply {
+            setCallback(object : MediaSessionCompat.Callback() {
+                override fun onPlay() {
+                    resumePlayback()
+                }
+
+                override fun onPause() {
+                    pausePlayback()
+                }
+
+                override fun onSkipToNext() {
+                    advanceToNextParagraph()
+                }
+
+                override fun onSkipToPrevious() {
+                    previousParagraph()
+                }
+
+                override fun onStop() {
+                    stopPlayback()
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
+            })
+            isActive = true
+        }
     }
 
     private fun createNotificationChannel() {
@@ -473,6 +508,33 @@ class LuminaAudioService : Service() {
         }
     }
 
+    private fun updateMediaSession(isPlaying: Boolean) {
+        val state = _playbackState.value
+        val stateCode = if (isPlaying) PlaybackStateCompat.STATE_PLAYING else PlaybackStateCompat.STATE_PAUSED
+        val playbackActions = PlaybackStateCompat.ACTION_PLAY or
+                PlaybackStateCompat.ACTION_PAUSE or
+                PlaybackStateCompat.ACTION_PLAY_PAUSE or
+                PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
+                PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
+                PlaybackStateCompat.ACTION_STOP
+
+        mediaSession?.setPlaybackState(
+            PlaybackStateCompat.Builder()
+                .setActions(playbackActions)
+                .setState(stateCode, PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN, if (isPlaying) state.speed else 0f)
+                .build()
+        )
+
+        mediaSession?.setMetadata(
+            MediaMetadataCompat.Builder()
+                .putString(MediaMetadataCompat.METADATA_KEY_TITLE, state.chapterTitle.ifBlank { "Reading" })
+                .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, state.bookTitle.ifBlank { "Lumina Reader" })
+                .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, state.bookTitle)
+                .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_SUBTITLE, "Paragraph ${state.paragraphIndex + 1} of ${state.paragraphs.size}")
+                .build()
+        )
+    }
+
     private fun buildNotification(): Notification {
         val state = _playbackState.value
         val playPauseActionTitle = if (state.isPlaying) "Pause" else "Play"
@@ -507,24 +569,36 @@ class LuminaAudioService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        updateMediaSession(state.isPlaying)
+
+        val mediaStyle = MediaStyle()
+            .setMediaSession(mediaSession?.sessionToken)
+            .setShowActionsInCompactView(0, 1, 2)
+            .setShowCancelButton(true)
+            .setCancelButtonIntent(stopPendingIntent)
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle(state.bookTitle.ifBlank { "Lumina Reader" })
             .setContentText("${state.chapterTitle.ifBlank { "Reading" }} • Paragraph ${state.paragraphIndex + 1}")
-            .setStyle(NotificationCompat.BigTextStyle().bigText(state.paragraphSnippet.ifBlank { state.chapterTitle }))
+            .setSubText(state.bookTitle.ifBlank { null })
+            .setStyle(mediaStyle)
             .setContentIntent(openAppIntent)
-            .setOngoing(state.isPlaying)
+            .setOngoing(true) // Unremovable while active; dismissed only by explicit Stop/Close action
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .addAction(android.R.drawable.ic_media_previous, "Previous", prevPendingIntent)
             .addAction(playPauseActionIcon, playPauseActionTitle, playPausePendingIntent)
             .addAction(android.R.drawable.ic_media_next, "Next", nextPendingIntent)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPendingIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Close", stopPendingIntent)
             .build()
     }
 
     override fun onDestroy() {
         stopPlayback()
         systemTts?.shutdown()
+        mediaSession?.isActive = false
+        mediaSession?.release()
+        mediaSession = null
         serviceScope.cancel()
         super.onDestroy()
     }

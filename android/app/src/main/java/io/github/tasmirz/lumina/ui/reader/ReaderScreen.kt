@@ -39,8 +39,10 @@ import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.Spellcheck
 import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.input.pointer.PointerEventPass
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import io.github.tasmirz.lumina.model.GestureAction
 import io.github.tasmirz.lumina.model.SceneMatch
 import io.github.tasmirz.lumina.model.OrbSize
@@ -316,10 +318,6 @@ fun ReaderScreen(
     // Auto-scroll state
     var isAutoScrolling by remember { mutableStateOf(false) }
 
-    // Tap tracking for double-tap (autoscroll) and triple-tap (summon orb)
-    var lastTapTime by remember { mutableLongStateOf(0L) }
-    var tapCount by remember { mutableIntStateOf(0) }
-
     // Repository states
     val disableAiState = repository?.disableAi?.collectAsState(initial = false)
     val disableAi = disableAiState?.value ?: false
@@ -594,6 +592,7 @@ fun ReaderScreen(
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val screenHeightPx = with(density) { configuration.screenHeightDp.dp.toPx() }
+    val screenWidthPx = with(density) { configuration.screenWidthDp.dp.toPx() }
     val isStrictPaged = readingMode == ReadingMode.PAGED
     val isPagedReading = readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL
     var showCharacterGuideSheet by rememberSaveable { mutableStateOf(false) }
@@ -654,6 +653,7 @@ fun ReaderScreen(
                 isAutoScrolling = !isAutoScrolling
                 if (isAutoScrolling) {
                     showTtsDock = false
+                    showControls = false
                     stopAllAudio()
                 }
                 Toast.makeText(context, if (isAutoScrolling) "Auto-scroll started" else "Auto-scroll stopped", Toast.LENGTH_SHORT).show()
@@ -743,7 +743,11 @@ fun ReaderScreen(
             while (isAutoScrolling) {
                 if (!listState.isScrollInProgress) {
                     try {
-                        listState.scrollBy(2f)
+                        val consumed = listState.scrollBy(2f)
+                        if (consumed == 0f && !listState.canScrollForward) {
+                            isAutoScrolling = false
+                            break
+                        }
                     } catch (_: kotlinx.coroutines.CancellationException) {
                         // Touch/gesture intervened; yield briefly and continue without terminating auto-scroll loop
                         kotlinx.coroutines.delay(100L)
@@ -756,7 +760,7 @@ fun ReaderScreen(
         } else {
             // Paged modes (PAGED, PAGED_SCROLL): pacing-based page auto-advancement
             while (isAutoScrolling) {
-                val pageIntervalMs = (12000L / autoScrollSpeed.coerceIn(0.5f, 4.0f)).toLong()
+                val pageIntervalMs = (10000L / autoScrollSpeed.coerceIn(0.5f, 4.0f)).toLong()
                 kotlinx.coroutines.delay(pageIntervalMs)
                 if (!isAutoScrolling) break
                 if (!pagerState.isScrollInProgress && pagerState.currentPage < pagerState.pageCount - 1) {
@@ -1085,6 +1089,121 @@ fun ReaderScreen(
                         } while (event.changes.any { it.pressed })
                     }
                 }
+                .pointerInput(isAutoScrolling, readingMode, gestureDoubleTap, gestureSingleTap, gestureTripleTap, screenWidthPx) {
+                    coroutineScope {
+                        var singleTapJob: Job? = null
+                        var emptySpaceTapCount = 0
+                        var lastEmptyTapTime = 0L
+                        var lastEmptyTapPos = Offset.Zero
+
+                        awaitEachGesture {
+                            val down = awaitPointerEvent(PointerEventPass.Main).changes.firstOrNull { it.pressed } ?: return@awaitEachGesture
+                            val downTime = System.currentTimeMillis()
+                            val downPos = down.position
+
+                            var wasDraggedOrPinched = false
+                            var upChange: PointerInputChange? = null
+
+                            while (true) {
+                                val event = awaitPointerEvent(PointerEventPass.Main)
+                                if (event.changes.size >= 2) {
+                                    wasDraggedOrPinched = true
+                                    break
+                                }
+                                val up = event.changes.firstOrNull { it.id == down.id && !it.pressed }
+                                if (up != null) {
+                                    upChange = up
+                                    break
+                                }
+                                val current = event.changes.firstOrNull { it.id == down.id }
+                                if (current != null && (current.position - downPos).getDistance() > 24f) {
+                                    wasDraggedOrPinched = true
+                                    break
+                                }
+                            }
+
+                            if (wasDraggedOrPinched) {
+                                emptySpaceTapCount = 0
+                                singleTapJob?.cancel()
+                                return@awaitEachGesture
+                            }
+
+                            val upTime = System.currentTimeMillis()
+                            val pressDuration = upTime - downTime
+
+                            // If held longer than 360ms, it's a long press
+                            if (pressDuration > 360L) {
+                                emptySpaceTapCount = 0
+                                singleTapJob?.cancel()
+                                return@awaitEachGesture
+                            }
+
+                            // If the up event was consumed by a child (like SelectionContainer selecting a word or link):
+                            // User double-tapped on text! Let SelectionContainer handle it without triggering empty-space double tap.
+                            if (upChange?.isConsumed == true) {
+                                emptySpaceTapCount = 0
+                                singleTapJob?.cancel()
+                                return@awaitEachGesture
+                            }
+
+                            // Tap on EMPTY SPACE!
+                            // 1. If currently auto-scrolling, any tap on empty space immediately halts auto-scroll!
+                            if (isAutoScrolling) {
+                                isAutoScrolling = false
+                                upChange?.consume()
+                                emptySpaceTapCount = 0
+                                singleTapJob?.cancel()
+                                return@awaitEachGesture
+                            }
+
+                            val now = System.currentTimeMillis()
+                            val dist = (downPos - lastEmptyTapPos).getDistance()
+
+                            if (now - lastEmptyTapTime < 350L && dist < 50f) {
+                                emptySpaceTapCount++
+                            } else {
+                                emptySpaceTapCount = 1
+                            }
+                            lastEmptyTapTime = now
+                            lastEmptyTapPos = downPos
+
+                            if (emptySpaceTapCount == 1) {
+                                singleTapJob?.cancel()
+                                singleTapJob = this@coroutineScope.launch {
+                                    delay(250L)
+                                    if (emptySpaceTapCount == 1) {
+                                        emptySpaceTapCount = 0
+                                        if (showSelectionMenu) {
+                                            try { activeReleaseSelectionAction?.invoke() } catch (_: Throwable) {}
+                                            activeReleaseSelectionAction = null
+                                            showSelectionMenu = false
+                                            selectedText = ""
+                                        } else if (readingMode != ReadingMode.SCROLL) {
+                                            val sideMarginPx = with(density) { 60.dp.toPx() }
+                                            if (downPos.x >= sideMarginPx && downPos.x <= screenWidthPx - sideMarginPx) {
+                                                executeGestureAction(gestureSingleTap)
+                                            }
+                                        } else {
+                                            executeGestureAction(gestureSingleTap)
+                                        }
+                                    }
+                                }
+                            } else if (emptySpaceTapCount == 2) {
+                                // DOUBLE TAP ON EMPTY SPACE -> TRIGGER DOUBLE TAP (AUTOSCROLL)!
+                                singleTapJob?.cancel()
+                                upChange?.consume()
+                                emptySpaceTapCount = 0
+                                executeGestureAction(gestureDoubleTap)
+                            } else if (emptySpaceTapCount >= 3) {
+                                // TRIPLE TAP ON EMPTY SPACE -> TRIGGER TRIPLE TAP (SUMMON ORB)!
+                                singleTapJob?.cancel()
+                                upChange?.consume()
+                                emptySpaceTapCount = 0
+                                executeGestureAction(gestureTripleTap)
+                            }
+                        }
+                    }
+                }
         ) {
         // Optional Custom Background Image
         if (customBgUri.isNotBlank()) {
@@ -1390,79 +1509,30 @@ fun ReaderScreen(
                                             .clip(RoundedCornerShape(6.dp))
                                             .background(if (isBeingSpoken) MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f) else Color.Transparent)
                                             .padding(top = 2.dp, bottom = paraBottomSpacing)
-                                            .pointerInput(para, matchingBookmarks) {
-                                                detectTapGestures(
-                                                    onLongPress = {
-                                                        // Consume long press so finger lift is not treated as a tap
-                                                    },
-                                                    onDoubleTap = {
-                                                        executeGestureAction(gestureDoubleTap, chapIdx, pIdx)
-                                                    },
-                                                    onTap = { offset ->
-                                                         if (showSelectionMenu) {
-                                                             try {
-                                                                 activeReleaseSelectionAction?.invoke()
-                                                             } catch (_: Throwable) {}
-                                                             activeReleaseSelectionAction = null
-                                                             showSelectionMenu = false
-                                                             selectedText = ""
-                                                             return@detectTapGestures
-                                                         }
-
-                                                         // 1. Any tap immediately stops auto-scrolling
-                                                         if (isAutoScrolling) {
-                                                             isAutoScrolling = false
-                                                             return@detectTapGestures
-                                                         }
-
-                                                         // 2. If TTS dock is open or speaking, tapping a paragraph executes configured TTS tap gesture
-                                                         if (showTtsDock || isTtsSpeaking) {
-                                                             executeGestureAction(gestureTtsTap, chapIdx, pIdx)
-                                                             return@detectTapGestures
-                                                         }
-
-                                                         val layout = textLayoutRef.get()
-                                                         var hitBookmark: Bookmark? = null
-                                                         if (layout != null && matchingBookmarks.isNotEmpty()) {
-                                                             val charOffset = layout.getOffsetForPosition(offset)
-                                                             hitBookmark = matchingBookmarks.firstOrNull { bm ->
-                                                                 val quote = bm.quote.trim()
-                                                                 if (quote.isEmpty()) return@firstOrNull false
-                                                                 var sIdx = 0
-                                                                 while (sIdx < para.length) {
-                                                                     val s = para.indexOf(quote, sIdx, ignoreCase = true)
-                                                                     if (s == -1) break
-                                                                     val e = (s + quote.length).coerceAtMost(para.length)
-                                                                     if (charOffset in s until e) return@firstOrNull true
-                                                                     sIdx = e
-                                                                 }
-                                                                 false
-                                                             }
-                                                         }
-
-                                                         // Multi-tap detection for double-tap and triple-tap
-                                                         val now = System.currentTimeMillis()
-                                                         if (now - lastTapTime < 350) {
-                                                             tapCount++
-                                                         } else {
-                                                             tapCount = 1
-                                                         }
-                                                         lastTapTime = now
-
-                                                         if (tapCount == 3) {
-                                                             tapCount = 0
-                                                             executeGestureAction(gestureTripleTap, chapIdx, pIdx)
-                                                         } else if (tapCount == 1) {
-                                                             if (hitBookmark != null) {
-                                                                 selectedBookmarkForModal = hitBookmark
-                                                                 showBookmarkDetailModal = true
-                                                             } else {
-                                                                 executeGestureAction(gestureSingleTap, chapIdx, pIdx)
-                                                             }
-                                                         }
+                                            .then(
+                                                if (showTtsDock || isTtsSpeaking) {
+                                                    Modifier.clickable {
+                                                        speakingChapterIdx = chapIdx
+                                                        speakingParaIdx = pIdx
+                                                        showTtsDock = true
+                                                        val chapter = book.chapters.getOrNull(chapIdx)
+                                                        if (chapter != null) {
+                                                            LuminaAudioService.startOrUpdate(
+                                                                context = context,
+                                                                bookId = book.id,
+                                                                bookTitle = book.title,
+                                                                chapterIndex = chapIdx,
+                                                                chapterTitle = chapter.title,
+                                                                paragraphIndex = pIdx,
+                                                                paragraphs = chapter.paragraphs,
+                                                                isEdgeTts = ttsEngine == "EDGE_NEURAL",
+                                                                voice = ttsEdgeVoice,
+                                                                speed = ttsSpeed
+                                                            )
+                                                        }
                                                     }
-                                                )
-                                            }
+                                                } else Modifier
+                                            )
                                     ) {
                                         SelectionContainer(
                                             modifier = Modifier.fillMaxWidth()
@@ -1692,95 +1762,17 @@ fun ReaderScreen(
                                         .fillMaxSize()
                                         .then(pagedScrollModifier)
                                         .padding(horizontal = 4.dp, vertical = 2.dp)
-                                            .pointerInput(pageText, matchingBookmarks) {
+                                        .then(
+                                            if (showTtsDock || isTtsSpeaking) {
                                                 val pagedChapIdx = book.chapters.indexOfFirst { it.title == chapTitle }.coerceAtLeast(0)
-                                                detectTapGestures(
-                                                    onLongPress = {
-                                                        // Consume long press so finger lift is not treated as a tap
-                                                    },
-                                                    onDoubleTap = {
-                                                        executeGestureAction(gestureDoubleTap, pagedChapIdx, 0)
-                                                    },
-                                                    onTap = { offset ->
-                                                    if (System.currentTimeMillis() - lastSelectionTimestamp < 500L) {
-                                                        return@detectTapGestures
-                                                    }
-                                                    // 1. If TTS dock is open or speaking, tapping starts reading from this chapter/paragraph
-                                                    if (showTtsDock || isTtsSpeaking) {
-                                                        val chap = book.chapters.getOrNull(pagedChapIdx)
-                                                        val layout = pagedTextLayoutResult
-                                                        var targetPIdx = 0
-                                                        if (layout != null && chap != null && pageText.isNotEmpty()) {
-                                                            val charOffset = layout.getOffsetForPosition(offset).coerceIn(0, pageText.length)
-                                                            val snippet = pageText.substring(
-                                                                (charOffset - 25).coerceAtLeast(0),
-                                                                (charOffset + 35).coerceAtMost(pageText.length)
-                                                            ).trim()
-                                                            val matchIdx = chap.paragraphs.indexOfFirst { it.contains(snippet, ignoreCase = true) }
-                                                            if (matchIdx >= 0) {
-                                                                targetPIdx = matchIdx
-                                                            }
-                                                        }
-                                                        speakingChapterIdx = pagedChapIdx
-                                                        speakingParaIdx = targetPIdx
-                                                        showTtsDock = true
-                                                        speakNextPara.value()
-                                                        return@detectTapGestures
-                                                    }
-
-                                                    val layout = pagedTextLayoutResult
-                                                    var hitBookmark: Bookmark? = null
-                                                    if (layout != null && matchingBookmarks.isNotEmpty()) {
-                                                        val charOffset = layout.getOffsetForPosition(offset)
-                                                        hitBookmark = matchingBookmarks.firstOrNull { bm ->
-                                                            val quote = bm.quote.trim()
-                                                            if (quote.isEmpty()) return@firstOrNull false
-                                                            var sIdx = 0
-                                                            while (sIdx < pageText.length) {
-                                                                val s = pageText.indexOf(quote, sIdx, ignoreCase = true)
-                                                                if (s == -1) break
-                                                                val e = (s + quote.length).coerceAtMost(pageText.length)
-                                                                if (charOffset in s until e) return@firstOrNull true
-                                                                sIdx = e
-                                                            }
-                                                            false
-                                                        }
-                                                    }
-
-                                                    // Multi-tap detection for triple-tap (summon orb)
-                                                    val now = System.currentTimeMillis()
-                                                    if (now - lastTapTime < 350) {
-                                                        tapCount++
-                                                    } else {
-                                                        tapCount = 1
-                                                    }
-                                                    lastTapTime = now
-
-                                                    if (tapCount == 3) {
-                                                        tapCount = 0
-                                                        onToggleFloatingAssistant(true)
-                                                        Toast.makeText(context, "Assistant Orb summoned", Toast.LENGTH_SHORT).show()
-                                                    } else if (tapCount == 1) {
-                                                        android.util.Log.d("LuminaToolbar", "paged onTap fired! showSelectionMenu=$showSelectionMenu, selectedText='$selectedText'")
-                                                        if (hitBookmark != null) {
-                                                            selectedBookmarkForModal = hitBookmark
-                                                            showBookmarkDetailModal = true
-                                                        } else {
-                                                            if (showSelectionMenu) {
-                                                              try {
-                                                                  activeReleaseSelectionAction?.invoke()
-                                                              } catch (_: Throwable) {}
-                                                              activeReleaseSelectionAction = null
-                                                              showSelectionMenu = false
-                                                              selectedText = ""
-                                                          } else {
-                                                                showControls = !showControls
-                                                            }
-                                                        }
-                                                    }
+                                                Modifier.clickable {
+                                                    speakingChapterIdx = pagedChapIdx
+                                                    speakingParaIdx = 0
+                                                    showTtsDock = true
+                                                    speakNextPara.value()
                                                 }
-                                            )
-                                        }
+                                            } else Modifier
+                                        )
                                 ) {
                                     if (isChapterHeaderPage) {
                                         Column(
