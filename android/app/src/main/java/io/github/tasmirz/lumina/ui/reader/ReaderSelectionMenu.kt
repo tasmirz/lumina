@@ -41,6 +41,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 fun ReaderSelectionMenu(
     showSelectionMenu: Boolean,
     selectedText: String,
+    paragraphText: String = "",
     selectedChapterTitle: String,
     activeChapterTitle: String,
     activePage: Int,
@@ -60,6 +61,9 @@ fun ReaderSelectionMenu(
     var showNamingPrompt by rememberSaveable(selectedText) { mutableStateOf(false) }
     var bookmarkNameDraft by rememberSaveable(selectedText) { mutableStateOf("") }
     var selectedColor by rememberSaveable(selectedText) { mutableStateOf(HighlightColor.GOLD) }
+    var bookmarkScope by rememberSaveable(selectedText) {
+        mutableStateOf(if (selectedText.trim().split(Regex("\\s+")).size <= 3 && paragraphText.isNotBlank()) "PARAGRAPH" else "SELECTION")
+    }
 
     AnimatedVisibility(
         visible = showSelectionMenu,
@@ -71,7 +75,7 @@ fun ReaderSelectionMenu(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .widthIn(max = 420.dp)
+                .widthIn(max = 440.dp)
         ) {
             // Inline Quick Naming Prompt Card
             AnimatedVisibility(
@@ -97,7 +101,7 @@ fun ReaderSelectionMenu(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "Name Bookmark",
+                                text = "Bookmark & Highlight",
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.primary
@@ -125,6 +129,39 @@ fun ReaderSelectionMenu(
                                 }
                             }
                         }
+
+                        if (paragraphText.isNotBlank() && paragraphText.trim() != selectedText.trim()) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                FilterChip(
+                                    selected = bookmarkScope == "PARAGRAPH",
+                                    onClick = {
+                                        bookmarkScope = "PARAGRAPH"
+                                        if (bookmarkNameDraft.isBlank()) {
+                                            val words = paragraphText.trim().split(Regex("\\s+")).take(5).joinToString(" ")
+                                            bookmarkNameDraft = words
+                                        }
+                                    },
+                                    label = { Text("Entire Paragraph", fontSize = 11.sp) }
+                                )
+                                FilterChip(
+                                    selected = bookmarkScope == "SELECTION",
+                                    onClick = {
+                                        bookmarkScope = "SELECTION"
+                                        if (bookmarkNameDraft.isBlank()) {
+                                            val words = selectedText.trim().split(Regex("\\s+")).take(5).joinToString(" ")
+                                            bookmarkNameDraft = words
+                                        }
+                                    },
+                                    label = { Text("Selection Only", fontSize = 11.sp) }
+                                )
+                            }
+                        }
+
                         Spacer(modifier = Modifier.height(6.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -148,7 +185,8 @@ fun ReaderSelectionMenu(
                             FilledIconButton(
                                 onClick = {
                                     val title = bookmarkNameDraft.trim()
-                                    onAddBookmark(selectedText, selectedColor, activePage, title)
+                                    val targetQuote = if (bookmarkScope == "PARAGRAPH" && paragraphText.isNotBlank()) paragraphText else selectedText
+                                    onAddBookmark(targetQuote, selectedColor, activePage, title)
                                     showNamingPrompt = false
                                     bookmarkNameDraft = ""
                                     onDismiss()

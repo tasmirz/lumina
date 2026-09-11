@@ -719,10 +719,10 @@ fun ReaderScreen(
                 get() = if (showSelectionMenu) TextToolbarStatus.Shown else TextToolbarStatus.Hidden
 
             override fun hide() {
-                android.util.Log.d("LuminaToolbar", "hide() called. suppress=$suppressToolbarHide, selectedText='$selectedText', elapsed=${System.currentTimeMillis() - lastSelectionTimestamp}")
-                if (System.currentTimeMillis() - lastSelectionTimestamp < 500L) return
-                if (!suppressToolbarHide && selectedText.isBlank()) {
+                if (System.currentTimeMillis() - lastSelectionTimestamp < 300L) return
+                if (!suppressToolbarHide) {
                     showSelectionMenu = false
+                    selectedText = ""
                 }
             }
 
@@ -1054,46 +1054,32 @@ fun ReaderScreen(
         }
     }
 
-    LaunchedEffect(listState.isScrollInProgress) {
-        if (listState.isScrollInProgress && isAutoScrolling) {
-            isAutoScrolling = false
-        }
-    }
-
-    LaunchedEffect(pagerState.isScrollInProgress) {
-        if (pagerState.isScrollInProgress && isAutoScrolling) {
-            isAutoScrolling = false
-        }
-    }
-
     // Auto-scroll loop for hands-free reading in both Continuous Scroll and Paged modes
     LaunchedEffect(isAutoScrolling, autoScrollSpeed, readingMode) {
         if (!isAutoScrolling) return@LaunchedEffect
         if (readingMode == ReadingMode.SCROLL) {
             while (isAutoScrolling) {
-                if (!listState.isScrollInProgress) {
-                    try {
-                        val consumed = listState.scrollBy(2f)
-                        if (consumed == 0f && !listState.canScrollForward) {
-                            isAutoScrolling = false
-                            break
-                        }
-                    } catch (_: kotlinx.coroutines.CancellationException) {
-                        // Touch/gesture intervened; yield briefly and continue without terminating auto-scroll loop
-                        kotlinx.coroutines.delay(100L)
-                        continue
-                    } catch (_: Exception) {}
-                }
+                try {
+                    val consumed = listState.scrollBy(2f)
+                    if (consumed == 0f && !listState.canScrollForward) {
+                        isAutoScrolling = false
+                        break
+                    }
+                } catch (_: kotlinx.coroutines.CancellationException) {
+                    // Touch/gesture intervened; yield briefly and continue without terminating auto-scroll loop
+                    kotlinx.coroutines.delay(100L)
+                    continue
+                } catch (_: Exception) {}
                 val delayMs = (25L / autoScrollSpeed.coerceIn(0.5f, 3.0f)).toLong().coerceAtLeast(8L)
                 kotlinx.coroutines.delay(delayMs)
             }
         } else {
             // Paged modes (PAGED, PAGED_SCROLL): pacing-based page auto-advancement
             while (isAutoScrolling) {
-                val pageIntervalMs = (10000L / autoScrollSpeed.coerceIn(0.5f, 4.0f)).toLong()
+                val pageIntervalMs = (6000L / autoScrollSpeed.coerceIn(0.5f, 4.0f)).toLong()
                 kotlinx.coroutines.delay(pageIntervalMs)
                 if (!isAutoScrolling) break
-                if (!pagerState.isScrollInProgress && pagerState.currentPage < pagerState.pageCount - 1) {
+                if (pagerState.currentPage < pagerState.pageCount - 1) {
                     try {
                         pagerState.animateScrollToPage(pagerState.currentPage + 1)
                     } catch (_: kotlinx.coroutines.CancellationException) {
@@ -1685,17 +1671,34 @@ fun ReaderScreen(
                     val scrollHorizontalPaddingStart = if (isLandscape) landscapeSidePaddingStart else horizontalPadding.dp
                     val scrollHorizontalPaddingEnd = if (isLandscape) landscapeSidePaddingEnd else horizontalPadding.dp
 
-                    SelectionContainer(modifier = Modifier.fillMaxSize()) {
-                        LazyColumn(
-                            state = listState,
-                            contentPadding = PaddingValues(
-                                top = (76 + verticalPadding).dp,
-                                bottom = 100.dp + progressBottomInset + verticalPadding.dp,
-                                start = scrollHorizontalPaddingStart,
-                                end = scrollHorizontalPaddingEnd
-                            ),
-                            modifier = Modifier.fillMaxSize()
-                        ) {
+                    LazyColumn(
+                        state = listState,
+                        contentPadding = PaddingValues(
+                            top = (76 + verticalPadding).dp,
+                            bottom = 100.dp + progressBottomInset + verticalPadding.dp,
+                            start = scrollHorizontalPaddingStart,
+                            end = scrollHorizontalPaddingEnd
+                        ),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .pointerInput(gestureDoubleTap, gestureSingleTap) {
+                                detectTapGestures(
+                                    onDoubleTap = {
+                                        executeGestureAction(gestureDoubleTap)
+                                    },
+                                    onTap = {
+                                        if (isAutoScrolling) {
+                                            isAutoScrolling = false
+                                        } else if (showSelectionMenu) {
+                                            showSelectionMenu = false
+                                            selectedText = ""
+                                        } else {
+                                            executeGestureAction(gestureSingleTap)
+                                        }
+                                    }
+                                )
+                            }
+                    ) {
                     book.chapters.forEachIndexed { chapIdx, chapter ->
                         val chapterBookmarks = bookmarksByChapter[chapter.title.trim().lowercase()] ?: emptyList()
                         item(key = "chap-header-$chapIdx", contentType = "chap_header") {
@@ -1859,47 +1862,49 @@ fun ReaderScreen(
                                                 } else Modifier
                                             )
                                     ) {
-                                        if (hasFormatting) {
-                                            val annotatedText = remember(
-                                                para, matchingBookmarks, isDropCap, fontSize, fontFamily, onBgColor,
-                                                activeSearchQ, isActiveMatch
-                                            ) {
-                                                buildHighlightedAnnotatedString(
+                                        SelectionContainer(modifier = Modifier.fillMaxWidth()) {
+                                            if (hasFormatting) {
+                                                val annotatedText = remember(
+                                                    para, matchingBookmarks, isDropCap, fontSize, fontFamily, onBgColor,
+                                                    activeSearchQ, isActiveMatch
+                                                ) {
+                                                    buildHighlightedAnnotatedString(
+                                                        text = para,
+                                                        matchingBookmarks = matchingBookmarks,
+                                                        onBookmarkClick = { bm ->
+                                                            selectedBookmarkForModal = bm
+                                                            showBookmarkDetailModal = true
+                                                        },
+                                                        isDropCap = isDropCap,
+                                                        dropCapFontFamily = FontFamily.Serif,
+                                                        dropCapFontSize = (fontSize * 2.2f).sp,
+                                                        dropCapColor = secColor,
+                                                        baseFontFamily = fontFamily,
+                                                        baseFontSize = fontSize.sp,
+                                                        baseTextColor = onBgColor,
+                                                        searchQuery = activeSearchQ,
+                                                        isActiveSearchMatch = isActiveMatch
+                                                    )
+                                                }
+                                                Text(
+                                                    text = annotatedText,
+                                                    lineHeight = (fontSize * lineHeightMultiplier).sp,
+                                                    letterSpacing = letterSpacing.sp,
+                                                    textAlign = contentTextAlign,
+                                                    modifier = Modifier.fillMaxWidth()
+                                                )
+                                            } else {
+                                                Text(
                                                     text = para,
-                                                    matchingBookmarks = matchingBookmarks,
-                                                    onBookmarkClick = { bm ->
-                                                        selectedBookmarkForModal = bm
-                                                        showBookmarkDetailModal = true
-                                                    },
-                                                    isDropCap = isDropCap,
-                                                    dropCapFontFamily = FontFamily.Serif,
-                                                    dropCapFontSize = (fontSize * 2.2f).sp,
-                                                    dropCapColor = secColor,
-                                                    baseFontFamily = fontFamily,
-                                                    baseFontSize = fontSize.sp,
-                                                    baseTextColor = onBgColor,
-                                                    searchQuery = activeSearchQ,
-                                                    isActiveSearchMatch = isActiveMatch
+                                                    fontFamily = fontFamily,
+                                                    fontSize = fontSize.sp,
+                                                    color = onBgColor,
+                                                    lineHeight = (fontSize * lineHeightMultiplier).sp,
+                                                    letterSpacing = letterSpacing.sp,
+                                                    textAlign = contentTextAlign,
+                                                    modifier = Modifier.fillMaxWidth()
                                                 )
                                             }
-                                            Text(
-                                                text = annotatedText,
-                                                lineHeight = (fontSize * lineHeightMultiplier).sp,
-                                                letterSpacing = letterSpacing.sp,
-                                                textAlign = contentTextAlign,
-                                                modifier = Modifier.fillMaxWidth()
-                                            )
-                                        } else {
-                                            Text(
-                                                text = para,
-                                                fontFamily = fontFamily,
-                                                fontSize = fontSize.sp,
-                                                color = onBgColor,
-                                                lineHeight = (fontSize * lineHeightMultiplier).sp,
-                                                letterSpacing = letterSpacing.sp,
-                                                textAlign = contentTextAlign,
-                                                modifier = Modifier.fillMaxWidth()
-                                            )
                                         }
                                     }
                                 }
@@ -1929,7 +1934,6 @@ fun ReaderScreen(
                                     }
                             )
                         }
-                    }
                     }
             } else {
                 // ═════════════════════════════════════════════════════════════════════
@@ -2583,10 +2587,24 @@ fun ReaderScreen(
                 .zIndex(185f)
         )
 
+        val selectedParagraphText = remember(selectedText, selectedChapterTitle, activeChapterTitle, book.chapters) {
+            if (selectedText.isBlank()) ""
+            else {
+                val targetTitle = selectedChapterTitle.ifBlank { activeChapterTitle }
+                val chap = book.chapters.find { it.title.equals(targetTitle, ignoreCase = true) }
+                    ?: book.chapters.getOrNull(speakingChapterIdx)
+                val clean = selectedText.trim()
+                chap?.paragraphs?.find { p ->
+                    p.contains(clean, ignoreCase = true) || (clean.length > 20 && p.contains(clean.take(20), ignoreCase = true))
+                } ?: ""
+            }
+        }
+
         // Selection Menu Pill (Rendered strictly on top of bottom dock, zIndex = 200f)
         ReaderSelectionMenu(
             showSelectionMenu = showSelectionMenu,
             selectedText = selectedText,
+            paragraphText = selectedParagraphText,
             selectedChapterTitle = selectedChapterTitle,
             activeChapterTitle = activeChapterTitle,
             activePage = if (readingMode != ReadingMode.SCROLL) pagerState.currentPage + 1 else book.currentPage + 1,
