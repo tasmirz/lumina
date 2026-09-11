@@ -152,4 +152,41 @@ class EpubParserTest {
         val book2 = EpubParser.parseEpub(ByteArrayInputStream(baos.toByteArray()), "1694380000_sample_story.epub")
         assertEquals("Sample Story", book2.title)
     }
+
+    @Test
+    fun testParseBookMetadataFast() {
+        val tempFile = java.io.File.createTempFile("lumina_meta_test", ".epub")
+        try {
+            val zos = ZipOutputStream(tempFile.outputStream())
+            zos.putNextEntry(ZipEntry("META-INF/container.xml"))
+            zos.write("""<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>""".toByteArray())
+            zos.closeEntry()
+
+            zos.putNextEntry(ZipEntry("content.opf"))
+            val opfContent = """
+                <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+                    <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+                        <dc:title>Fast Metadata Book</dc:title>
+                        <dc:creator>Test Author</dc:creator>
+                        <dc:language>en</dc:language>
+                    </metadata>
+                    <manifest>
+                        <item id="c1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
+                    </manifest>
+                </package>
+            """.trimIndent()
+            zos.write(opfContent.toByteArray(Charsets.UTF_8))
+            zos.closeEntry()
+            zos.close()
+
+            val book = EpubParser.parseBookMetadata(tempFile)
+            assertEquals("Fast Metadata Book", book.title)
+            assertEquals("Test Author", book.author)
+            assertEquals("en", book.language)
+            assertEquals(tempFile.absolutePath, book.filePath)
+            assertTrue(book.chapters.isEmpty())
+        } finally {
+            tempFile.delete()
+        }
+    }
 }

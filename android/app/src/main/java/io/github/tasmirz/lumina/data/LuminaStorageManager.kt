@@ -138,6 +138,41 @@ object LuminaStorageManager {
     }
 
     /**
+     * Returns the root persistent Lumina directory (/sdcard/Lumina or ~/Lumina).
+     */
+    fun getPersistentLuminaDirectory(context: Context?): File {
+        val epubDir = getPersistentEpubDirectory(context)
+        return epubDir.parentFile ?: epubDir
+    }
+
+    /**
+     * Returns persistent cache directory (/sdcard/Lumina/cache or ~/Lumina/cache).
+     * Survives application reinstalls and APK updates.
+     */
+    fun getPersistentCacheDirectory(context: Context?): File {
+        val base = getPersistentLuminaDirectory(context)
+        val dir = File(base, "cache")
+        if (!dir.exists()) dir.mkdirs()
+        return dir
+    }
+
+    /**
+     * Returns persistent precomputed layout pages cache directory.
+     */
+    fun getPersistentPagesCacheDirectory(context: Context?): File {
+        val dir = File(getPersistentCacheDirectory(context), "pages")
+        if (!dir.exists()) dir.mkdirs()
+        return dir
+    }
+
+    /**
+     * Returns persistent library and progress backup file.
+     */
+    fun getPersistentBackupFile(context: Context?): File {
+        return File(getPersistentCacheDirectory(context), "backup.json")
+    }
+
+    /**
      * Returns candidate directories where EPUBs might have been stored or imported.
      * Strictly restricted to Lumina-dedicated storage folders to avoid scanning unrelated system folders.
      */

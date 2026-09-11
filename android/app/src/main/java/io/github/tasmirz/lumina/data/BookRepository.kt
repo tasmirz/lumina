@@ -92,6 +92,9 @@ class BookRepository private constructor(private val context: Context) {
     private val _indexingProgress = MutableStateFlow("")
     val indexingProgress: StateFlow<String> = _indexingProgress.asStateFlow()
 
+    private val _activeBackgroundTask = MutableStateFlow<String?>(null)
+    val activeBackgroundTask: StateFlow<String?> = _activeBackgroundTask.asStateFlow()
+
     private val _preferredLanguage = MutableStateFlow(prefs.getString("preferred_language", "auto") ?: "auto")
     val preferredLanguage: StateFlow<String> = _preferredLanguage.asStateFlow()
 
@@ -400,10 +403,30 @@ class BookRepository private constructor(private val context: Context) {
 
     fun getChaptersForBook(bookId: String): List<Chapter> {
         val cached = chapterCache.get(bookId)
-        if (cached != null) return cached
+        if (cached != null && cached.isNotEmpty()) return cached
         val fromDb = dbHelper.getAllChaptersForBook(bookId)
         if (fromDb.isNotEmpty()) {
             chapterCache.put(bookId, fromDb)
+            return fromDb
+        }
+        // Lazy on-demand chapter parsing for books added via fast metadata-only discovery
+        val book = _books.value.find { it.id == bookId } ?: dbHelper.getAllBooks().find { it.id == bookId }
+        if (book != null && !book.filePath.isNullOrBlank()) {
+            val file = File(book.filePath)
+            if (file.exists() && file.length() > 0L) {
+                try {
+                    file.inputStream().use { stream ->
+                        val parsed = EpubParser.parseEpub(stream, file.name, context)
+                        if (parsed.chapters.isNotEmpty()) {
+                            dbHelper.saveChaptersForBook(bookId, parsed.chapters)
+                            chapterCache.put(bookId, parsed.chapters)
+                            return parsed.chapters
+                        }
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("BookRepository", "Failed lazy parsing chapters for ${book.title}: ${e.message}")
+                }
+            }
         }
         return fromDb
     }
@@ -452,6 +475,7 @@ class BookRepository private constructor(private val context: Context) {
                 isLandscape = isLandscape,
                 isStrictPaged = isStrictPaged,
                 dbHelper = dbHelper,
+                context = context,
                 activeChapterIndex = activeChapterIndex,
                 onActiveChapterReady = { activePages ->
                     onActiveChapterReady?.invoke(activePages)
@@ -463,7 +487,18 @@ class BookRepository private constructor(private val context: Context) {
 
     init {
         repoScope.launch(Dispatchers.IO) {
-            val loadedBooks = loadAllBooks()
+            var loadedBooks = loadAllBooks()
+            // If books are empty (fresh install / reinstall), restore from persistent backup on SD card / home storage
+            if (loadedBooks.isEmpty()) {
+                val backupFile = LuminaStorageManager.getPersistentBackupFile(context)
+                if (backupFile.exists() && backupFile.length() > 0L) {
+                    val restored = dbHelper.restoreStateFromPersistentFile(backupFile)
+                    if (restored) {
+                        loadedBooks = loadAllBooks()
+                    }
+                }
+            }
+
             val loadedBookmarks = loadPersistedBookmarks()
             val loadedWishlist = try { dbHelper.getAllWishlist() } catch (_: Exception) { emptyList() }
             val loadedCompleted = try { dbHelper.getAllCompletedBookIds() } catch (_: Exception) { emptySet() }
@@ -491,16 +526,17 @@ class BookRepository private constructor(private val context: Context) {
                 syncSettings()
             } catch (_: Exception) {}
 
-            // Delay discovery and migration so initial frame composition, gestures, and UI responsiveness are completely fluid
+            // Background auto-scan with active background task tracking
             repoScope.launch(Dispatchers.IO) {
-                delay(2500)
+                delay(1200)
                 try {
+                    _activeBackgroundTask.value = "Scanning library for EPUBs..."
                     LuminaStorageManager.migrateLegacyFiles(context)
-                } catch (_: Exception) {}
-                try {
                     autoScanAndLoadPersistentEpubs()
                 } catch (e: Exception) {
                     android.util.Log.w("BookRepository", "Startup autoScan error: ${e.message}")
+                } finally {
+                    _activeBackgroundTask.value = null
                 }
             }
         }
@@ -1901,26 +1937,21 @@ class BookRepository private constructor(private val context: Context) {
                 // If user previously deleted this book explicitly by ID, do not re-import unless filename changed
                 if (epubFile.nameWithoutExtension in deletedIds) continue
 
-                // Parse and stage new book without triggering activeBook changes or recomposition storms
+                // Parse and stage new book with ultra-fast metadata-only parsing (~3-5ms)
                 try {
-                    epubFile.inputStream().use { stream ->
-                        val parsed = EpubParser.parseEpub(stream, epubFile.name, context)
-                        if (parsed.title.trim().lowercase() in existingTitles) {
-                            return@use
-                        }
-                        val bookToSave = parsed.copy(
-                            filePath = epubFile.absolutePath,
-                            fileSize = epubFile.length(),
-                            isDownloaded = false
-                        )
-                        // Save directly to SQLite and cache chapters
-                        dbHelper.insertOrUpdateBook(bookToSave, bookToSave.filePath, bookToSave.isDownloaded, bookToSave.downloadUrl, bookToSave.fileSize)
-                        if (bookToSave.chapters.isNotEmpty()) {
-                            chapterCache.put(bookToSave.id, bookToSave.chapters)
-                        }
-                        newlyDiscoveredBooks.add(bookToSave)
-                        android.util.Log.i("BookRepository", "Auto-loaded EPUB from persistent storage: ${epubFile.name} as \"${bookToSave.title}\"")
+                    val metadataBook = EpubParser.parseBookMetadata(epubFile, context)
+                    if (metadataBook.title.trim().lowercase() in existingTitles) {
+                        continue
                     }
+                    val bookToSave = metadataBook.copy(
+                        filePath = epubFile.absolutePath,
+                        fileSize = epubFile.length(),
+                        isDownloaded = false
+                    )
+                    // Save directly to SQLite
+                    dbHelper.insertOrUpdateBook(bookToSave, bookToSave.filePath, bookToSave.isDownloaded, bookToSave.downloadUrl, bookToSave.fileSize)
+                    newlyDiscoveredBooks.add(bookToSave)
+                    android.util.Log.i("BookRepository", "Auto-loaded EPUB metadata: ${epubFile.name} as \"${bookToSave.title}\"")
                 } catch (e: Exception) {
                     android.util.Log.w("BookRepository", "Failed to auto-load EPUB ${epubFile.name}: ${e.message}")
                 }
@@ -1944,14 +1975,34 @@ class BookRepository private constructor(private val context: Context) {
                     _books.value = merged
                 }
             }
+
+            // Backup library state to persistent storage (/sdcard/Lumina/cache/backup.json)
+            try {
+                val backupFile = LuminaStorageManager.getPersistentBackupFile(context)
+                dbHelper.backupStateToPersistentFile(backupFile)
+            } catch (_: Exception) {}
         } catch (e: Exception) {
             android.util.Log.w("BookRepository", "Error in autoScanAndLoadPersistentEpubs: ${e.message}")
         }
     }
 
+    suspend fun refreshLibrary() = withContext(Dispatchers.IO) {
+        _activeBackgroundTask.value = "Scanning library for EPUBs..."
+        try {
+            LuminaStorageManager.migrateLegacyFiles(context)
+            autoScanAndLoadPersistentEpubs()
+            try {
+                val backupFile = LuminaStorageManager.getPersistentBackupFile(context)
+                dbHelper.backupStateToPersistentFile(backupFile)
+            } catch (_: Exception) {}
+        } finally {
+            _activeBackgroundTask.value = null
+        }
+    }
+
     fun scanAndSyncPersistentEpubs() {
         repoScope.launch(Dispatchers.IO) {
-            autoScanAndLoadPersistentEpubs()
+            refreshLibrary()
         }
     }
 

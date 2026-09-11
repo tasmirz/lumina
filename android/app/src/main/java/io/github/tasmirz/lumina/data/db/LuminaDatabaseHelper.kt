@@ -20,7 +20,7 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
 
     companion object {
         const val DATABASE_NAME = "lumina_reader.db"
-        const val DATABASE_VERSION = 10
+        const val DATABASE_VERSION = 11
 
         // Normalized Chapters table (stores chunked chapter content per book)
         const val TABLE_CHAPTERS = "book_chapters"
@@ -190,6 +190,13 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
         }
     }
 
+    override fun onConfigure(db: SQLiteDatabase) {
+        super.onConfigure(db)
+        try {
+            db.enableWriteAheadLogging()
+        } catch (_: Exception) {}
+    }
+
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""
             CREATE TABLE IF NOT EXISTS $TABLE_BOOKS (
@@ -339,11 +346,12 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
 
         db.execSQL("""
             CREATE TABLE IF NOT EXISTS $TABLE_PAGE_CACHE (
-                $COL_PC_KEY TEXT PRIMARY KEY,
-                $COL_PC_BOOK_ID TEXT NOT NULL,
+                $COL_PC_KEY TEXT NOT NULL,
                 $COL_PC_CHAP_INDEX INTEGER NOT NULL,
+                $COL_PC_BOOK_ID TEXT NOT NULL,
                 $COL_PC_PAGES_JSON TEXT NOT NULL,
-                $COL_PC_CREATED_AT INTEGER NOT NULL
+                $COL_PC_CREATED_AT INTEGER NOT NULL,
+                PRIMARY KEY ($COL_PC_KEY, $COL_PC_CHAP_INDEX)
             )
         """.trimIndent())
         try {
@@ -540,6 +548,22 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
                 }
                 // Clear out large chapters JSON from books table to reclaim storage and memory
                 db.execSQL("UPDATE $TABLE_BOOKS SET $COL_BOOK_CHAPTERS_JSON = ''")
+            } catch (_: Exception) {}
+        }
+        if (oldVersion < 11) {
+            try {
+                db.execSQL("DROP TABLE IF EXISTS $TABLE_PAGE_CACHE")
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS $TABLE_PAGE_CACHE (
+                        $COL_PC_KEY TEXT NOT NULL,
+                        $COL_PC_CHAP_INDEX INTEGER NOT NULL,
+                        $COL_PC_BOOK_ID TEXT NOT NULL,
+                        $COL_PC_PAGES_JSON TEXT NOT NULL,
+                        $COL_PC_CREATED_AT INTEGER NOT NULL,
+                        PRIMARY KEY ($COL_PC_KEY, $COL_PC_CHAP_INDEX)
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS idx_page_cache_book ON $TABLE_PAGE_CACHE ($COL_PC_BOOK_ID)")
             } catch (_: Exception) {}
         }
     }
@@ -1478,13 +1502,16 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
                 arrayOf(COL_PC_PAGES_JSON),
                 "$COL_PC_KEY = ?",
                 arrayOf(cacheKey),
-                null, null, null
+                null, null,
+                "$COL_PC_CHAP_INDEX ASC"
             )
             cursor.use {
-                if (it.moveToFirst()) {
+                val list = mutableListOf<Pair<String, String>>()
+                while (it.moveToNext()) {
                     val json = it.getString(0)
-                    return deserializePages(json)
+                    list.addAll(deserializePages(json))
                 }
+                if (list.isNotEmpty()) return list
             }
         } catch (_: Exception) {}
         return null
@@ -1494,15 +1521,221 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
         if (pages.isEmpty()) return
         try {
             val db = writableDatabase
-            val values = ContentValues().apply {
-                put(COL_PC_KEY, cacheKey)
-                put(COL_PC_BOOK_ID, bookId)
-                put(COL_PC_CHAP_INDEX, chapterIndex)
-                put(COL_PC_PAGES_JSON, serializePages(pages))
-                put(COL_PC_CREATED_AT, System.currentTimeMillis())
+            // Chunk pages into 25-page slices (~30-50KB JSON) so individual rows never exceed Android's 2MB CursorWindow limit
+            val chunks = pages.chunked(25)
+            db.beginTransaction()
+            try {
+                db.delete(TABLE_PAGE_CACHE, "$COL_PC_KEY = ?", arrayOf(cacheKey))
+                for ((idx, chunk) in chunks.withIndex()) {
+                    val values = ContentValues().apply {
+                        put(COL_PC_KEY, cacheKey)
+                        put(COL_PC_BOOK_ID, bookId)
+                        put(COL_PC_CHAP_INDEX, idx)
+                        put(COL_PC_PAGES_JSON, serializePages(chunk))
+                        put(COL_PC_CREATED_AT, System.currentTimeMillis())
+                    }
+                    db.insertWithOnConflict(TABLE_PAGE_CACHE, null, values, SQLiteDatabase.CONFLICT_REPLACE)
+                }
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
             }
-            db.insertWithOnConflict(TABLE_PAGE_CACHE, null, values, SQLiteDatabase.CONFLICT_REPLACE)
         } catch (_: Exception) {}
+    }
+
+    fun backupStateToPersistentFile(file: java.io.File): Boolean {
+        return try {
+            val root = JSONObject()
+            root.put("version", 1)
+            root.put("timestamp", System.currentTimeMillis())
+
+            // 1. Books
+            val booksArray = JSONArray()
+            for (b in getAllBooks()) {
+                val obj = JSONObject().apply {
+                    put("id", b.id)
+                    put("title", b.title)
+                    put("author", b.author)
+                    put("coverUrl", b.coverUrl)
+                    put("filePath", b.filePath)
+                    put("lastRead", b.lastRead)
+                    put("progress", b.progress)
+                    put("readTimeLeft", b.readTimeLeft)
+                    put("currentChapter", b.currentChapter)
+                    put("currentPage", b.currentPage)
+                    put("scrollPos", b.scrollPos)
+                    put("isDownloaded", b.isDownloaded)
+                    put("downloadUrl", b.downloadUrl)
+                    put("fileSize", b.fileSize)
+                    put("language", b.language)
+                }
+                booksArray.put(obj)
+            }
+            root.put("books", booksArray)
+
+            // 2. Bookmarks
+            val bookmarksArray = JSONArray()
+            for (bm in getAllBookmarks()) {
+                val obj = JSONObject().apply {
+                    put("id", bm.id)
+                    put("bookTitle", bm.bookTitle)
+                    put("chapter", bm.chapter)
+                    put("quote", bm.quote)
+                    put("color", bm.color.name)
+                    put("note", bm.note)
+                    put("timestamp", bm.timestamp)
+                    put("pageNumber", bm.pageNumber)
+                }
+                bookmarksArray.put(obj)
+            }
+            root.put("bookmarks", bookmarksArray)
+
+            // 3. Wishlist
+            val wishlistArray = JSONArray()
+            for (w in getAllWishlist()) {
+                val obj = JSONObject().apply {
+                    put("id", w.id)
+                    put("title", w.title)
+                    put("author", w.author)
+                    put("note", w.note)
+                    put("addedAt", w.addedAt)
+                }
+                wishlistArray.put(obj)
+            }
+            root.put("wishlist", wishlistArray)
+
+            // 4. Completed
+            val completedArray = JSONArray()
+            for (cid in getAllCompletedBookIds()) {
+                completedArray.put(cid)
+            }
+            root.put("completed", completedArray)
+
+            // 5. Settings
+            val settingsObj = JSONObject()
+            for ((k, v) in getAllSettings()) {
+                settingsObj.put(k, v)
+            }
+            root.put("settings", settingsObj)
+
+            file.parentFile?.mkdirs()
+            file.writeText(root.toString())
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    fun restoreStateFromPersistentFile(file: java.io.File): Boolean {
+        if (!file.exists() || file.length() == 0L) return false
+        return try {
+            val jsonStr = file.readText()
+            if (jsonStr.isBlank()) return false
+            val root = JSONObject(jsonStr)
+
+            val db = writableDatabase
+            db.beginTransaction()
+            try {
+                // 1. Books
+                val booksArray = root.optJSONArray("books")
+                if (booksArray != null) {
+                    for (i in 0 until booksArray.length()) {
+                        val obj = booksArray.getJSONObject(i)
+                        val cv = ContentValues().apply {
+                            put(COL_BOOK_ID, obj.getString("id"))
+                            put(COL_BOOK_TITLE_MAIN, obj.optString("title", ""))
+                            put(COL_BOOK_AUTHOR, obj.optString("author", ""))
+                            put(COL_BOOK_COVER, obj.optString("coverUrl", ""))
+                            put(COL_BOOK_FILE_PATH, obj.optString("filePath", ""))
+                            put(COL_BOOK_LAST_READ, obj.optString("lastRead", "Never read"))
+                            put(COL_BOOK_PROGRESS, obj.optInt("progress", 0))
+                            put(COL_BOOK_TIME_LEFT, obj.optString("readTimeLeft", "10h left"))
+                            put(COL_BOOK_CURRENT_CHAPTER, obj.optInt("currentChapter", 0))
+                            put(COL_BOOK_CURRENT_PAGE, obj.optInt("currentPage", 0))
+                            put(COL_BOOK_SCROLL_POS, obj.optInt("scrollPos", 0))
+                            put(COL_BOOK_CHAPTERS_JSON, "")
+                            put(COL_BOOK_IS_DOWNLOADED, if (obj.optBoolean("isDownloaded", false)) 1 else 0)
+                            put(COL_BOOK_DOWNLOAD_URL, obj.optString("downloadUrl", ""))
+                            put(COL_BOOK_FILE_SIZE, obj.optLong("fileSize", 0L))
+                            put(COL_BOOK_ADDED_AT, obj.optLong("addedAt", System.currentTimeMillis()))
+                        }
+                        db.insertWithOnConflict(TABLE_BOOKS, null, cv, SQLiteDatabase.CONFLICT_IGNORE)
+                    }
+                }
+
+                // 2. Bookmarks
+                val bookmarksArray = root.optJSONArray("bookmarks")
+                if (bookmarksArray != null) {
+                    for (i in 0 until bookmarksArray.length()) {
+                        val obj = bookmarksArray.getJSONObject(i)
+                        val cv = ContentValues().apply {
+                            put(COL_BOOKMARK_ID, obj.getLong("id"))
+                            put(COL_BOOK_TITLE, obj.optString("bookTitle", ""))
+                            put(COL_CHAPTER, obj.optString("chapter", ""))
+                            put(COL_QUOTE, obj.optString("quote", ""))
+                            put(COL_COLOR, obj.optString("color", "GOLD"))
+                            put(COL_BOOKMARK_NOTE, obj.optString("note", ""))
+                            put(COL_TIMESTAMP, obj.optLong("timestamp", System.currentTimeMillis()))
+                            put(COL_BOOKMARK_PAGE, obj.optInt("pageNumber", 1))
+                        }
+                        db.insertWithOnConflict(TABLE_BOOKMARKS, null, cv, SQLiteDatabase.CONFLICT_IGNORE)
+                    }
+                }
+
+                // 3. Wishlist
+                val wishlistArray = root.optJSONArray("wishlist")
+                if (wishlistArray != null) {
+                    for (i in 0 until wishlistArray.length()) {
+                        val obj = wishlistArray.getJSONObject(i)
+                        val cv = ContentValues().apply {
+                            put(COL_WISHLIST_ID, obj.getString("id"))
+                            put(COL_WISHLIST_TITLE, obj.optString("title", ""))
+                            put(COL_WISHLIST_AUTHOR, obj.optString("author", ""))
+                            put(COL_WISHLIST_NOTE, obj.optString("note", obj.optString("notes", "")))
+                            put(COL_WISHLIST_ADDED_AT, obj.optString("addedAt", "Recently"))
+                        }
+                        db.insertWithOnConflict(TABLE_WISHLIST, null, cv, SQLiteDatabase.CONFLICT_IGNORE)
+                    }
+                }
+
+                // 4. Completed
+                val completedArray = root.optJSONArray("completed")
+                if (completedArray != null) {
+                    for (i in 0 until completedArray.length()) {
+                        val bookId = completedArray.getString(i)
+                        val cv = ContentValues().apply {
+                            put(COL_CB_BOOK_ID, bookId)
+                            put(COL_CB_COMPLETED_AT, System.currentTimeMillis().toString())
+                        }
+                        db.insertWithOnConflict(TABLE_COMPLETED_BOOKS, null, cv, SQLiteDatabase.CONFLICT_IGNORE)
+                    }
+                }
+
+                // 5. Settings
+                val settingsObj = root.optJSONObject("settings")
+                if (settingsObj != null) {
+                    val keys = settingsObj.keys()
+                    while (keys.hasNext()) {
+                        val k = keys.next()
+                        val v = settingsObj.getString(k)
+                        val cv = ContentValues().apply {
+                            put(COL_SETTING_KEY, k)
+                            put(COL_SETTING_VALUE, v)
+                        }
+                        db.insertWithOnConflict(TABLE_SETTINGS, null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+                    }
+                }
+
+                db.setTransactionSuccessful()
+                true
+            } finally {
+                db.endTransaction()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
     }
 
     fun clearPageCacheForBook(bookId: String) {
