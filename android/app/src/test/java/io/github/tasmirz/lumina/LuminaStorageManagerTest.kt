@@ -60,4 +60,14 @@ class LuminaStorageManagerTest {
             )
         }
     }
+
+    @Test
+    fun testPersistentEpubDirectoryIsWritable() {
+        val dir = LuminaStorageManager.getPersistentEpubDirectory(null)
+        assertTrue("Directory must exist or be creatable", dir.exists() || dir.mkdirs())
+        val probe = File(dir, ".test_write_probe_${System.currentTimeMillis()}")
+        val created = probe.createNewFile()
+        assertTrue("Must be able to create files in persistent directory", created)
+        probe.delete()
+    }
 }

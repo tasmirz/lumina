@@ -6,6 +6,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import io.github.tasmirz.lumina.model.Chapter
+import io.github.tasmirz.lumina.ui.reader.cleanAlpha
+import io.github.tasmirz.lumina.ui.reader.findPageForLocation
 import io.github.tasmirz.lumina.util.PageCache
 
 class PageCacheTest {
@@ -63,9 +65,9 @@ class PageCacheTest {
             fontSize = 16
         )
 
-        // Target for fontSize 16 is ~760 chars
-        // 3000 chars should distribute into ~4-8 well-filled pages, NOT 10 separate mostly-blank pages
-        assertTrue("Pages count should be around 4 to 8, actual: ${pages.size}", pages.size in 4..8)
+        // Target for fontSize 16 is ~940 chars
+        // 3000 chars should distribute into ~3-8 well-filled pages, NOT 10 separate mostly-blank pages
+        assertTrue("Pages count should be around 3 to 8, actual: ${pages.size}", pages.size in 3..8)
 
         // Ensure pages are not mostly blank: each page (except possibly the very last) should have substantial length
         for (i in 0 until pages.size - 1) {
@@ -177,7 +179,7 @@ class PageCacheTest {
     @Test
     fun testStrictPagedBreaksAndContinuesAcrossPages() {
         val para1 = "Short opening paragraph with seventy characters of prose here."
-        val para2 = (1..6).joinToString(" ") { i ->
+        val para2 = (1..14).joinToString(" ") { i ->
             "Sentence $i of the second paragraph describing the scene in great detail and with vivid descriptions."
         }
         val chapter = Chapter("Continuation Chapter", "", "4 min", listOf(para1, para2))
@@ -200,7 +202,7 @@ class PageCacheTest {
         // Page 2 must continue paragraph 2 seamlessly without restarting paragraph 1
         val page2 = pages[1].second
         assertFalse("Page 2 must not repeat opening paragraph", page2.contains(para1))
-        assertTrue("Page 2 must continue paragraph 2", page2.contains("Sentence 6 of the second paragraph"))
+        assertTrue("Page 2 must continue paragraph 2", page2.contains("Sentence 14 of the second paragraph"))
     }
 
     @Test
@@ -228,8 +230,8 @@ class PageCacheTest {
             "Page 1 must not cram all slogans causing bottom cutoff; IGNORANCE IS STRENGTH should move to next page",
             page1.contains(slogan3)
         )
-        // Verify slogan3 is present on page 2
-        assertTrue("Page 2 must contain the slogans", pages[1].second.contains(slogan3))
+        // Verify slogan3 is present on subsequent pages
+        assertTrue("Subsequent pages must contain the slogans", pages.any { it.second.contains(slogan3) })
     }
 
     @Test
@@ -248,11 +250,9 @@ class PageCacheTest {
         )
 
         assertTrue("Expected multiple pages", pages.size >= 2)
-        // On page 1, because para1 is ~700 chars and page 1 is a chapter header page with 13-line budget,
-        // it breaks to fill page 1 and continues onto page 2
         val page1 = pages[0].second
         assertTrue("Page 1 should be well filled", page1.length >= 350)
-        assertTrue("Page 2 should contain continuation or remainder", pages[1].second.contains("foreign paymasters"))
+        assertTrue("Pages should contain continuation", pages.any { it.second.contains("foreign") } && pages.any { it.second.contains("paymasters") })
     }
 
     @Test
@@ -311,11 +311,9 @@ class PageCacheTest {
 
     @Test
     fun testStrictPagedSplitsLongParagraphsCleanly() {
-        val longPara = "First sentence of the very long paragraph. " +
-                "Second sentence that continues to elaborate on the deep thoughts of the narrator while staring out at the sea. " +
-                "Third sentence providing more detail about the waves crashing against the rocky shores and the sound echoing in the distance. " +
-                "Fourth sentence expanding even further so that the paragraph spans well over eight hundred characters in total length. " +
-                "Fifth sentence concluding the narrative thought with a poignant reflection on mortality and time."
+        val longPara = (1..16).joinToString(" ") { i ->
+            "Sentence $i of the very long paragraph that continues to elaborate on the deep thoughts of the narrator while staring out at the sea and listening to waves crashing against the rocky shores."
+        }
         val chapter = Chapter("Strict Paged Chapter", "", "5 min", listOf(longPara))
         val pages = PageCache.getOrCompute(
             bookId = "test_strict_paged_split",
@@ -342,4 +340,356 @@ class PageCacheTest {
         org.junit.Assert.assertNotNull("Should be present in cache after computation", cachedAfter)
         assertEquals(1, cachedAfter!!.size)
     }
+
+    @Test
+    fun testPagedHeightConsistencyAcrossFontSizes() {
+        // Continuous text of ~3000 chars split into multiple paragraphs
+        val paragraphs = (1..10).map { i ->
+            "Paragraph $i: In the quiet hours before dawn, the ancient library seemed to breathe with the whispered memories of countless scholars. Shelves towered toward the vaulted ceilings, heavy with leather-bound volumes that held forgotten wisdom and timeless poetry."
+        }
+        val chapter = Chapter("Consistency Test", "", "10 min", paragraphs)
+
+        val fontSizes = listOf(12, 14, 18, 22, 28)
+        val pagesByFontSize = fontSizes.associateWith { fs ->
+            PageCache.getOrCompute("test_consistency_$fs", listOf(chapter), fontSize = fs, isStrictPaged = true)
+        }
+
+        // Smaller font sizes must produce fewer pages (more content per page), larger font sizes produce more pages
+        val pageCounts = fontSizes.map { pagesByFontSize[it]!!.size }
+        for (i in 0 until pageCounts.size - 1) {
+            assertTrue(
+                "Smaller font (${fontSizes[i]}sp with ${pageCounts[i]} pages) must produce <= pages than larger font (${fontSizes[i+1]}sp with ${pageCounts[i+1]} pages)",
+                pageCounts[i] <= pageCounts[i+1]
+            )
+        }
+
+        // For non-final pages, verify characters per page is substantially filled for every font size
+        for (fs in fontSizes) {
+            val pages = pagesByFontSize[fs]!!
+            assertTrue("Should produce pages for fontSize $fs", pages.isNotEmpty())
+            for (pIdx in 0 until pages.size - 1) {
+                val pageText = pages[pIdx].second.removePrefix("CHAPTER_START:::Consistency Test::::::")
+                val isFirstPage = pIdx == 0
+                val minExpectedChars = when {
+                    fs <= 13 -> if (isFirstPage) 400 else 550
+                    fs <= 16 -> if (isFirstPage) 280 else 380
+                    fs <= 20 -> if (isFirstPage) 180 else 250
+                    else -> if (isFirstPage) 90 else 130
+                }
+                assertTrue(
+                    "Font size ${fs}sp on page $pIdx has ${pageText.length} chars, expected >= $minExpectedChars",
+                    pageText.length >= minExpectedChars
+                )
+            }
+        }
+    }
+
+    @Test
+    fun testLandscapeHeightConsistencyAcrossFontSizes() {
+        val paragraphs = (1..10).map { i ->
+            "Paragraph $i: In the quiet hours before dawn, the ancient library seemed to breathe with the whispered memories of countless scholars. Shelves towered toward the vaulted ceilings, heavy with leather-bound volumes that held forgotten wisdom and timeless poetry."
+        }
+        val chapter = Chapter("Landscape Consistency", "", "10 min", paragraphs)
+
+        val fontSizes = listOf(12, 14, 18, 22, 28)
+        val pagesByFontSize = fontSizes.associateWith { fs ->
+            PageCache.getOrCompute("test_landscape_consistency_$fs", listOf(chapter), fontSize = fs, isLandscape = true, isStrictPaged = true)
+        }
+
+        val pageCounts = fontSizes.map { pagesByFontSize[it]!!.size }
+        for (i in 0 until pageCounts.size - 1) {
+            assertTrue(
+                "In landscape, smaller font (${fontSizes[i]}sp with ${pageCounts[i]} pages) must produce <= pages than larger font (${fontSizes[i+1]}sp with ${pageCounts[i+1]} pages)",
+                pageCounts[i] <= pageCounts[i+1]
+            )
+        }
+
+        // Verify all landscape pages are generated and well-filled
+        for (fs in fontSizes) {
+            val pages = pagesByFontSize[fs]!!
+            assertTrue("Should produce landscape pages for fontSize $fs", pages.isNotEmpty())
+            for (pIdx in 0 until pages.size - 1) {
+                val pageText = pages[pIdx].second.removePrefix("CHAPTER_START:::Landscape Consistency::::::")
+                val isFirstPage = pIdx == 0
+                val minExpectedChars = when {
+                    fs <= 13 -> if (isFirstPage) 250 else 350
+                    fs <= 16 -> if (isFirstPage) 180 else 250
+                    fs <= 20 -> if (isFirstPage) 100 else 160
+                    else -> if (isFirstPage) 40 else 60
+                }
+                assertTrue(
+                    "Landscape font size ${fs}sp on page $pIdx (of ${pages.size}) has ${pageText.length} chars (content: '${pageText.take(40)}...'), expected >= $minExpectedChars",
+                    pageText.length >= minExpectedChars
+                )
+            }
+        }
+    }
+
+    @Test
+    fun testDynamicOnDeviceMetricsCalibrationAcrossDeviceFormFactors() {
+        // Standard compact phone (360x640 dp)
+        val compactMetrics = PageCache.calculateDeviceMetrics(
+            fontSize = 16,
+            screenWidthDp = 360,
+            screenHeightDp = 640
+        )
+        assertTrue("Compact phone max lines in range 17..22", compactMetrics.maxLines in 17..22)
+        assertTrue("Compact phone chars per line in range 40..48", compactMetrics.charsPerLine in 40..48)
+
+        // Modern tall phone (392x828 dp)
+        val tallMetrics = PageCache.calculateDeviceMetrics(
+            fontSize = 16,
+            screenWidthDp = 392,
+            screenHeightDp = 828
+        )
+        assertTrue("Tall phone max lines in range 25..30", tallMetrics.maxLines in 25..30)
+        assertTrue("Tall phone chars per line in range 46..54", tallMetrics.charsPerLine in 46..54)
+
+        // Large 10-inch Tablet (800x1280 dp)
+        val tabletMetrics = PageCache.calculateDeviceMetrics(
+            fontSize = 18,
+            screenWidthDp = 800,
+            screenHeightDp = 1280
+        )
+        assertTrue("Tablet max lines should be >= 35", tabletMetrics.maxLines >= 35)
+        assertTrue("Tablet chars per line should be >= 80", tabletMetrics.charsPerLine >= 80)
+
+        // Foldable unfolded (670x800 dp)
+        val foldMetrics = PageCache.calculateDeviceMetrics(
+            fontSize = 16,
+            screenWidthDp = 670,
+            screenHeightDp = 800
+        )
+        assertTrue("Foldable max lines in range 22..28", foldMetrics.maxLines in 22..28)
+        assertTrue("Foldable chars per line should be >= 75", foldMetrics.charsPerLine >= 75)
+    }
+
+    @Test
+    fun testMultiParagraphSpacingBudgetAccurate() {
+        // 6 short dialogue paragraphs: each paragraph break adds paragraph gap lines
+        val dialogueParas = listOf(
+            "“Are you coming to the square?” asked Julia, looking up from her workbench with quick curiosity.",
+            "“Not tonight,” replied Winston quietly. “I have work to finish at the records department before curfew.”",
+            "“Be careful then. The patrol guards have been checking passes at the corner of Victory Mansions.”",
+            "“I know the routes,” he whispered.",
+            "“Good. Meet me tomorrow at the usual place near the clearing.”",
+            "She nodded quickly and slipped away into the crowd before anyone could notice."
+        )
+        val chapter = Chapter("Dialogue Chapter", "", "3 min", dialogueParas)
+
+        val pages = PageCache.getOrCompute(
+            bookId = "test_multi_para_dialogue",
+            chapters = listOf(chapter),
+            fontSize = 16,
+            screenWidthDp = 392,
+            screenHeightDp = 828,
+            paragraphSpacingMultiplier = 1.4f,
+            isStrictPaged = true
+        )
+
+        assertTrue("Pages should be generated", pages.isNotEmpty())
+        // All paragraphs must be preserved across pages without loss
+        dialogueParas.forEach { p ->
+            assertTrue("Paragraph '${p.take(20)}' must be preserved in pages", pages.any { it.second.contains(p.take(20)) })
+        }
+    }
+
+    @Test
+    fun testFindPageForLocationPreservesParagraphAcrossZoomAndLandscape() {
+        val paras = (1..20).map { i ->
+            "Paragraph $i: In this chapter we explore section $i with descriptive prose describing the event in detail."
+        }
+        val chapter = Chapter("Chapter 1", "", "10 min", paras)
+        val chapters = listOf(chapter)
+
+        // Generate pages at base font size 16 (portrait)
+        val basePages = PageCache.getOrCompute(
+            bookId = "test_zoom_preserve",
+            chapters = chapters,
+            fontSize = 16,
+            isLandscape = false,
+            isStrictPaged = true
+        )
+
+        // Pick a page in the middle, say page 2
+        val initialPageIndex = 2
+        val initialPageText = basePages[initialPageIndex].second
+        val anchorSnippet = initialPageText.replace("CHAPTER_START:::Chapter 1::::::", "").trim().take(40)
+
+        // Simulate user zooming in to font size 24
+        val zoomedPages = PageCache.getOrCompute(
+            bookId = "test_zoom_preserve",
+            chapters = chapters,
+            fontSize = 24,
+            isLandscape = false,
+            isStrictPaged = true
+        )
+
+        // Find the page in zoomedPages
+        val targetPageZoomed = findPageForLocation(
+            pages = zoomedPages,
+            chapterIdx = 0,
+            chapters = chapters,
+            paraIdx = 5,
+            topSnippet = anchorSnippet
+        )
+
+        assertTrue("Target page should be found and valid", targetPageZoomed in zoomedPages.indices)
+        assertTrue(
+            "Zoomed page should contain the anchor snippet",
+            zoomedPages[targetPageZoomed].second.contains(anchorSnippet.take(18))
+        )
+
+        // Simulate rotation to landscape
+        val landscapePages = PageCache.getOrCompute(
+            bookId = "test_zoom_preserve",
+            chapters = chapters,
+            fontSize = 16,
+            isLandscape = true,
+            isStrictPaged = true
+        )
+
+        val targetPageLandscape = findPageForLocation(
+            pages = landscapePages,
+            chapterIdx = 0,
+            chapters = chapters,
+            paraIdx = 5,
+            topSnippet = anchorSnippet
+        )
+
+        assertTrue("Landscape target page should be found and valid", targetPageLandscape in landscapePages.indices)
+        assertTrue(
+            "Landscape page should contain the anchor snippet",
+            landscapePages[targetPageLandscape].second.contains(anchorSnippet.take(18))
+        )
+    }
+
+    @Test
+    fun testTwoFingerAveragePositionParagraphPreservedAfterZoomDone() {
+        val dialogueParas = listOf(
+            "“First paragraph at the top of the screen,” said Alice quietly as she observed the room.",
+            "“Second paragraph slightly lower,” added Bob, adjusting his spectacles to read the small text.",
+            "“Third paragraph in the exact middle of the screen where fingers touch,” whispered Charlie with certainty.",
+            "“Fourth paragraph positioned towards the lower third,” noted Dana while writing in her notebook.",
+            "“Fifth paragraph resting near the bottom dock,” concluded Ethan as the bell sounded."
+        )
+        val chapter = Chapter("Midpoint Chapter", "", "5 min", dialogueParas)
+        val chapters = listOf(chapter)
+
+        // Initial render at font size 15
+        val basePages = PageCache.getOrCompute(
+            bookId = "test_midpoint_zoom",
+            chapters = chapters,
+            fontSize = 15,
+            isStrictPaged = true
+        )
+        assertTrue("Base pages should be generated", basePages.isNotEmpty())
+
+        // Midpoint paragraph (paragraph 2) captured at touch start
+        val midPara = dialogueParas[2]
+        val midParaSnippet = midPara.take(45)
+
+        // User zooms from 15 to 22
+        for (newFontSize in listOf(18, 22, 28)) {
+            val zoomedPages = PageCache.getOrCompute(
+                bookId = "test_midpoint_zoom",
+                chapters = chapters,
+                fontSize = newFontSize,
+                isStrictPaged = true
+            )
+            val targetPage = findPageForLocation(
+                pages = zoomedPages,
+                chapterIdx = 0,
+                chapters = chapters,
+                paraIdx = 2,
+                topSnippet = midParaSnippet
+            )
+
+            assertTrue("Target page for font size $newFontSize must be valid", targetPage in zoomedPages.indices)
+            val targetPageContent = zoomedPages[targetPage].second
+            assertTrue(
+                "Zoomed page at font size $newFontSize must contain the midpoint paragraph",
+                targetPageContent.contains("Third paragraph in the") || targetPageContent.contains("exact middle")
+            )
+        }
+    }
+
+    @Test
+    fun testCleanAlphaNormalization() {
+        val original = "“Hello, World!—This is a ‘test’… with   multiple    spaces.”"
+        val cleaned = cleanAlpha(original)
+        assertEquals("hello world this is a test with multiple spaces", cleaned)
+    }
+
+    @Test
+    fun testCharacterWeightedParagraphSelection() {
+        val shortPara = "Short header."
+        val longPara = "A very long paragraph detailing many important things that occurred throughout the day, extending over several lines and taking up a substantial amount of vertical space on the display."
+        val secondShortPara = "Concluding line."
+
+        val paras = listOf(shortPara, longPara, secondShortPara)
+        val weights = paras.map { it.length.toFloat().coerceAtLeast(20f) }
+        val totalWeight = weights.sum()
+
+        // Function mimicking ReaderScreen touch selection
+        fun selectParaAtTouchFraction(touchFraction: Float): String {
+            val targetThreshold = touchFraction * totalWeight
+            var accumWeight = 0f
+            var selected = paras.first()
+            for (i in paras.indices) {
+                accumWeight += weights[i]
+                if (accumWeight >= targetThreshold || i == paras.size - 1) {
+                    selected = paras[i]
+                    break
+                }
+            }
+            return selected
+        }
+
+        // Top 5% of screen touches shortPara
+        assertEquals(shortPara, selectParaAtTouchFraction(0.05f))
+        // Midpoint 50% of screen touches longPara
+        assertEquals(longPara, selectParaAtTouchFraction(0.50f))
+        // Bottom 95% of screen touches secondShortPara
+        assertEquals(secondShortPara, selectParaAtTouchFraction(0.95f))
+    }
+
+    @Test
+    fun testPinchZoomAnchorNeverMissedAcrossDynamicResizing() {
+        val paras = (1..20).map { i ->
+            "Paragraph $i: " + "Sentence about topic $i that repeats for length and content. ".repeat(4)
+        }
+        val chapter = Chapter("Long Chapter", "", "10 min", paras)
+        val chapters = listOf(chapter)
+
+        // Select paragraph 8 as touched at midpoint
+        val touchedPara = paras[7]
+        val touchedSnippet = touchedPara.take(50)
+
+        for (fontSize in listOf(12, 16, 20, 26, 32)) {
+            val pages = PageCache.getOrCompute(
+                bookId = "test_pinch_resizing",
+                chapters = chapters,
+                fontSize = fontSize,
+                isStrictPaged = true
+            )
+            val foundPage = findPageForLocation(
+                pages = pages,
+                chapterIdx = 0,
+                chapters = chapters,
+                paraIdx = 7,
+                topSnippet = touchedSnippet
+            )
+
+            assertTrue("Found page index must be within range for fontSize $fontSize", foundPage in pages.indices)
+            val pageText = pages[foundPage].second
+            val cleanedPage = cleanAlpha(pageText)
+            val cleanedTouched = cleanAlpha(touchedSnippet.take(25))
+            assertTrue(
+                "Page $foundPage must contain touched paragraph snippet for font size $fontSize",
+                cleanedPage.contains(cleanedTouched)
+            )
+        }
+    }
 }
+

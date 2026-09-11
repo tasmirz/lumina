@@ -32,6 +32,22 @@ object LuminaStorageManager {
         }
     }
 
+    private fun canWriteToDir(dir: File): Boolean {
+        return try {
+            if (!dir.exists() && !dir.mkdirs()) return false
+            if (dir.canWrite()) return true
+            val probe = File(dir, ".probe_${System.currentTimeMillis()}")
+            if (probe.createNewFile()) {
+                probe.delete()
+                true
+            } else {
+                false
+            }
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
     /**
      * Resolves the primary persistent EPUB storage directory.
      * On Android: /sdcard/Lumina/epubs (Environment.getExternalStorageDirectory() / Documents)
@@ -52,7 +68,7 @@ object LuminaStorageManager {
             if (!userHome.isNullOrBlank() && userHome != "/" && !userHome.startsWith("/data/user") && !userHome.startsWith("/data/data")) {
                 try {
                     val homeDir = File(userHome, EPUB_DIR_NAME)
-                    if (homeDir.exists() || homeDir.mkdirs()) {
+                    if (canWriteToDir(homeDir)) {
                         cachedPersistentDir = homeDir
                         return homeDir
                     }
@@ -64,9 +80,9 @@ object LuminaStorageManager {
             // 2. Android Shared Home Storage (/sdcard/Lumina/epubs)
             try {
                 val extStorage = Environment.getExternalStorageDirectory()
-                if (extStorage != null && (extStorage.canWrite() || Environment.MEDIA_MOUNTED == Environment.getExternalStorageState())) {
+                if (extStorage != null) {
                     val primaryDir = File(extStorage, EPUB_DIR_NAME)
-                    if (primaryDir.exists() || primaryDir.mkdirs()) {
+                    if (canWriteToDir(primaryDir)) {
                         cachedPersistentDir = primaryDir
                         return primaryDir
                     }
@@ -80,7 +96,7 @@ object LuminaStorageManager {
                 val docsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
                 if (docsDir != null) {
                     val luminaDocsDir = File(docsDir, EPUB_DIR_NAME)
-                    if (luminaDocsDir.exists() || luminaDocsDir.mkdirs()) {
+                    if (canWriteToDir(luminaDocsDir)) {
                         cachedPersistentDir = luminaDocsDir
                         return luminaDocsDir
                     }
@@ -95,7 +111,7 @@ object LuminaStorageManager {
                     val extFiles = context.getExternalFilesDir(null)
                     if (extFiles != null) {
                         val appExtDir = File(extFiles, "epubs")
-                        if (appExtDir.exists() || appExtDir.mkdirs()) {
+                        if (canWriteToDir(appExtDir)) {
                             cachedPersistentDir = appExtDir
                             return appExtDir
                         }
@@ -107,11 +123,10 @@ object LuminaStorageManager {
                 // 5. Internal private sandbox fallback
                 try {
                     val internalDir = File(context.filesDir, "epubs")
-                    if (!internalDir.exists()) {
-                        internalDir.mkdirs()
+                    if (internalDir.exists() || internalDir.mkdirs()) {
+                        cachedPersistentDir = internalDir
+                        return internalDir
                     }
-                    cachedPersistentDir = internalDir
-                    return internalDir
                 } catch (e: Throwable) {
                     logW(TAG, "Could not access filesDir: ${e.message}")
                 }
@@ -121,6 +136,51 @@ object LuminaStorageManager {
             cachedPersistentDir = fallback
             return fallback
         }
+    }
+
+    /**
+     * Returns the root persistent Lumina directory (/sdcard/Lumina or ~/Lumina).
+     */
+    fun getPersistentLuminaDirectory(context: Context?): File {
+        val epubDir = getPersistentEpubDirectory(context)
+        return epubDir.parentFile ?: epubDir
+    }
+
+    /**
+     * Returns persistent cache directory (/sdcard/Lumina/cache or ~/Lumina/cache).
+     * Survives application reinstalls and APK updates.
+     */
+    fun getPersistentCacheDirectory(context: Context?): File {
+        val base = getPersistentLuminaDirectory(context)
+        val dir = File(base, "cache")
+        if (!dir.exists()) dir.mkdirs()
+        return dir
+    }
+
+    /**
+     * Returns persistent precomputed layout pages cache directory.
+     */
+    fun getPersistentPagesCacheDirectory(context: Context?): File {
+        val dir = File(getPersistentCacheDirectory(context), "pages")
+        if (!dir.exists()) dir.mkdirs()
+        return dir
+    }
+
+    /**
+     * Returns persistent library and progress backup file.
+     */
+    fun getPersistentBackupFile(context: Context?): File {
+        return File(getPersistentCacheDirectory(context), "backup.json")
+    }
+
+    /**
+     * Returns persistent logging directory (/sdcard/Lumina/logs or ~/Lumina/logs).
+     */
+    fun getPersistentLogsDirectory(context: Context?): File {
+        val base = getPersistentLuminaDirectory(context)
+        val dir = File(base, "logs")
+        if (!dir.exists()) dir.mkdirs()
+        return dir
     }
 
     /**

@@ -71,17 +71,9 @@ release: build-release install-release run
 all-release: release
 all-rloease: release
 
-# Initialize ADB port forwarding for Compose HotSwan (port 8600)
-hotswan:
-    adb forward tcp:8600 tcp:8600
-    @echo "🔥 Compose HotSwan port forwarding active (tcp:8600 -> tcp:8600)"
-    @echo "Instant Compose hot reload enabled on device without app restarts"
-
-# Hot reload: incremental build, install, launch, and activate Compose HotSwan
-hot: reload hotswan
-
-# Hot reload alias
-hot-reload: hot
+# Fast incremental rebuild, install, and restart
+hot: reload
+hot-reload: reload
 
 # Fast incremental rebuild, install, and restart via Gradle & ADB (no Python)
 reload:
@@ -92,5 +84,21 @@ reload:
 # Stream Logcat output for the Lumina app process
 logs:
     adb logcat --pid="$$(adb shell pidof -s io.github.tasmirz.lumina)"
+
+# Stream Lumina internal logs via ADB (clean filtered view)
+log:
+    adb logcat -v time -s Lumina:V LuminaPerf:V AndroidRuntime:E Choreographer:I
+
+# Pull and inspect internal disk log file
+pull-log:
+    mkdir -p debug
+    adb shell "cat /sdcard/Lumina/logs/lumina.log 2>/dev/null || cat /data/data/io.github.tasmirz.lumina/files/logs/lumina.log 2>/dev/null" > debug/lumina.log
+    tail -n 60 debug/lumina.log
+
+# Clear logcat and persistent log file on device
+clear-log:
+    adb logcat -c
+    adb shell "rm -f /sdcard/Lumina/logs/lumina.log /data/data/io.github.tasmirz.lumina/files/logs/lumina.log"
+    echo "Logs cleared."
 
 

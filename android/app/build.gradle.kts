@@ -2,7 +2,6 @@ plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.compose.compiler)
   alias(libs.plugins.kotlin.serialization)
-  alias(libs.plugins.hotswan.compiler)
 }
 
 android {
@@ -12,8 +11,8 @@ android {
         applicationId = "io.github.tasmirz.lumina"
         minSdk = 24
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.0.4-beta"
+        versionCode = 5
+        versionName = "0.0.5-beta"
     }
 
     buildTypes {
@@ -58,6 +57,7 @@ dependencies {
 
   // Core Android dependencies
   implementation(libs.androidx.core.ktx)
+  implementation(libs.androidx.media)
   implementation(libs.androidx.lifecycle.runtime.ktx)
   implementation(libs.androidx.activity.compose)
 

@@ -24,11 +24,13 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -43,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import io.github.tasmirz.lumina.data.BookRepository
 import io.github.tasmirz.lumina.model.Book
@@ -51,7 +54,7 @@ import io.github.tasmirz.lumina.model.WishlistBook
 import io.github.tasmirz.lumina.ui.components.BookContextMenuSheet
 import io.github.tasmirz.lumina.ui.components.BookCoverImage
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(
     books: List<Book>,
@@ -71,6 +74,9 @@ fun LibraryScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val activeBackgroundTask by (repository?.activeBackgroundTask?.collectAsState(initial = null) ?: remember { mutableStateOf(null) })
+    var isRefreshing by remember { mutableStateOf(false) }
     var selectedTab by rememberSaveable { mutableIntStateOf(0) } // 0: All, 1: Read, 2: Wishlist
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var deepSearchResults by remember { mutableStateOf<List<SceneMatch>>(emptyList()) }
@@ -79,18 +85,25 @@ fun LibraryScreen(
     var bookToDelete by remember { mutableStateOf<Book?>(null) }
     var bookForContextMenu by remember { mutableStateOf<Book?>(null) }
 
-    LaunchedEffect(activeBook?.id) {
-        if (activeBook != null && activeBook.chapters.isEmpty()) {
-            repository?.prefetchChapters(activeBook.id)
-        }
-    }
 
     val filteredBooks = remember(books, searchQuery) {
         if (searchQuery.isBlank()) emptyList()
-        else books.filter {
-            it.title.contains(searchQuery, ignoreCase = true) ||
-            it.author.contains(searchQuery, ignoreCase = true) ||
-            it.id.contains(searchQuery, ignoreCase = true)
+        else {
+            val q = searchQuery.trim().lowercase()
+            books.filter {
+                it.title.contains(q, ignoreCase = true) ||
+                it.author.contains(q, ignoreCase = true) ||
+                it.id.contains(q, ignoreCase = true)
+            }.sortedWith(compareByDescending<Book> {
+                when {
+                    it.title.equals(q, ignoreCase = true) -> 1000
+                    it.title.startsWith(q, ignoreCase = true) -> 500
+                    it.author.equals(q, ignoreCase = true) -> 400
+                    it.title.contains(q, ignoreCase = true) -> 300
+                    it.author.contains(q, ignoreCase = true) -> 200
+                    else -> 0
+                }
+            }.thenBy { it.title })
         }
     }
 
@@ -475,7 +488,11 @@ fun LibraryScreen(
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    items(readBooks, key = { "read-${it.id}" }) { b ->
+                    items(
+                        items = readBooks,
+                        key = { "read-${it.id}" },
+                        contentType = { "read-book-card" }
+                    ) { b ->
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -583,7 +600,11 @@ fun LibraryScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    items(wishlistBooks, key = { it.id }) { item ->
+                    items(
+                        items = wishlistBooks,
+                        key = { it.id },
+                        contentType = { "wishlist-card" }
+                    ) { item ->
                         Card(
                             shape = RoundedCornerShape(14.dp),
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -638,14 +659,27 @@ fun LibraryScreen(
                 }
             }
         } else {
-
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 148.dp),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 150.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-            modifier = Modifier.fillMaxSize()
-        ) {
+            PullToRefreshBox(
+                isRefreshing = isRefreshing,
+                onRefresh = {
+                    isRefreshing = true
+                    coroutineScope.launch {
+                        try {
+                            repository?.refreshLibrary()
+                        } finally {
+                            isRefreshing = false
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxSize()
+            ) {
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(minSize = 148.dp),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 150.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    modifier = Modifier.fillMaxSize()
+                ) {
             if (books.isEmpty()) {
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     Box(
@@ -778,15 +812,23 @@ fun LibraryScreen(
 
                                         Spacer(modifier = Modifier.height(10.dp))
 
-                                        LinearProgressIndicator(
-                                            progress = { (activeBook.progress / 100f).coerceIn(0f, 1f) },
+                                        Box(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .height(4.dp)
-                                                .clip(RoundedCornerShape(2.dp)),
-                                            color = MaterialTheme.colorScheme.secondary,
-                                            trackColor = MaterialTheme.colorScheme.surfaceVariant
-                                        )
+                                                .clip(RoundedCornerShape(2.dp))
+                                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                        ) {
+                                            val frac = (activeBook.progress / 100f).coerceIn(0f, 1f)
+                                            if (frac > 0f) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth(fraction = frac)
+                                                        .fillMaxHeight()
+                                                        .background(MaterialTheme.colorScheme.secondary)
+                                                )
+                                            }
+                                        }
 
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Row(
@@ -817,19 +859,62 @@ fun LibraryScreen(
 
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "ALL BOOKS",
-                        fontFamily = FontFamily.SansSerif,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium,
-                        letterSpacing = 1.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "ALL BOOKS",
+                            fontFamily = FontFamily.SansSerif,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            letterSpacing = 1.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (!activeBackgroundTask.isNullOrBlank()) {
+                            TooltipBox(
+                                positionProvider = TooltipDefaults.rememberTooltipPositionProvider(),
+                                tooltip = {
+                                    PlainTooltip {
+                                        Text(text = activeBackgroundTask ?: "")
+                                    }
+                                },
+                                state = rememberTooltipState()
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            android.widget.Toast.makeText(context, activeBackgroundTask, android.widget.Toast.LENGTH_SHORT).show()
+                                        }
+                                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(12.dp),
+                                        strokeWidth = 1.5.dp,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Icon(
+                                        imageVector = Icons.Default.Info,
+                                        contentDescription = activeBackgroundTask,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
             // Book Cards in Grid
-            items(books, key = { it.id }) { book ->
+            items(
+                items = books,
+                key = { it.id },
+                contentType = { "book-card" }
+            ) { book ->
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -840,7 +925,8 @@ fun LibraryScreen(
                         ),
                     shape = RoundedCornerShape(14.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                    border = BorderStroke(0.6.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
                 ) {
                     Column(modifier = Modifier.padding(10.dp)) {
                         BookCoverImage(
@@ -875,15 +961,23 @@ fun LibraryScreen(
 
                         Spacer(modifier = Modifier.height(6.dp))
 
-                        LinearProgressIndicator(
-                            progress = { (book.progress / 100f).coerceIn(0f, 1f) },
+                        Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(3.dp)
-                                .clip(RoundedCornerShape(2.dp)),
-                            color = MaterialTheme.colorScheme.secondary,
-                            trackColor = MaterialTheme.colorScheme.surfaceVariant
-                        )
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            val frac = (book.progress / 100f).coerceIn(0f, 1f)
+                            if (frac > 0f) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth(fraction = frac)
+                                        .fillMaxHeight()
+                                        .background(MaterialTheme.colorScheme.secondary)
+                                )
+                            }
+                        }
 
                         Spacer(modifier = Modifier.height(6.dp))
                         Row(
@@ -963,6 +1057,7 @@ fun LibraryScreen(
                     }
                 }
             }
+        }
         }
         }
     }

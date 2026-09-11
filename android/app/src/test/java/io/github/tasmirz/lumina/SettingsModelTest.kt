@@ -268,4 +268,13 @@ class SettingsModelTest {
         val spanishBook = defaultBook.copy(language = "es")
         assertEquals("es", spanishBook.language)
     }
+
+    @Test
+    fun testReaderSettingsOpenLibraryApiKey() {
+        val defaultSettings = io.github.tasmirz.lumina.model.ReaderSettings()
+        assertEquals("", defaultSettings.openLibraryApiKey)
+
+        val updated = defaultSettings.copy(openLibraryApiKey = "test_acc:test_sec")
+        assertEquals("test_acc:test_sec", updated.openLibraryApiKey)
+    }
 }

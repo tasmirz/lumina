@@ -111,12 +111,18 @@ fun AdvancedSettingsScreen(
     onAiModelChange: (String) -> Unit,
     geminiApiKey: String,
     onGeminiApiKeyChange: (String) -> Unit,
+    openLibraryApiKey: String = "",
+    onOpenLibraryApiKeyChange: (String) -> Unit = {},
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     var isApiKeyVisible by remember { mutableStateOf(false) }
     var keyText by remember(geminiApiKey) { mutableStateOf(geminiApiKey) }
+
+    var isOpenLibraryKeyVisible by remember { mutableStateOf(false) }
+    val openLibraryKeyRepo = repository?.openLibraryApiKey?.collectAsState(initial = openLibraryApiKey)?.value ?: openLibraryApiKey
+    var openLibraryKeyText by remember(openLibraryKeyRepo) { mutableStateOf(openLibraryKeyRepo) }
 
     // Repository states
     val assistantOrbStyleState = repository?.assistantOrbStyle?.collectAsState(initial = "EDGE_DOT")
@@ -2400,6 +2406,143 @@ fun AdvancedSettingsScreen(
                                     Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text("Import Backup", fontSize = 11.5.sp)
+                                }
+                            }
+
+                            HorizontalDivider(
+                                modifier = Modifier.padding(vertical = 12.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+                            )
+
+                            // Open Library & Internet Archive API Key
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Public,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Open Library & Archive.org Key",
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 13.sp
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Required to borrow or download restricted and lending public domain EPUB books from Open Library & Internet Archive.",
+                                fontSize = 10.5.sp,
+                                lineHeight = 14.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            OutlinedTextField(
+                                value = openLibraryKeyText,
+                                onValueChange = {
+                                    openLibraryKeyText = it
+                                    onOpenLibraryApiKeyChange(it)
+                                },
+                                placeholder = { Text("access_key:secret_key or LOW key", fontSize = 12.sp) },
+                                singleLine = true,
+                                visualTransformation = if (isOpenLibraryKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                                trailingIcon = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        if (openLibraryKeyText.isNotBlank()) {
+                                            IconButton(onClick = {
+                                                openLibraryKeyText = ""
+                                                onOpenLibraryApiKeyChange("")
+                                            }) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Clear,
+                                                    contentDescription = "Clear key",
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            }
+                                        }
+                                        IconButton(onClick = { isOpenLibraryKeyVisible = !isOpenLibraryKeyVisible }) {
+                                            Icon(
+                                                imageVector = if (isOpenLibraryKeyVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                                contentDescription = if (isOpenLibraryKeyVisible) "Hide key" else "Show key",
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(8.dp)
+                            )
+
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                TextButton(
+                                    onClick = {
+                                        try {
+                                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                            val clip = clipboard?.primaryClip?.getItemAt(0)?.text?.toString()
+                                            if (!clip.isNullOrBlank()) {
+                                                openLibraryKeyText = clip.trim()
+                                                onOpenLibraryApiKeyChange(clip.trim())
+                                                Toast.makeText(context, "API key pasted from clipboard", Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                Toast.makeText(context, "Clipboard is empty", Toast.LENGTH_SHORT).show()
+                                            }
+                                        } catch (e: Exception) {
+                                            Toast.makeText(context, "Could not paste from clipboard", Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ContentPaste,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp),
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "Paste Key",
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+
+                                TextButton(
+                                    onClick = {
+                                        try {
+                                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://archive.org/account/s3.php"))
+                                            context.startActivity(intent)
+                                        } catch (e: Exception) {
+                                            Toast.makeText(context, "Could not open browser", Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Key,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp),
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "Get Free S3 Keys",
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
                                 }
                             }
 

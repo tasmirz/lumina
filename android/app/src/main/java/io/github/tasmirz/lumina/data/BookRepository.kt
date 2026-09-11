@@ -21,7 +21,24 @@ import io.github.tasmirz.lumina.data.db.LuminaDatabaseHelper
 import io.github.tasmirz.lumina.util.PageCache
 import io.github.tasmirz.lumina.util.SimpleLruCache
 
-class BookRepository(private val context: Context) {
+class BookRepository private constructor(private val context: Context) {
+
+    companion object {
+        @Volatile
+        private var instance: BookRepository? = null
+
+        fun getInstance(context: Context): BookRepository {
+            return instance ?: synchronized(this) {
+                instance ?: BookRepository(context.applicationContext).also { instance = it }
+            }
+        }
+
+        operator fun invoke(context: Context): BookRepository = getInstance(context)
+
+        fun resetInstanceForTesting() {
+            instance = null
+        }
+    }
 
     val dbHelper = LuminaDatabaseHelper(context)
 
@@ -74,6 +91,9 @@ class BookRepository(private val context: Context) {
 
     private val _indexingProgress = MutableStateFlow("")
     val indexingProgress: StateFlow<String> = _indexingProgress.asStateFlow()
+
+    private val _activeBackgroundTask = MutableStateFlow<String?>(null)
+    val activeBackgroundTask: StateFlow<String?> = _activeBackgroundTask.asStateFlow()
 
     private val _preferredLanguage = MutableStateFlow(prefs.getString("preferred_language", "auto") ?: "auto")
     val preferredLanguage: StateFlow<String> = _preferredLanguage.asStateFlow()
@@ -258,6 +278,11 @@ class BookRepository(private val context: Context) {
     private val _geminiApiKey = MutableStateFlow(prefs.getString("gemini_api_key", "") ?: "")
     val geminiApiKey: StateFlow<String> = _geminiApiKey.asStateFlow()
 
+    private val _openLibraryApiKey = MutableStateFlow(prefs.getString("open_library_api_key", "") ?: "").also {
+        OnlineEpubService.openLibraryApiKey = it.value
+    }
+    val openLibraryApiKey: StateFlow<String> = _openLibraryApiKey.asStateFlow()
+
     private val _aiProvider = MutableStateFlow(
         try {
             AiProvider.valueOf(prefs.getString("ai_provider", AiProvider.GEMINI.name) ?: AiProvider.GEMINI.name)
@@ -377,16 +402,37 @@ class BookRepository(private val context: Context) {
             aiBaseUrl = prefs.getString("ai_base_url", "https://api.openai.com/v1") ?: "https://api.openai.com/v1",
             aiModel = prefs.getString("ai_model", null).let { if (it.isNullOrBlank()) "gemini-3.1-flash-lite" else it },
             assistantOrbStyle = prefs.getString("assistant_orb_style", "EDGE_DOT") ?: "EDGE_DOT",
-            preferredLanguage = prefs.getString("preferred_language", "auto") ?: "auto"
+            preferredLanguage = prefs.getString("preferred_language", "auto") ?: "auto",
+            openLibraryApiKey = prefs.getString("open_library_api_key", "") ?: ""
         )
     }
 
     fun getChaptersForBook(bookId: String): List<Chapter> {
         val cached = chapterCache.get(bookId)
-        if (cached != null) return cached
+        if (cached != null && cached.isNotEmpty()) return cached
         val fromDb = dbHelper.getAllChaptersForBook(bookId)
         if (fromDb.isNotEmpty()) {
             chapterCache.put(bookId, fromDb)
+            return fromDb
+        }
+        // Lazy on-demand chapter parsing for books added via fast metadata-only discovery
+        val book = _books.value.find { it.id == bookId } ?: dbHelper.getAllBooks().find { it.id == bookId }
+        if (book != null && !book.filePath.isNullOrBlank()) {
+            val file = File(book.filePath)
+            if (file.exists() && file.length() > 0L) {
+                try {
+                    file.inputStream().use { stream ->
+                        val parsed = EpubParser.parseEpub(stream, file.name, context)
+                        if (parsed.chapters.isNotEmpty()) {
+                            dbHelper.saveChaptersForBook(bookId, parsed.chapters)
+                            chapterCache.put(bookId, parsed.chapters)
+                            return parsed.chapters
+                        }
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("BookRepository", "Failed lazy parsing chapters for ${book.title}: ${e.message}")
+                }
+            }
         }
         return fromDb
     }
@@ -422,19 +468,27 @@ class BookRepository(private val context: Context) {
         isLandscape: Boolean,
         isStrictPaged: Boolean,
         activeChapterIndex: Int = 0,
+        screenWidthDp: Int = 0,
+        screenHeightDp: Int = 0,
         onActiveChapterReady: ((List<Pair<String, String>>) -> Unit)? = null,
         onAllPagesReady: ((List<Pair<String, String>>) -> Unit)? = null
     ) {
         repoScope.launch(Dispatchers.Default) {
             val chapters = if (book.chapters.isNotEmpty()) book.chapters else getChaptersForBook(book.id)
             if (chapters.isEmpty()) return@launch
+            val config = context.resources?.configuration
+            val sw = if (screenWidthDp > 0) screenWidthDp else (config?.screenWidthDp ?: 0)
+            val sh = if (screenHeightDp > 0) screenHeightDp else (config?.screenHeightDp ?: 0)
             val allPages = PageCache.getOrComputeAsync(
                 bookId = book.id,
                 chapters = chapters,
                 fontSize = fontSize,
                 isLandscape = isLandscape,
                 isStrictPaged = isStrictPaged,
+                screenWidthDp = sw,
+                screenHeightDp = sh,
                 dbHelper = dbHelper,
+                context = context,
                 activeChapterIndex = activeChapterIndex,
                 onActiveChapterReady = { activePages ->
                     onActiveChapterReady?.invoke(activePages)
@@ -446,7 +500,19 @@ class BookRepository(private val context: Context) {
 
     init {
         repoScope.launch(Dispatchers.IO) {
-            val loadedBooks = loadAllBooks()
+            val startMs = System.currentTimeMillis()
+            var loadedBooks = loadAllBooks()
+            // If books are empty (fresh install / reinstall), restore from persistent backup on SD card / home storage
+            if (loadedBooks.isEmpty()) {
+                val backupFile = LuminaStorageManager.getPersistentBackupFile(context)
+                if (backupFile.exists() && backupFile.length() > 0L) {
+                    val restored = dbHelper.restoreStateFromPersistentFile(backupFile)
+                    if (restored) {
+                        loadedBooks = loadAllBooks()
+                    }
+                }
+            }
+
             val loadedBookmarks = loadPersistedBookmarks()
             val loadedWishlist = try { dbHelper.getAllWishlist() } catch (_: Exception) { emptyList() }
             val loadedCompleted = try { dbHelper.getAllCompletedBookIds() } catch (_: Exception) { emptySet() }
@@ -457,33 +523,32 @@ class BookRepository(private val context: Context) {
             _wishlistBooks.value = loadedWishlist
             _completedBookIds.value = loadedCompleted
             _customThemes.value = loadedThemes
-
-            try {
-                val curActiveId = _activeBookId.value.ifBlank { loadedBooks.firstOrNull()?.id ?: "" }
-                if (curActiveId.isNotBlank()) {
-                    val chaps = getChaptersForBook(curActiveId)
-                    if (chaps.isNotEmpty()) {
-                        _books.value = _books.value.map {
-                            if (it.id == curActiveId && it.chapters.isEmpty()) it.copy(chapters = chaps) else it
-                        }
-                    }
-                }
-            } catch (_: Exception) {}
+            io.github.tasmirz.lumina.util.LuminaLog.perf("BookRepository.init", System.currentTimeMillis() - startMs, "Loaded ${loadedBooks.size} books, ${loadedBookmarks.size} bookmarks")
 
             try {
                 syncSettings()
             } catch (_: Exception) {}
 
-            // Delay discovery and migration so initial frame composition, gestures, and UI responsiveness are completely fluid
-            repoScope.launch(Dispatchers.IO) {
-                delay(2500)
+            // Background compression pass on legacy / uncompressed cover files to reclaim storage
+            try {
+                val coversDir = File(context.filesDir, "covers")
+                if (coversDir.exists() && coversDir.isDirectory) {
+                    coversDir.listFiles()?.forEach { file ->
+                        if (file.isFile && file.length() > 120 * 1024L) {
+                            EpubParser.compressExistingCoverFile(file, maxDimension = 640, quality = 82)
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+
+            // Only if library is completely empty (e.g. fresh install with no backup),
+            // do a one-time initial scan of persistent directories
+            if (loadedBooks.isEmpty()) {
                 try {
                     LuminaStorageManager.migrateLegacyFiles(context)
-                } catch (_: Exception) {}
-                try {
                     autoScanAndLoadPersistentEpubs()
                 } catch (e: Exception) {
-                    android.util.Log.w("BookRepository", "Startup autoScan error: ${e.message}")
+                    io.github.tasmirz.lumina.util.LuminaLog.w("BookRepository", "Initial autoScan error", e)
                 }
             }
         }
@@ -655,6 +720,7 @@ class BookRepository(private val context: Context) {
         settings.put("ai_model", _aiModel.value)
         settings.put("ai_base_url", _aiBaseUrl.value)
         settings.put("gemini_api_key", _geminiApiKey.value)
+        settings.put("open_library_api_key", _openLibraryApiKey.value)
         settings.put("background_texture", _backgroundTexture.value.name)
         settings.put("custom_bg_uri", _customBgUri.value)
         settings.put("custom_bg_color", _customBgColor.value)
@@ -763,6 +829,7 @@ class BookRepository(private val context: Context) {
                 if (s.has("ai_model")) setAiModel(s.getString("ai_model"))
                 if (s.has("ai_base_url")) setAiBaseUrl(s.getString("ai_base_url"))
                 if (s.has("gemini_api_key")) setGeminiApiKey(s.getString("gemini_api_key"))
+                if (s.has("open_library_api_key")) setOpenLibraryApiKey(s.getString("open_library_api_key"))
                 if (s.has("background_texture")) {
                     try { setBackgroundTexture(BackgroundTexture.valueOf(s.getString("background_texture"))) } catch (_: Exception) {}
                 }
@@ -1210,8 +1277,11 @@ class BookRepository(private val context: Context) {
         val id = _activeBookId.value
         val book = _books.value.find { it.id == id } ?: _books.value.firstOrNull() ?: return null
         if (book.chapters.isNotEmpty()) return book
-        val chaps = getChaptersForBook(book.id)
-        return if (chaps.isNotEmpty()) book.copy(chapters = chaps) else book
+        val cached = getCachedChapters(book.id)
+        if (cached != null && cached.isNotEmpty()) {
+            return book.copy(chapters = cached)
+        }
+        return book
     }
 
     fun setActiveBook(bookId: String) {
@@ -1485,6 +1555,14 @@ class BookRepository(private val context: Context) {
         updateReaderSettings { it.copy(geminiApiKey = key) }
         prefs.edit().putString("gemini_api_key", key).apply()
         persistSettingToDb("gemini_api_key", key)
+    }
+
+    fun setOpenLibraryApiKey(key: String) {
+        _openLibraryApiKey.value = key
+        OnlineEpubService.openLibraryApiKey = key
+        updateReaderSettings { it.copy(openLibraryApiKey = key) }
+        prefs.edit().putString("open_library_api_key", key).apply()
+        persistSettingToDb("open_library_api_key", key)
     }
 
     fun setLastTab(tab: String) {
@@ -1804,7 +1882,8 @@ class BookRepository(private val context: Context) {
         val fromDb = try { dbHelper.getAllBooks() } catch (_: Exception) { emptyList() }
         val searchDirs = LuminaStorageManager.getAllSearchDirectories(context)
 
-        val resolvedBooks = fromDb.map { b ->
+        val resolvedBooks = fromDb.map { raw ->
+            val b = if (raw.coverUrl.contains("images.unsplash.com")) raw.copy(coverUrl = "") else raw
             if (!b.filePath.isNullOrBlank() && File(b.filePath).exists()) {
                 b
             } else {
@@ -1884,26 +1963,21 @@ class BookRepository(private val context: Context) {
                 // If user previously deleted this book explicitly by ID, do not re-import unless filename changed
                 if (epubFile.nameWithoutExtension in deletedIds) continue
 
-                // Parse and stage new book without triggering activeBook changes or recomposition storms
+                // Parse and stage new book with ultra-fast metadata-only parsing (~3-5ms)
                 try {
-                    epubFile.inputStream().use { stream ->
-                        val parsed = EpubParser.parseEpub(stream, epubFile.name, context)
-                        if (parsed.title.trim().lowercase() in existingTitles) {
-                            return@use
-                        }
-                        val bookToSave = parsed.copy(
-                            filePath = epubFile.absolutePath,
-                            fileSize = epubFile.length(),
-                            isDownloaded = false
-                        )
-                        // Save directly to SQLite and cache chapters
-                        dbHelper.insertOrUpdateBook(bookToSave, bookToSave.filePath, bookToSave.isDownloaded, bookToSave.downloadUrl, bookToSave.fileSize)
-                        if (bookToSave.chapters.isNotEmpty()) {
-                            chapterCache.put(bookToSave.id, bookToSave.chapters)
-                        }
-                        newlyDiscoveredBooks.add(bookToSave)
-                        android.util.Log.i("BookRepository", "Auto-loaded EPUB from persistent storage: ${epubFile.name} as \"${bookToSave.title}\"")
+                    val metadataBook = EpubParser.parseBookMetadata(epubFile, context)
+                    if (metadataBook.title.trim().lowercase() in existingTitles) {
+                        continue
                     }
+                    val bookToSave = metadataBook.copy(
+                        filePath = epubFile.absolutePath,
+                        fileSize = epubFile.length(),
+                        isDownloaded = false
+                    )
+                    // Save directly to SQLite
+                    dbHelper.insertOrUpdateBook(bookToSave, bookToSave.filePath, bookToSave.isDownloaded, bookToSave.downloadUrl, bookToSave.fileSize)
+                    newlyDiscoveredBooks.add(bookToSave)
+                    android.util.Log.i("BookRepository", "Auto-loaded EPUB metadata: ${epubFile.name} as \"${bookToSave.title}\"")
                 } catch (e: Exception) {
                     android.util.Log.w("BookRepository", "Failed to auto-load EPUB ${epubFile.name}: ${e.message}")
                 }
@@ -1927,14 +2001,34 @@ class BookRepository(private val context: Context) {
                     _books.value = merged
                 }
             }
+
+            // Backup library state to persistent storage (/sdcard/Lumina/cache/backup.json)
+            try {
+                val backupFile = LuminaStorageManager.getPersistentBackupFile(context)
+                dbHelper.backupStateToPersistentFile(backupFile)
+            } catch (_: Exception) {}
         } catch (e: Exception) {
             android.util.Log.w("BookRepository", "Error in autoScanAndLoadPersistentEpubs: ${e.message}")
         }
     }
 
+    suspend fun refreshLibrary() = withContext(Dispatchers.IO) {
+        _activeBackgroundTask.value = "Scanning library for EPUBs..."
+        try {
+            LuminaStorageManager.migrateLegacyFiles(context)
+            autoScanAndLoadPersistentEpubs()
+            try {
+                val backupFile = LuminaStorageManager.getPersistentBackupFile(context)
+                dbHelper.backupStateToPersistentFile(backupFile)
+            } catch (_: Exception) {}
+        } finally {
+            _activeBackgroundTask.value = null
+        }
+    }
+
     fun scanAndSyncPersistentEpubs() {
         repoScope.launch(Dispatchers.IO) {
-            autoScanAndLoadPersistentEpubs()
+            refreshLibrary()
         }
     }
 
@@ -2106,6 +2200,24 @@ class BookRepository(private val context: Context) {
                     persistSettingToDb("gemini_api_key", prefsKey)
                 }
             }
+            dbSettings["open_library_api_key"]?.let { dbKey ->
+                if (dbKey.isNotBlank()) {
+                    s = s.copy(openLibraryApiKey = dbKey)
+                    prefs.edit().putString("open_library_api_key", dbKey).apply()
+                } else {
+                    val prefsKey = prefs.getString("open_library_api_key", "") ?: ""
+                    if (prefsKey.isNotBlank()) {
+                        s = s.copy(openLibraryApiKey = prefsKey)
+                        persistSettingToDb("open_library_api_key", prefsKey)
+                    }
+                }
+            } ?: run {
+                val prefsKey = prefs.getString("open_library_api_key", "") ?: ""
+                if (prefsKey.isNotBlank()) {
+                    s = s.copy(openLibraryApiKey = prefsKey)
+                    persistSettingToDb("open_library_api_key", prefsKey)
+                }
+            }
 
             // Atomic update to readerSettings Flow
             _readerSettings.value = s
@@ -2162,6 +2274,8 @@ class BookRepository(private val context: Context) {
             _aiModel.value = s.aiModel
             _aiBaseUrl.value = s.aiBaseUrl
             _geminiApiKey.value = s.geminiApiKey
+            _openLibraryApiKey.value = s.openLibraryApiKey
+            OnlineEpubService.openLibraryApiKey = s.openLibraryApiKey
         } else {
             // Initial seed into SQLite in a single transaction
             val s = _readerSettings.value
@@ -2216,7 +2330,8 @@ class BookRepository(private val context: Context) {
                 "ai_provider" to s.aiProvider.name,
                 "ai_model" to s.aiModel,
                 "ai_base_url" to s.aiBaseUrl,
-                "gemini_api_key" to s.geminiApiKey
+                "gemini_api_key" to s.geminiApiKey,
+                "open_library_api_key" to s.openLibraryApiKey
             )
             dbHelper.setSettings(initialMap)
         }

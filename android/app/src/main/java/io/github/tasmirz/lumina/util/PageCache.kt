@@ -38,14 +38,110 @@ object PageCache {
     // Cache up to 16 book pagination sets in memory
     private val cache = SimpleLruCache<String, List<Pair<String, String>>>(16)
 
+    private fun getPersistentCacheFile(context: android.content.Context?, key: String): java.io.File? {
+        return try {
+            val dir = io.github.tasmirz.lumina.data.LuminaStorageManager.getPersistentPagesCacheDirectory(context)
+            java.io.File(dir, "$key.json")
+        } catch (_: Exception) { null }
+    }
+
+    // Bumped to v30_ to accurately budget multiple paragraphs and paragraph spacing gaps
+    private const val CACHE_VERSION = "v30_"
+
+    data class DeviceMetrics(
+        val charsPerLine: Int,
+        val maxLines: Int,
+        val headerLinesCost: Int,
+        val baseTargetChars: Int
+    )
+
+    fun calculateDeviceMetrics(
+        fontSize: Int,
+        isLandscape: Boolean = false,
+        screenWidthDp: Int = 0,
+        screenHeightDp: Int = 0,
+        horizontalPaddingDp: Int = 20,
+        verticalPaddingDp: Int = 16,
+        lineHeightMultiplier: Float = 1.45f,
+        paragraphSpacingMultiplier: Float = 1.2f
+    ): DeviceMetrics {
+        val screenW = if (screenWidthDp > 0) screenWidthDp else if (isLandscape) 820 else 392
+        val screenH = if (screenHeightDp > 0) screenHeightDp else if (isLandscape) 392 else 820
+
+        // Dynamic horizontal margin deduction (side padding, cutouts)
+        val horizontalMargin = if (isLandscape) {
+            maxOf((horizontalPaddingDp * 3.6f).toInt(), 112)
+        } else {
+            (horizontalPaddingDp * 2).coerceIn(24, 80)
+        }
+
+        // Dynamic vertical margin deduction (status bar, top bar, bottom dock, reading controls)
+        val verticalMargin = if (isLandscape) {
+            48 + (verticalPaddingDp * 0.5f).toInt()
+        } else {
+            154 + (verticalPaddingDp * 0.7f).toInt()
+        }
+
+        // 2-3% bottom safety buffer to guarantee the last line never touches the dock or gets cut off
+        val bottomSafetyBufferDp = (screenH * 0.025f).coerceIn(12f, 28f)
+        val usableW = (screenW - horizontalMargin).coerceAtLeast(180)
+        val usableH = (screenH - verticalMargin - bottomSafetyBufferDp).coerceAtLeast(180f)
+
+        // Dynamic line height in dp: font size * effective line height multiplier + glyph descent/ascent
+        val effectiveMultiplier = lineHeightMultiplier.coerceIn(1.1f, 2.2f)
+        val lineHeightDp = (fontSize * effectiveMultiplier * 1.08f).coerceAtLeast(14f)
+
+        // Dynamic average character width in dp for serif/sans-serif book typography
+        val avgCharWidthDp = (fontSize * 0.44f).coerceAtLeast(4.5f)
+
+        val charsPerLine = (usableW / avgCharWidthDp).toInt().coerceIn(18, 180)
+        val maxLines = (usableH / lineHeightDp).toInt().coerceIn(4, 80)
+
+        val headerHeightDp = if (isLandscape) 64f else 96f
+        val headerLinesCost = kotlin.math.ceil(headerHeightDp / lineHeightDp).toInt().coerceIn(2, 6)
+
+        // Base target characters for non-strict scroll engine (~90% density)
+        val baseTargetChars = (charsPerLine * maxLines * 0.90f).toInt().coerceAtLeast(200)
+
+        return DeviceMetrics(
+            charsPerLine = charsPerLine,
+            maxLines = maxLines,
+            headerLinesCost = headerLinesCost,
+            baseTargetChars = baseTargetChars
+        )
+    }
+
+    private fun getCacheKey(
+        bookId: String,
+        chaptersCount: Int,
+        fontSize: Int,
+        isLandscape: Boolean,
+        isStrictPaged: Boolean,
+        screenWidthDp: Int = 0,
+        screenHeightDp: Int = 0,
+        horizontalPaddingDp: Int = 20,
+        verticalPaddingDp: Int = 16,
+        paragraphSpacingMultiplier: Float = 1.2f
+    ): String {
+        val orientation = if (isLandscape) "land" else "port"
+        val mode = if (isStrictPaged) "strict" else "scroll"
+        val dims = if (screenWidthDp > 0 && screenHeightDp > 0) "_${screenWidthDp}x${screenHeightDp}_p${horizontalPaddingDp}_${verticalPaddingDp}_ps${(paragraphSpacingMultiplier * 10).toInt()}" else ""
+        return "${CACHE_VERSION}${bookId}_${chaptersCount}_${fontSize}_${orientation}_${mode}${dims}"
+    }
+
     fun getCached(
         bookId: String,
         chaptersCount: Int,
         fontSize: Int,
         isLandscape: Boolean = false,
-        isStrictPaged: Boolean = false
+        isStrictPaged: Boolean = false,
+        screenWidthDp: Int = 0,
+        screenHeightDp: Int = 0,
+        horizontalPaddingDp: Int = 20,
+        verticalPaddingDp: Int = 16,
+        paragraphSpacingMultiplier: Float = 1.2f
     ): List<Pair<String, String>>? {
-        val key = "v15_${bookId}_${chaptersCount}_${fontSize}_${if (isLandscape) "land" else "port"}_${if (isStrictPaged) "strict" else "scroll"}"
+        val key = getCacheKey(bookId, chaptersCount, fontSize, isLandscape, isStrictPaged, screenWidthDp, screenHeightDp, horizontalPaddingDp, verticalPaddingDp, paragraphSpacingMultiplier)
         return cache.get(key)
     }
 
@@ -55,9 +151,16 @@ object PageCache {
         fontSize: Int,
         isLandscape: Boolean = false,
         isStrictPaged: Boolean = false,
-        dbHelper: LuminaDatabaseHelper? = null
+        screenWidthDp: Int = 0,
+        screenHeightDp: Int = 0,
+        horizontalPaddingDp: Int = 20,
+        verticalPaddingDp: Int = 16,
+        lineHeightMultiplier: Float = 1.45f,
+        paragraphSpacingMultiplier: Float = 1.2f,
+        dbHelper: LuminaDatabaseHelper? = null,
+        context: android.content.Context? = null
     ): List<Pair<String, String>> {
-        val key = "v15_${bookId}_${chapters.size}_${fontSize}_${if (isLandscape) "land" else "port"}_${if (isStrictPaged) "strict" else "scroll"}"
+        val key = getCacheKey(bookId, chapters.size, fontSize, isLandscape, isStrictPaged, screenWidthDp, screenHeightDp, horizontalPaddingDp, verticalPaddingDp, paragraphSpacingMultiplier)
         val cached = cache.get(key)
         if (cached != null) return cached
 
@@ -69,10 +172,37 @@ object PageCache {
             }
         }
 
-        val list = computePages(chapters, fontSize, isLandscape, isStrictPaged)
+        val pFile = getPersistentCacheFile(context, key)
+        if (pFile != null && pFile.exists() && pFile.length() > 0L && dbHelper != null) {
+            try {
+                val json = pFile.readText()
+                val fromFile = dbHelper.deserializePages(json)
+                if (fromFile.isNotEmpty()) {
+                    cache.put(key, fromFile)
+                    dbHelper.savePageCache(key, bookId, -1, fromFile)
+                    return fromFile
+                }
+            } catch (_: Exception) {}
+        }
+
+        val list = computePages(
+            chapters = chapters,
+            fontSize = fontSize,
+            isLandscape = isLandscape,
+            isStrictPaged = isStrictPaged,
+            screenWidthDp = screenWidthDp,
+            screenHeightDp = screenHeightDp,
+            horizontalPaddingDp = horizontalPaddingDp,
+            verticalPaddingDp = verticalPaddingDp,
+            lineHeightMultiplier = lineHeightMultiplier,
+            paragraphSpacingMultiplier = paragraphSpacingMultiplier
+        )
         cache.put(key, list)
         if (dbHelper != null && list.isNotEmpty()) {
             dbHelper.savePageCache(key, bookId, -1, list)
+            if (pFile != null) {
+                try { pFile.writeText(dbHelper.serializePages(list)) } catch (_: Exception) {}
+            }
         }
         return list
     }
@@ -81,9 +211,26 @@ object PageCache {
         chapter: Chapter,
         fontSize: Int,
         isLandscape: Boolean = false,
-        isStrictPaged: Boolean = false
+        isStrictPaged: Boolean = false,
+        screenWidthDp: Int = 0,
+        screenHeightDp: Int = 0,
+        horizontalPaddingDp: Int = 20,
+        verticalPaddingDp: Int = 16,
+        lineHeightMultiplier: Float = 1.45f,
+        paragraphSpacingMultiplier: Float = 1.2f
     ): List<Pair<String, String>> {
-        return computePages(listOf(chapter), fontSize, isLandscape, isStrictPaged)
+        return computePages(
+            chapters = listOf(chapter),
+            fontSize = fontSize,
+            isLandscape = isLandscape,
+            isStrictPaged = isStrictPaged,
+            screenWidthDp = screenWidthDp,
+            screenHeightDp = screenHeightDp,
+            horizontalPaddingDp = horizontalPaddingDp,
+            verticalPaddingDp = verticalPaddingDp,
+            lineHeightMultiplier = lineHeightMultiplier,
+            paragraphSpacingMultiplier = paragraphSpacingMultiplier
+        )
     }
 
     suspend fun getOrComputeAsync(
@@ -92,11 +239,18 @@ object PageCache {
         fontSize: Int,
         isLandscape: Boolean = false,
         isStrictPaged: Boolean = false,
+        screenWidthDp: Int = 0,
+        screenHeightDp: Int = 0,
+        horizontalPaddingDp: Int = 20,
+        verticalPaddingDp: Int = 16,
+        lineHeightMultiplier: Float = 1.45f,
+        paragraphSpacingMultiplier: Float = 1.2f,
         dbHelper: LuminaDatabaseHelper? = null,
+        context: android.content.Context? = null,
         activeChapterIndex: Int = 0,
         onActiveChapterReady: ((List<Pair<String, String>>) -> Unit)? = null
     ): List<Pair<String, String>> = withContext(Dispatchers.Default) {
-        val key = "v15_${bookId}_${chapters.size}_${fontSize}_${if (isLandscape) "land" else "port"}_${if (isStrictPaged) "strict" else "scroll"}"
+        val key = getCacheKey(bookId, chapters.size, fontSize, isLandscape, isStrictPaged, screenWidthDp, screenHeightDp, horizontalPaddingDp, verticalPaddingDp, paragraphSpacingMultiplier)
         val cached = cache.get(key)
         if (cached != null) {
             onActiveChapterReady?.invoke(cached)
@@ -112,19 +266,57 @@ object PageCache {
             }
         }
 
+        // Persistent file cache check (survives app reinstalls and updates)
+        val pFile = getPersistentCacheFile(context, key)
+        if (pFile != null && pFile.exists() && pFile.length() > 0L && dbHelper != null) {
+            try {
+                val json = pFile.readText()
+                val fromFile = dbHelper.deserializePages(json)
+                if (fromFile.isNotEmpty()) {
+                    cache.put(key, fromFile)
+                    dbHelper.savePageCache(key, bookId, -1, fromFile)
+                    onActiveChapterReady?.invoke(fromFile)
+                    return@withContext fromFile
+                }
+            } catch (_: Exception) {}
+        }
+
         // Fast path: compute active chapter first for immediate UI rendering
         if (onActiveChapterReady != null && activeChapterIndex in chapters.indices) {
             val activeChapter = chapters[activeChapterIndex]
-            val activePages = computeChapterPages(activeChapter, fontSize, isLandscape, isStrictPaged)
+            val activePages = computeChapterPages(
+                chapter = activeChapter,
+                fontSize = fontSize,
+                isLandscape = isLandscape,
+                isStrictPaged = isStrictPaged,
+                screenWidthDp = screenWidthDp,
+                screenHeightDp = screenHeightDp,
+                horizontalPaddingDp = horizontalPaddingDp,
+                verticalPaddingDp = verticalPaddingDp,
+                lineHeightMultiplier = lineHeightMultiplier
+            )
             if (activePages.isNotEmpty()) {
                 onActiveChapterReady(activePages)
             }
         }
 
-        val list = computePages(chapters, fontSize, isLandscape, isStrictPaged)
+        val list = computePages(
+            chapters = chapters,
+            fontSize = fontSize,
+            isLandscape = isLandscape,
+            isStrictPaged = isStrictPaged,
+            screenWidthDp = screenWidthDp,
+            screenHeightDp = screenHeightDp,
+            horizontalPaddingDp = horizontalPaddingDp,
+            verticalPaddingDp = verticalPaddingDp,
+            lineHeightMultiplier = lineHeightMultiplier
+        )
         cache.put(key, list)
         if (dbHelper != null && list.isNotEmpty()) {
             dbHelper.savePageCache(key, bookId, -1, list)
+            if (pFile != null) {
+                try { pFile.writeText(dbHelper.serializePages(list)) } catch (_: Exception) {}
+            }
         }
         return@withContext list
     }
@@ -133,49 +325,40 @@ object PageCache {
         chapters: List<Chapter>,
         fontSize: Int,
         isLandscape: Boolean = false,
-        isStrictPaged: Boolean = false
+        isStrictPaged: Boolean = false,
+        screenWidthDp: Int = 0,
+        screenHeightDp: Int = 0,
+        horizontalPaddingDp: Int = 20,
+        verticalPaddingDp: Int = 16,
+        lineHeightMultiplier: Float = 1.45f,
+        paragraphSpacingMultiplier: Float = 1.2f
     ): List<Pair<String, String>> {
         val list = mutableListOf<Pair<String, String>>()
+        val metrics = calculateDeviceMetrics(
+            fontSize = fontSize,
+            isLandscape = isLandscape,
+            screenWidthDp = screenWidthDp,
+            screenHeightDp = screenHeightDp,
+            horizontalPaddingDp = horizontalPaddingDp,
+            verticalPaddingDp = verticalPaddingDp,
+            lineHeightMultiplier = lineHeightMultiplier,
+            paragraphSpacingMultiplier = paragraphSpacingMultiplier
+        )
 
         if (isStrictPaged) {
             // ═════════════════════════════════════════════════════════════════
-            // STRICT PAGED ENGINE (Zero overflow, line-budgeted, seamless continuation)
+            // STRICT PAGED ENGINE (Zero overflow, dynamically calibrated to device screen)
             // ═════════════════════════════════════════════════════════════════
-            val (charsPerLine, maxLines) = if (isLandscape) {
-                when {
-                    fontSize <= 13 -> Pair(78, 11)
-                    fontSize <= 14 -> Pair(72, 10)
-                    fontSize <= 15 -> Pair(68, 9)
-                    fontSize <= 16 -> Pair(64, 9)
-                    fontSize <= 17 -> Pair(60, 8)
-                    fontSize <= 18 -> Pair(56, 8)
-                    fontSize <= 20 -> Pair(50, 7)
-                    fontSize <= 22 -> Pair(44, 7)
-                    fontSize <= 24 -> Pair(38, 6)
-                    else -> Pair(34, 6)
-                }
-            } else {
-                when {
-                    fontSize <= 13 -> Pair(46, 23)
-                    fontSize <= 14 -> Pair(43, 21)
-                    fontSize <= 15 -> Pair(41, 20)
-                    fontSize <= 16 -> Pair(39, 19)
-                    fontSize <= 17 -> Pair(37, 18)
-                    fontSize <= 18 -> Pair(36, 17)
-                    fontSize <= 19 -> Pair(34, 16)
-                    fontSize <= 20 -> Pair(32, 15)
-                    fontSize <= 21 -> Pair(30, 14)
-                    fontSize <= 23 -> Pair(28, 13)
-                    fontSize <= 25 -> Pair(25, 12)
-                    else -> Pair(22, 11)
-                }
-            }
+            val charsPerLine = metrics.charsPerLine
+            val maxLines = metrics.maxLines
+            val headerLinesCost = metrics.headerLinesCost
 
-            val headerLinesCost = if (isLandscape) 3 else when {
-                fontSize <= 14 -> 8
-                fontSize <= 18 -> 7
-                else -> 6
-            }
+            // Word-wrapping ragged right line efficiency factor (~91% of theoretical character capacity per line)
+            val effectiveCharsPerLine = (charsPerLine * 0.91f).coerceAtLeast(14f)
+
+            // When a new paragraph is appended with "\n\n", calculate the exact vertical line height gap
+            // Paragraph gap = 1 blank line * (paragraphSpacingMultiplier / lineHeightMultiplier)
+            val paragraphGapLines = ((paragraphSpacingMultiplier.coerceIn(1.0f, 2.5f) / lineHeightMultiplier.coerceIn(1.1f, 2.2f)) * 1.0f).coerceIn(1.0f, 2.5f)
 
             chapters.forEach { chap ->
                 val paragraphs = chap.paragraphs
@@ -186,7 +369,7 @@ object PageCache {
 
                 var isFirstPageOfChapter = true
                 val currentBatch = StringBuilder()
-                var currentLines = 0
+                var currentLines = 0f
 
                 val queue = ArrayDeque<PageQueueItem>()
                 for (p in paragraphs) {
@@ -205,7 +388,7 @@ object PageCache {
                             list.add(Pair(chap.title, str))
                         }
                         currentBatch.clear()
-                        currentLines = 0
+                        currentLines = 0f
                         isFirstPageOfChapter = false
                     }
                 }
@@ -221,17 +404,17 @@ object PageCache {
                     }
 
                     val pageLineBudget = if (isFirstPageOfChapter) {
-                        (maxLines - headerLinesCost).coerceAtLeast(6)
+                        (maxLines - headerLinesCost).coerceAtLeast(if (isLandscape) 2 else 4).toFloat()
                     } else {
-                        maxLines
+                        maxLines.toFloat()
                     }
 
                     val availableLines = pageLineBudget - currentLines
 
-                    // A new paragraph consumes 1 blank line before it (\n\n).
+                    // A new paragraph consumes blank line space before it (\n\n) + paragraph spacing multiplier
                     // If currentBatch is empty or this item is continuing a broken paragraph, no blank line is consumed.
-                    val blankLinesBefore = if (currentBatch.isEmpty() || item.isContinuation) 0 else 1
-                    val textLines = kotlin.math.ceil(p.length.toFloat() / charsPerLine).toInt().coerceAtLeast(1)
+                    val blankLinesBefore = if (currentBatch.isEmpty() || item.isContinuation) 0f else paragraphGapLines
+                    val textLines = kotlin.math.ceil(p.length.toFloat() / effectiveCharsPerLine).coerceAtLeast(1f)
                     val totalLinesNeeded = blankLinesBefore + textLines
 
                     if (totalLinesNeeded <= availableLines) {
@@ -245,24 +428,24 @@ object PageCache {
                         // It does not fit entirely.
                         val linesForThisText = availableLines - blankLinesBefore
 
-                        if (linesForThisText >= 2) {
+                        if (linesForThisText >= 1f) {
                             // Break text to fill remaining lines on current page
-                            val maxCharsToFit = linesForThisText * charsPerLine
-                            val (partA, partB) = breakText(p, maxCharsToFit)
+                            val maxCharsToFit = (linesForThisText * effectiveCharsPerLine).toInt()
+                            val (partA, partB) = breakText(p, maxCharsToFit, effectiveCharsPerLine.toInt())
 
                             if (partA.isNotEmpty() && partB.isNotEmpty()) {
                                 if (currentBatch.isNotEmpty()) {
                                     currentBatch.append(if (item.isContinuation) " " else "\n\n")
                                 }
                                 currentBatch.append(partA)
-                                currentLines += blankLinesBefore + kotlin.math.ceil(partA.length.toFloat() / charsPerLine).toInt().coerceAtLeast(1)
+                                currentLines += blankLinesBefore + kotlin.math.ceil(partA.length.toFloat() / effectiveCharsPerLine).coerceAtLeast(1f)
                                 flushBatch()
                                 queue.addFirst(PageQueueItem(partB, isContinuation = true))
                                 continue
                             }
                         }
 
-                        // If linesForThisText < 2 or breakText couldn't split:
+                        // If linesForThisText < 1 or breakText couldn't split:
                         if (currentBatch.isNotEmpty()) {
                             // Flush current page and start this item fresh on next page
                             flushBatch()
@@ -270,8 +453,8 @@ object PageCache {
                         } else {
                             // currentBatch is empty, but item exceeds pageLineBudget (giant text).
                             // Force break to fit pageLineBudget!
-                            val maxCharsToFit = pageLineBudget * charsPerLine
-                            val (partA, partB) = breakText(p, maxCharsToFit)
+                            val maxCharsToFit = (pageLineBudget * effectiveCharsPerLine).toInt()
+                            val (partA, partB) = breakText(p, maxCharsToFit, effectiveCharsPerLine.toInt())
                             if (partA.isNotEmpty() && partB.isNotEmpty()) {
                                 currentBatch.append(partA)
                                 flushBatch()
@@ -292,27 +475,11 @@ object PageCache {
             // ═════════════════════════════════════════════════════════════════
             // PAGED + SCROLL ENGINE (Whole paragraphs preserved; overflows scrollable)
             // ═════════════════════════════════════════════════════════════════
-            val baseTarget = when {
-                fontSize <= 13 -> 1020
-                fontSize <= 14 -> 930
-                fontSize <= 15 -> 840
-                fontSize <= 16 -> 760
-                fontSize <= 17 -> 690
-                fontSize <= 18 -> 630
-                fontSize <= 19 -> 570
-                fontSize <= 21 -> 500
-                fontSize <= 23 -> 420
-                fontSize <= 25 -> 360
-                else -> 300
-            }
-            val targetCharsPerPage = if (isLandscape) {
-                (baseTarget * 0.85f).toInt().coerceAtLeast(350)
-            } else baseTarget
-
+            val targetCharsPerPage = metrics.baseTargetChars
             val firstPageTarget = if (isLandscape) {
-                (targetCharsPerPage * 0.75f).toInt().coerceAtLeast(220)
+                (targetCharsPerPage * 0.75f).toInt().coerceAtLeast(250)
             } else {
-                (targetCharsPerPage - 70).coerceAtLeast((targetCharsPerPage * 0.88f).toInt())
+                (targetCharsPerPage - (metrics.charsPerLine * metrics.headerLinesCost)).coerceAtLeast((targetCharsPerPage * 0.70f).toInt())
             }
 
             chapters.forEach { chap ->
@@ -379,24 +546,28 @@ object PageCache {
     }
 
     /**
-     * Splits text into two parts (partA, partB) such that partA fits within maxChars.
-     * Hierarchy:
+     * Splits text into two parts (partA, partB) such that partA fills the available line budget
+     * down to the final line window [maxChars - charsPerLine, maxChars], preventing both
+     * overflow and premature blank space at the bottom of the page.
+     *
+     * Hierarchy within final line window:
      * 1. Sentence boundary (. ! ?)
      * 2. Clause boundary (; : — ,)
      * 3. Word boundary (space)
      * 4. Hard cut fallback
      */
-    private fun breakText(text: String, maxChars: Int): Pair<String, String> {
+    fun breakText(text: String, maxChars: Int, charsPerLine: Int = 40): Pair<String, String> {
         if (text.length <= maxChars || maxChars <= 0) {
             return Pair(text, "")
         }
 
         val len = text.length
         val candidateLimit = maxChars.coerceAtMost(len)
+        val finalLineStart = (candidateLimit - charsPerLine).coerceAtLeast(0)
 
-        // 1. Find all sentence end candidates <= candidateLimit
-        var lastSentenceIdx = -1
-        var i = 0
+        // 1. Sentence boundary on the final line
+        var bestSentenceIdx = -1
+        var i = finalLineStart
         while (i < candidateLimit) {
             val c = text[i]
             if (c == '.' || c == '!' || c == '?') {
@@ -406,50 +577,48 @@ object PageCache {
                 }
                 if (next < len && text[next].isWhitespace()) {
                     if (next <= candidateLimit) {
-                        lastSentenceIdx = next
+                        bestSentenceIdx = next
                     }
                 }
             }
             i++
         }
 
-        // Sentence boundary must fill at least 72% of candidateLimit to avoid premature page cutoffs
-        if (lastSentenceIdx >= (candidateLimit * 0.72f).toInt()) {
-            val partA = text.substring(0, lastSentenceIdx).trimEnd()
-            val partB = text.substring(lastSentenceIdx).trimStart()
+        if (bestSentenceIdx >= finalLineStart) {
+            val partA = text.substring(0, bestSentenceIdx).trimEnd()
+            val partB = text.substring(bestSentenceIdx).trimStart()
             if (partA.isNotEmpty() && partB.isNotEmpty()) {
                 return Pair(partA, partB)
             }
         }
 
-        // 2. Find clause boundary (; : — or comma) <= candidateLimit
-        var lastClauseIdx = -1
-        i = 0
+        // 2. Clause boundary (; : — or comma) on the final line
+        var bestClauseIdx = -1
+        i = finalLineStart
         while (i < candidateLimit) {
             val c = text[i]
             if (c == ';' || c == ':' || c == '—' || c == ',') {
                 var next = i + 1
                 if (next < len && text[next].isWhitespace()) {
                     if (next <= candidateLimit) {
-                        lastClauseIdx = next
+                        bestClauseIdx = next
                     }
                 }
             }
             i++
         }
 
-        // Clause boundary must fill at least 78% of candidateLimit
-        if (lastClauseIdx >= (candidateLimit * 0.78f).toInt()) {
-            val partA = text.substring(0, lastClauseIdx).trimEnd()
-            val partB = text.substring(lastClauseIdx).trimStart()
+        if (bestClauseIdx >= finalLineStart) {
+            val partA = text.substring(0, bestClauseIdx).trimEnd()
+            val partB = text.substring(bestClauseIdx).trimStart()
             if (partA.isNotEmpty() && partB.isNotEmpty()) {
                 return Pair(partA, partB)
             }
         }
 
-        // 3. Word boundary: last space before candidateLimit (fills > 50% to prevent blank page)
+        // 3. Word boundary: last space before candidateLimit (fills final line up to last word)
         val lastSpace = text.lastIndexOf(' ', candidateLimit)
-        if (lastSpace > (candidateLimit * 0.50f).toInt()) {
+        if (lastSpace > 0) {
             val partA = text.substring(0, lastSpace).trimEnd()
             val partB = text.substring(lastSpace).trimStart()
             if (partA.isNotEmpty() && partB.isNotEmpty()) {

@@ -154,6 +154,8 @@ class MainActivity : ComponentActivity() {
     @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        io.github.tasmirz.lumina.util.LuminaLog.init(applicationContext)
+        io.github.tasmirz.lumina.util.LuminaLog.i("MainActivity", "Lumina Application Starting")
         androidx.compose.foundation.ComposeFoundationFlags.isNewContextMenuEnabled = false
         enableEdgeToEdge()
         handleIncomingIntent(intent)
@@ -164,15 +166,7 @@ class MainActivity : ComponentActivity() {
             val readerSettings by bookRepository.readerSettings.collectAsStateWithLifecycle()
             val books by bookRepository.books.collectAsStateWithLifecycle()
             val activeBookId by bookRepository.activeBookId.collectAsStateWithLifecycle()
-            val rawActiveBook = books.find { it.id == activeBookId } ?: books.firstOrNull() ?: bookRepository.getActiveBook()
-            val activeBook = remember(rawActiveBook?.id, rawActiveBook?.chapters?.size) {
-                if (rawActiveBook == null) null
-                else if (rawActiveBook.chapters.isNotEmpty()) rawActiveBook
-                else {
-                    val cached = bookRepository.getCachedChapters(rawActiveBook.id)
-                    if (cached != null && cached.isNotEmpty()) rawActiveBook.copy(chapters = cached) else rawActiveBook
-                }
-            }
+            val activeBook = books.find { it.id == activeBookId } ?: books.firstOrNull()
             val bookmarks by bookRepository.bookmarks.collectAsStateWithLifecycle()
             val wishlistBooks by bookRepository.wishlistBooks.collectAsStateWithLifecycle()
             val completedBookIds by bookRepository.completedBookIds.collectAsStateWithLifecycle()
@@ -195,6 +189,7 @@ class MainActivity : ComponentActivity() {
             val orbMenuSize = readerSettings.orbMenuSize
             val orbColor = readerSettings.orbColor
             val geminiApiKey = readerSettings.geminiApiKey
+            val openLibraryApiKey = readerSettings.openLibraryApiKey
             val quickThemes = readerSettings.quickThemes
             val quickFonts = readerSettings.quickFonts
             val orbActionOrder = readerSettings.orbActionOrder
@@ -233,9 +228,10 @@ class MainActivity : ComponentActivity() {
                 bookRepository.setLastTab(currentTab.name)
             }
 
-            LaunchedEffect(isFullscreen) {
+            val isReadingMode = currentTab == ScreenTab.READER
+            LaunchedEffect(isReadingMode, isFullscreen) {
                 val insetsController = WindowCompat.getInsetsController(window, window.decorView)
-                if (isFullscreen) {
+                if (isReadingMode || isFullscreen) {
                     insetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
                     insetsController.hide(WindowInsetsCompat.Type.statusBars())
                 } else {
@@ -560,10 +556,12 @@ class MainActivity : ComponentActivity() {
                     }
 
                     // Dictionary Bottom Sheet
+                    if (activeWordDefinition != null) {
                         DictionarySheet(
                             definition = activeWordDefinition,
                             onDismiss = { activeWordDefinition = null }
                         )
+                    }
 
                         // Bookmarks Bottom Sheet
                         if (showBookmarksSheet) {
@@ -667,6 +665,8 @@ class MainActivity : ComponentActivity() {
                                 onAiModelChange = { bookRepository.setAiModel(it) },
                                 geminiApiKey = geminiApiKey,
                                 onGeminiApiKeyChange = { bookRepository.setGeminiApiKey(it) },
+                                openLibraryApiKey = openLibraryApiKey,
+                                onOpenLibraryApiKeyChange = { bookRepository.setOpenLibraryApiKey(it) },
                                 onBack = { showAdvancedSettingsScreen = false }
                             )
                         }
