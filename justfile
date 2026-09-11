@@ -71,17 +71,9 @@ release: build-release install-release run
 all-release: release
 all-rloease: release
 
-# Initialize ADB port forwarding for Compose HotSwan (port 8600)
-hotswan:
-    adb forward tcp:8600 tcp:8600
-    @echo "🔥 Compose HotSwan port forwarding active (tcp:8600 -> tcp:8600)"
-    @echo "Instant Compose hot reload enabled on device without app restarts"
-
-# Hot reload: incremental build, install, launch, and activate Compose HotSwan
-hot: reload hotswan
-
-# Hot reload alias
-hot-reload: hot
+# Fast incremental rebuild, install, and restart
+hot: reload
+hot-reload: reload
 
 # Fast incremental rebuild, install, and restart via Gradle & ADB (no Python)
 reload:

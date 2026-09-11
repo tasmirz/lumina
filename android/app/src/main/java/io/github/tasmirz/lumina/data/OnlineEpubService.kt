@@ -124,19 +124,19 @@ object OnlineEpubService {
             else curatedClassics.filter { it.source == source }
         }
 
-        val gutenbergDeferred = if (source == OnlineCatalogSource.ALL || source == OnlineCatalogSource.GUTENBERG) {
+        val gutenbergDeferred: kotlinx.coroutines.Deferred<List<OnlineBookItem>>? = if (source == OnlineCatalogSource.ALL || source == OnlineCatalogSource.GUTENBERG) {
             async(Dispatchers.IO) { kotlinx.coroutines.withTimeoutOrNull(3500) { searchGutenberg(cleanQuery) } ?: emptyList() }
         } else null
 
-        val standardEbooksDeferred = if (source == OnlineCatalogSource.ALL || source == OnlineCatalogSource.STANDARD_EBOOKS) {
+        val standardEbooksDeferred: kotlinx.coroutines.Deferred<List<OnlineBookItem>>? = if (source == OnlineCatalogSource.ALL || source == OnlineCatalogSource.STANDARD_EBOOKS) {
             async(Dispatchers.IO) { kotlinx.coroutines.withTimeoutOrNull(3500) { searchStandardEbooks(cleanQuery) } ?: emptyList() }
         } else null
 
-        val openLibraryDeferred = if (source == OnlineCatalogSource.ALL || source == OnlineCatalogSource.OPEN_LIBRARY) {
+        val openLibraryDeferred: kotlinx.coroutines.Deferred<List<OnlineBookItem>>? = if (source == OnlineCatalogSource.ALL || source == OnlineCatalogSource.OPEN_LIBRARY) {
             async(Dispatchers.IO) { kotlinx.coroutines.withTimeoutOrNull(3500) { searchOpenLibrary(cleanQuery) } ?: emptyList() }
         } else null
 
-        val archiveDeferred = if (source == OnlineCatalogSource.ALL || source == OnlineCatalogSource.INTERNET_ARCHIVE) {
+        val archiveDeferred: kotlinx.coroutines.Deferred<List<OnlineBookItem>>? = if (source == OnlineCatalogSource.ALL || source == OnlineCatalogSource.INTERNET_ARCHIVE) {
             async(Dispatchers.IO) { kotlinx.coroutines.withTimeoutOrNull(3500) { searchInternetArchive(cleanQuery) } ?: emptyList() }
         } else null
 

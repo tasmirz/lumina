@@ -513,35 +513,17 @@ class BookRepository private constructor(private val context: Context) {
             io.github.tasmirz.lumina.util.LuminaLog.perf("BookRepository.init", System.currentTimeMillis() - startMs, "Loaded ${loadedBooks.size} books, ${loadedBookmarks.size} bookmarks")
 
             try {
-                val curActiveId = _activeBookId.value.ifBlank { loadedBooks.firstOrNull()?.id ?: "" }
-                if (curActiveId.isNotBlank()) {
-                    val chaps = getChaptersForBook(curActiveId)
-                    if (chaps.isNotEmpty()) {
-                        _books.value = _books.value.map {
-                            if (it.id == curActiveId && it.chapters.isEmpty()) it.copy(chapters = chaps) else it
-                        }
-                    }
-                }
-            } catch (_: Exception) {}
-
-            try {
                 syncSettings()
             } catch (_: Exception) {}
 
-            // Background auto-scan with active background task tracking
-            repoScope.launch(Dispatchers.IO) {
-                delay(1200)
+            // Only if library is completely empty (e.g. fresh install with no backup),
+            // do a one-time initial scan of persistent directories
+            if (loadedBooks.isEmpty()) {
                 try {
-                    _activeBackgroundTask.value = "Scanning library for EPUBs..."
-                    io.github.tasmirz.lumina.util.LuminaLog.i("BookRepository", "Starting background library auto-scan")
-                    val scanStart = System.currentTimeMillis()
                     LuminaStorageManager.migrateLegacyFiles(context)
                     autoScanAndLoadPersistentEpubs()
-                    io.github.tasmirz.lumina.util.LuminaLog.perf("LibraryAutoScan", System.currentTimeMillis() - scanStart)
                 } catch (e: Exception) {
-                    io.github.tasmirz.lumina.util.LuminaLog.w("BookRepository", "Startup autoScan error", e)
-                } finally {
-                    _activeBackgroundTask.value = null
+                    io.github.tasmirz.lumina.util.LuminaLog.w("BookRepository", "Initial autoScan error", e)
                 }
             }
         }
@@ -1272,7 +1254,6 @@ class BookRepository private constructor(private val context: Context) {
         if (cached != null && cached.isNotEmpty()) {
             return book.copy(chapters = cached)
         }
-        prefetchChapters(book.id)
         return book
     }
 

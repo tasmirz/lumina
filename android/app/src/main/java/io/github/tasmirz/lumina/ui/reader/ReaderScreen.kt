@@ -737,6 +737,18 @@ fun ReaderScreen(
         }
     }
 
+    LaunchedEffect(listState.isScrollInProgress) {
+        if (listState.isScrollInProgress && isAutoScrolling) {
+            isAutoScrolling = false
+        }
+    }
+
+    LaunchedEffect(pagerState.isScrollInProgress) {
+        if (pagerState.isScrollInProgress && isAutoScrolling) {
+            isAutoScrolling = false
+        }
+    }
+
     // Auto-scroll loop for hands-free reading in both Continuous Scroll and Paged modes
     LaunchedEffect(isAutoScrolling, autoScrollSpeed, readingMode) {
         if (!isAutoScrolling) return@LaunchedEffect
@@ -1088,121 +1100,6 @@ fun ReaderScreen(
                                 }
                             }
                         } while (event.changes.any { it.pressed })
-                    }
-                }
-                .pointerInput(isAutoScrolling, readingMode, gestureDoubleTap, gestureSingleTap, gestureTripleTap, screenWidthPx) {
-                    coroutineScope {
-                        var singleTapJob: Job? = null
-                        var emptySpaceTapCount = 0
-                        var lastEmptyTapTime = 0L
-                        var lastEmptyTapPos = Offset.Zero
-
-                        awaitEachGesture {
-                            val down = awaitPointerEvent(PointerEventPass.Main).changes.firstOrNull { it.pressed } ?: return@awaitEachGesture
-                            val downTime = System.currentTimeMillis()
-                            val downPos = down.position
-
-                            var wasDraggedOrPinched = false
-                            var upChange: PointerInputChange? = null
-
-                            while (true) {
-                                val event = awaitPointerEvent(PointerEventPass.Main)
-                                if (event.changes.size >= 2) {
-                                    wasDraggedOrPinched = true
-                                    break
-                                }
-                                val up = event.changes.firstOrNull { it.id == down.id && !it.pressed }
-                                if (up != null) {
-                                    upChange = up
-                                    break
-                                }
-                                val current = event.changes.firstOrNull { it.id == down.id }
-                                if (current != null && (current.position - downPos).getDistance() > 24f) {
-                                    wasDraggedOrPinched = true
-                                    break
-                                }
-                            }
-
-                            if (wasDraggedOrPinched) {
-                                emptySpaceTapCount = 0
-                                singleTapJob?.cancel()
-                                return@awaitEachGesture
-                            }
-
-                            val upTime = System.currentTimeMillis()
-                            val pressDuration = upTime - downTime
-
-                            // If held longer than 360ms, it's a long press
-                            if (pressDuration > 360L) {
-                                emptySpaceTapCount = 0
-                                singleTapJob?.cancel()
-                                return@awaitEachGesture
-                            }
-
-                            // If the up event was consumed by a child (like SelectionContainer selecting a word or link):
-                            // User double-tapped on text! Let SelectionContainer handle it without triggering empty-space double tap.
-                            if (upChange?.isConsumed == true) {
-                                emptySpaceTapCount = 0
-                                singleTapJob?.cancel()
-                                return@awaitEachGesture
-                            }
-
-                            // Tap on EMPTY SPACE!
-                            // 1. If currently auto-scrolling, any tap on empty space immediately halts auto-scroll!
-                            if (isAutoScrolling) {
-                                isAutoScrolling = false
-                                upChange?.consume()
-                                emptySpaceTapCount = 0
-                                singleTapJob?.cancel()
-                                return@awaitEachGesture
-                            }
-
-                            val now = System.currentTimeMillis()
-                            val dist = (downPos - lastEmptyTapPos).getDistance()
-
-                            if (now - lastEmptyTapTime < 350L && dist < 50f) {
-                                emptySpaceTapCount++
-                            } else {
-                                emptySpaceTapCount = 1
-                            }
-                            lastEmptyTapTime = now
-                            lastEmptyTapPos = downPos
-
-                            if (emptySpaceTapCount == 1) {
-                                singleTapJob?.cancel()
-                                singleTapJob = this@coroutineScope.launch {
-                                    delay(250L)
-                                    if (emptySpaceTapCount == 1) {
-                                        emptySpaceTapCount = 0
-                                        if (showSelectionMenu) {
-                                            try { activeReleaseSelectionAction?.invoke() } catch (_: Throwable) {}
-                                            activeReleaseSelectionAction = null
-                                            showSelectionMenu = false
-                                            selectedText = ""
-                                        } else if (readingMode != ReadingMode.SCROLL) {
-                                            val sideMarginPx = with(density) { 60.dp.toPx() }
-                                            if (downPos.x >= sideMarginPx && downPos.x <= screenWidthPx - sideMarginPx) {
-                                                executeGestureAction(gestureSingleTap)
-                                            }
-                                        } else {
-                                            executeGestureAction(gestureSingleTap)
-                                        }
-                                    }
-                                }
-                            } else if (emptySpaceTapCount == 2) {
-                                // DOUBLE TAP ON EMPTY SPACE -> TRIGGER DOUBLE TAP (AUTOSCROLL)!
-                                singleTapJob?.cancel()
-                                upChange?.consume()
-                                emptySpaceTapCount = 0
-                                executeGestureAction(gestureDoubleTap)
-                            } else if (emptySpaceTapCount >= 3) {
-                                // TRIPLE TAP ON EMPTY SPACE -> TRIGGER TRIPLE TAP (SUMMON ORB)!
-                                singleTapJob?.cancel()
-                                upChange?.consume()
-                                emptySpaceTapCount = 0
-                                executeGestureAction(gestureTripleTap)
-                            }
-                        }
                     }
                 }
         ) {
@@ -1565,6 +1462,30 @@ fun ReaderScreen(
                                 }
                             }
                         }
+                        item(key = "bottom-empty-space", contentType = "bottom_space") {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(280.dp)
+                                    .pointerInput(gestureDoubleTap, gestureSingleTap) {
+                                        detectTapGestures(
+                                            onDoubleTap = {
+                                                executeGestureAction(gestureDoubleTap)
+                                            },
+                                            onTap = {
+                                                if (isAutoScrolling) {
+                                                    isAutoScrolling = false
+                                                } else if (showSelectionMenu) {
+                                                    showSelectionMenu = false
+                                                    selectedText = ""
+                                                } else {
+                                                    executeGestureAction(gestureSingleTap)
+                                                }
+                                            }
+                                        )
+                                    }
+                            )
+                        }
                     }
                 }
             } else {
@@ -1846,6 +1767,26 @@ fun ReaderScreen(
                                             modifier = Modifier.fillMaxWidth()
                                         )
                                     }
+                                    Spacer(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .fillMaxWidth()
+                                            .pointerInput(gestureDoubleTap, gestureSingleTap) {
+                                                detectTapGestures(
+                                                    onDoubleTap = { executeGestureAction(gestureDoubleTap) },
+                                                    onTap = {
+                                                        if (isAutoScrolling) {
+                                                            isAutoScrolling = false
+                                                        } else if (showSelectionMenu) {
+                                                            showSelectionMenu = false
+                                                            selectedText = ""
+                                                        } else {
+                                                            executeGestureAction(gestureSingleTap)
+                                                        }
+                                                    }
+                                                )
+                                            }
+                                    )
                                     if (readingMode == ReadingMode.PAGED_SCROLL) {
                                         Spacer(modifier = Modifier.height(24.dp))
                                     }
@@ -1859,9 +1800,11 @@ fun ReaderScreen(
                                 .fillMaxHeight()
                                 .width(60.dp)
                                 .align(Alignment.CenterStart)
-                                .pointerInput(Unit) {
+                                .pointerInput(isAutoScrolling) {
                                     detectTapGestures {
-                                        if (pagerState.currentPage > 0) {
+                                        if (isAutoScrolling) {
+                                            isAutoScrolling = false
+                                        } else if (pagerState.currentPage > 0) {
                                             coroutineScope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
                                         }
                                     }
@@ -1872,9 +1815,11 @@ fun ReaderScreen(
                                 .fillMaxHeight()
                                 .width(60.dp)
                                 .align(Alignment.CenterEnd)
-                                .pointerInput(Unit) {
+                                .pointerInput(isAutoScrolling) {
                                     detectTapGestures {
-                                        if (pagerState.currentPage < pages.size - 1) {
+                                        if (isAutoScrolling) {
+                                            isAutoScrolling = false
+                                        } else if (pagerState.currentPage < pages.size - 1) {
                                             coroutineScope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
                                         }
                                     }
