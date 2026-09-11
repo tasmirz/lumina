@@ -1517,13 +1517,6 @@ fun ReaderScreen(
                         }
                     }
 
-                    val pagedBottomContentPadding = if (isUiVisible) {
-                        val dockHeight = if (showNavBarInReader) 94.dp else 44.dp
-                        progressBottomInset + dockHeight + 20.dp
-                    } else {
-                        progressBottomInset + 28.dp
-                    }
-
                     Box(modifier = Modifier.fillMaxSize()) {
                         HorizontalPager(
                             state = pagerState,
@@ -1534,12 +1527,12 @@ fun ReaderScreen(
                                 .fillMaxSize()
                                 .padding(
                                     top = if (isUiVisible || readingMode == ReadingMode.PAGED) {
-                                        statusBarTopInset + 46.dp + (verticalPadding * 0.4f).dp
+                                        statusBarTopInset + 42.dp + (verticalPadding * 0.35f).dp
                                     } else {
                                         statusBarTopInset + 12.dp + (verticalPadding * 0.4f).dp
                                     },
                                     bottom = if (readingMode == ReadingMode.PAGED) {
-                                        progressBottomInset + 46.dp + (verticalPadding * 0.4f).dp
+                                        progressBottomInset + 40.dp + (verticalPadding * 0.35f).dp
                                     } else if (isUiVisible) {
                                         progressBottomInset + 44.dp + (verticalPadding * 0.4f).dp
                                     } else {

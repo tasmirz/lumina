@@ -63,9 +63,9 @@ class PageCacheTest {
             fontSize = 16
         )
 
-        // Target for fontSize 16 is ~760 chars
-        // 3000 chars should distribute into ~4-8 well-filled pages, NOT 10 separate mostly-blank pages
-        assertTrue("Pages count should be around 4 to 8, actual: ${pages.size}", pages.size in 4..8)
+        // Target for fontSize 16 is ~940 chars
+        // 3000 chars should distribute into ~3-8 well-filled pages, NOT 10 separate mostly-blank pages
+        assertTrue("Pages count should be around 3 to 8, actual: ${pages.size}", pages.size in 3..8)
 
         // Ensure pages are not mostly blank: each page (except possibly the very last) should have substantial length
         for (i in 0 until pages.size - 1) {

@@ -52,7 +52,7 @@ object PageCache {
         isLandscape: Boolean = false,
         isStrictPaged: Boolean = false
     ): List<Pair<String, String>>? {
-        val key = "v16_${bookId}_${chaptersCount}_${fontSize}_${if (isLandscape) "land" else "port"}_${if (isStrictPaged) "strict" else "scroll"}"
+        val key = "v17_${bookId}_${chaptersCount}_${fontSize}_${if (isLandscape) "land" else "port"}_${if (isStrictPaged) "strict" else "scroll"}"
         return cache.get(key)
     }
 
@@ -65,7 +65,7 @@ object PageCache {
         dbHelper: LuminaDatabaseHelper? = null,
         context: android.content.Context? = null
     ): List<Pair<String, String>> {
-        val key = "v16_${bookId}_${chapters.size}_${fontSize}_${if (isLandscape) "land" else "port"}_${if (isStrictPaged) "strict" else "scroll"}"
+        val key = "v17_${bookId}_${chapters.size}_${fontSize}_${if (isLandscape) "land" else "port"}_${if (isStrictPaged) "strict" else "scroll"}"
         val cached = cache.get(key)
         if (cached != null) return cached
 
@@ -121,7 +121,7 @@ object PageCache {
         activeChapterIndex: Int = 0,
         onActiveChapterReady: ((List<Pair<String, String>>) -> Unit)? = null
     ): List<Pair<String, String>> = withContext(Dispatchers.Default) {
-        val key = "v16_${bookId}_${chapters.size}_${fontSize}_${if (isLandscape) "land" else "port"}_${if (isStrictPaged) "strict" else "scroll"}"
+        val key = "v17_${bookId}_${chapters.size}_${fontSize}_${if (isLandscape) "land" else "port"}_${if (isStrictPaged) "strict" else "scroll"}"
         val cached = cache.get(key)
         if (cached != null) {
             onActiveChapterReady?.invoke(cached)
@@ -199,25 +199,25 @@ object PageCache {
                 }
             } else {
                 when {
-                    fontSize <= 13 -> Pair(46, 23)
-                    fontSize <= 14 -> Pair(43, 21)
-                    fontSize <= 15 -> Pair(41, 20)
-                    fontSize <= 16 -> Pair(39, 19)
-                    fontSize <= 17 -> Pair(37, 18)
-                    fontSize <= 18 -> Pair(36, 17)
-                    fontSize <= 19 -> Pair(34, 16)
-                    fontSize <= 20 -> Pair(32, 15)
-                    fontSize <= 21 -> Pair(30, 14)
-                    fontSize <= 23 -> Pair(28, 13)
-                    fontSize <= 25 -> Pair(25, 12)
-                    else -> Pair(22, 11)
+                    fontSize <= 13 -> Pair(46, 26)
+                    fontSize <= 14 -> Pair(43, 24)
+                    fontSize <= 15 -> Pair(41, 23)
+                    fontSize <= 16 -> Pair(39, 22)
+                    fontSize <= 17 -> Pair(37, 21)
+                    fontSize <= 18 -> Pair(36, 20)
+                    fontSize <= 19 -> Pair(34, 19)
+                    fontSize <= 20 -> Pair(32, 18)
+                    fontSize <= 21 -> Pair(30, 17)
+                    fontSize <= 23 -> Pair(28, 15)
+                    fontSize <= 25 -> Pair(25, 14)
+                    else -> Pair(22, 13)
                 }
             }
 
             val headerLinesCost = if (isLandscape) 3 else when {
-                fontSize <= 14 -> 8
-                fontSize <= 18 -> 7
-                else -> 6
+                fontSize <= 14 -> 5
+                fontSize <= 18 -> 4
+                else -> 3
             }
 
             chapters.forEach { chap ->
@@ -288,7 +288,7 @@ object PageCache {
                         // It does not fit entirely.
                         val linesForThisText = availableLines - blankLinesBefore
 
-                        if (linesForThisText >= 2) {
+                        if (linesForThisText >= 1) {
                             // Break text to fill remaining lines on current page
                             val maxCharsToFit = linesForThisText * charsPerLine
                             val (partA, partB) = breakText(p, maxCharsToFit)
@@ -336,17 +336,17 @@ object PageCache {
             // PAGED + SCROLL ENGINE (Whole paragraphs preserved; overflows scrollable)
             // ═════════════════════════════════════════════════════════════════
             val baseTarget = when {
-                fontSize <= 13 -> 1020
-                fontSize <= 14 -> 930
-                fontSize <= 15 -> 840
-                fontSize <= 16 -> 760
-                fontSize <= 17 -> 690
-                fontSize <= 18 -> 630
-                fontSize <= 19 -> 570
-                fontSize <= 21 -> 500
-                fontSize <= 23 -> 420
-                fontSize <= 25 -> 360
-                else -> 300
+                fontSize <= 13 -> 1250
+                fontSize <= 14 -> 1150
+                fontSize <= 15 -> 1040
+                fontSize <= 16 -> 940
+                fontSize <= 17 -> 850
+                fontSize <= 18 -> 780
+                fontSize <= 19 -> 710
+                fontSize <= 21 -> 620
+                fontSize <= 23 -> 520
+                fontSize <= 25 -> 440
+                else -> 370
             }
             val targetCharsPerPage = if (isLandscape) {
                 (baseTarget * 0.85f).toInt().coerceAtLeast(350)
@@ -355,7 +355,7 @@ object PageCache {
             val firstPageTarget = if (isLandscape) {
                 (targetCharsPerPage * 0.75f).toInt().coerceAtLeast(220)
             } else {
-                (targetCharsPerPage - 70).coerceAtLeast((targetCharsPerPage * 0.88f).toInt())
+                (targetCharsPerPage - 90).coerceAtLeast((targetCharsPerPage * 0.82f).toInt())
             }
 
             chapters.forEach { chap ->
