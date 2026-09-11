@@ -329,4 +329,17 @@ class PageCacheTest {
         // Second page should contain continuation
         assertTrue("Second page should have continuation", pages[1].second.isNotBlank())
     }
+
+    @Test
+    fun testGetCachedNonBlocking() {
+        val chapter = Chapter("Cached Chapter", "", "2 min", listOf("Quick sentence."))
+        val cachedBefore = PageCache.getCached("test_cached_check", 1, 16, isLandscape = false, isStrictPaged = true)
+        org.junit.Assert.assertNull("Should be null before computation", cachedBefore)
+
+        PageCache.getOrCompute("test_cached_check", listOf(chapter), 16, isLandscape = false, isStrictPaged = true)
+
+        val cachedAfter = PageCache.getCached("test_cached_check", 1, 16, isLandscape = false, isStrictPaged = true)
+        org.junit.Assert.assertNotNull("Should be present in cache after computation", cachedAfter)
+        assertEquals(1, cachedAfter!!.size)
+    }
 }

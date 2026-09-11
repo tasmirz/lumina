@@ -59,6 +59,9 @@ class LuminaAudioService : Service() {
         const val EXTRA_VOICE = "extra_voice"
         const val EXTRA_SPEED = "extra_speed"
 
+        @Volatile
+        var activeParagraphs: List<String> = emptyList()
+
         private val _playbackState = MutableStateFlow(AudioPlaybackState())
         val playbackState: StateFlow<AudioPlaybackState> = _playbackState.asStateFlow()
 
@@ -74,6 +77,7 @@ class LuminaAudioService : Service() {
             voice: String,
             speed: Float
         ) {
+            activeParagraphs = paragraphs
             val intent = Intent(context, LuminaAudioService::class.java).apply {
                 action = ACTION_PLAY
                 putExtra(EXTRA_BOOK_ID, bookId)
@@ -81,7 +85,6 @@ class LuminaAudioService : Service() {
                 putExtra(EXTRA_CHAPTER_INDEX, chapterIndex)
                 putExtra(EXTRA_CHAPTER_TITLE, chapterTitle)
                 putExtra(EXTRA_PARAGRAPH_INDEX, paragraphIndex)
-                putStringArrayListExtra(EXTRA_PARAGRAPHS, ArrayList(paragraphs))
                 putExtra(EXTRA_IS_EDGE_TTS, isEdgeTts)
                 putExtra(EXTRA_VOICE, voice)
                 putExtra(EXTRA_SPEED, speed)
@@ -185,7 +188,7 @@ class LuminaAudioService : Service() {
                 val chapterIndex = intent.getIntExtra(EXTRA_CHAPTER_INDEX, _playbackState.value.chapterIndex)
                 val chapterTitle = intent.getStringExtra(EXTRA_CHAPTER_TITLE) ?: _playbackState.value.chapterTitle
                 val paragraphIndex = intent.getIntExtra(EXTRA_PARAGRAPH_INDEX, _playbackState.value.paragraphIndex)
-                val paragraphs = intent.getStringArrayListExtra(EXTRA_PARAGRAPHS) ?: ArrayList(_playbackState.value.paragraphs)
+                val paragraphs = if (activeParagraphs.isNotEmpty()) activeParagraphs else (intent.getStringArrayListExtra(EXTRA_PARAGRAPHS) ?: _playbackState.value.paragraphs)
                 val isEdgeTts = intent.getBooleanExtra(EXTRA_IS_EDGE_TTS, _playbackState.value.isEdgeTts)
                 val voice = intent.getStringExtra(EXTRA_VOICE) ?: _playbackState.value.voice
                 val speed = intent.getFloatExtra(EXTRA_SPEED, _playbackState.value.speed)

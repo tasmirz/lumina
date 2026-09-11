@@ -611,11 +611,11 @@ fun ReaderScreen(
     val effectiveEndPadding = if (isLandscape) landscapeSidePaddingEnd else horizontalPadding.dp
 
     // Prepared pages for Paged Mode with smart character/sentence budgeting so text never overflows
-    // Only computed when in PAGED or PAGED_SCROLL mode to eliminate overhead in Continuous Scroll mode
+    // Non-blocking in-memory cache lookup on composition; background precomputation via getOrComputeAsync
     var pages by remember(book.id, book.chapters.size, fontSize, readingMode, isLandscape) {
         mutableStateOf(
             if (isPagedReading) {
-                PageCache.getOrCompute(book.id, book.chapters, fontSize, isLandscape, isStrictPaged, repository?.dbHelper)
+                PageCache.getCached(book.id, book.chapters.size, fontSize, isLandscape, isStrictPaged) ?: emptyList()
             } else {
                 emptyList()
             }

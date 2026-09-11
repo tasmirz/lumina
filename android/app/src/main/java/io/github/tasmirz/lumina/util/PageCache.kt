@@ -38,6 +38,17 @@ object PageCache {
     // Cache up to 16 book pagination sets in memory
     private val cache = SimpleLruCache<String, List<Pair<String, String>>>(16)
 
+    fun getCached(
+        bookId: String,
+        chaptersCount: Int,
+        fontSize: Int,
+        isLandscape: Boolean = false,
+        isStrictPaged: Boolean = false
+    ): List<Pair<String, String>>? {
+        val key = "v15_${bookId}_${chaptersCount}_${fontSize}_${if (isLandscape) "land" else "port"}_${if (isStrictPaged) "strict" else "scroll"}"
+        return cache.get(key)
+    }
+
     fun getOrCompute(
         bookId: String,
         chapters: List<Chapter>,
