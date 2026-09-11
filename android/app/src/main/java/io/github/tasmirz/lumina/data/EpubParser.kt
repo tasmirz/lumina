@@ -22,7 +22,7 @@ object EpubParser {
         var title = ""
         var author = "Unknown Author"
         var language = "en"
-        var coverUrl = "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=400&q=80"
+        var coverUrl = ""
 
         try {
             java.util.zip.ZipFile(file).use { zip ->
@@ -314,7 +314,7 @@ object EpubParser {
         }
 
         // 5. Extract Cover Image with Comprehensive Multi-Tier Detection
-        var coverUrl = "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=400&q=80"
+        var coverUrl = ""
         var coverEntryKey: String? = null
 
         // Tier 1: OPF <meta name="cover" content="id">

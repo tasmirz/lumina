@@ -1847,7 +1847,8 @@ class BookRepository private constructor(private val context: Context) {
         val fromDb = try { dbHelper.getAllBooks() } catch (_: Exception) { emptyList() }
         val searchDirs = LuminaStorageManager.getAllSearchDirectories(context)
 
-        val resolvedBooks = fromDb.map { b ->
+        val resolvedBooks = fromDb.map { raw ->
+            val b = if (raw.coverUrl.contains("images.unsplash.com")) raw.copy(coverUrl = "") else raw
             if (!b.filePath.isNullOrBlank() && File(b.filePath).exists()) {
                 b
             } else {

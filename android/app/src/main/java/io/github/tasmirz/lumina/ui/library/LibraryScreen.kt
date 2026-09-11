@@ -476,7 +476,11 @@ fun LibraryScreen(
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    items(readBooks, key = { "read-${it.id}" }) { b ->
+                    items(
+                        items = readBooks,
+                        key = { "read-${it.id}" },
+                        contentType = { "read-book-card" }
+                    ) { b ->
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -584,7 +588,11 @@ fun LibraryScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    items(wishlistBooks, key = { it.id }) { item ->
+                    items(
+                        items = wishlistBooks,
+                        key = { it.id },
+                        contentType = { "wishlist-card" }
+                    ) { item ->
                         Card(
                             shape = RoundedCornerShape(14.dp),
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -882,7 +890,11 @@ fun LibraryScreen(
             }
 
             // Book Cards in Grid
-            items(books, key = { it.id }) { book ->
+            items(
+                items = books,
+                key = { it.id },
+                contentType = { "book-card" }
+            ) { book ->
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -893,7 +905,8 @@ fun LibraryScreen(
                         ),
                     shape = RoundedCornerShape(14.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                    border = BorderStroke(0.6.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
                 ) {
                     Column(modifier = Modifier.padding(10.dp)) {
                         BookCoverImage(

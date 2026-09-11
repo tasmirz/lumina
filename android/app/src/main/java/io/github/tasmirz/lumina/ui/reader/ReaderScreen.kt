@@ -308,7 +308,6 @@ fun ReaderScreen(
     var scrubProgressPct by remember { mutableFloatStateOf(book.progress.toFloat()) }
     var currentProgressPct by rememberSaveable(book.id) { mutableIntStateOf(book.progress) }
     val readTillMapState = repository?.readTillMap?.collectAsState(initial = emptyMap())
-    val currentReadTillPct = readTillMapState?.value?.get(book.id) ?: currentProgressPct
 
     // TTS Reader states
     var showTtsDock by rememberSaveable { mutableStateOf(false) }
@@ -1243,22 +1242,20 @@ fun ReaderScreen(
                     val scrollHorizontalPaddingStart = if (isLandscape) landscapeSidePaddingStart else horizontalPadding.dp
                     val scrollHorizontalPaddingEnd = if (isLandscape) landscapeSidePaddingEnd else horizontalPadding.dp
 
-                    SelectionContainer(modifier = Modifier.fillMaxSize()) {
-                        LazyColumn(
-                            state = listState,
-                            contentPadding = PaddingValues(
-                                top = (76 + verticalPadding).dp,
-                                bottom = 100.dp + progressBottomInset + verticalPadding.dp,
-                                start = scrollHorizontalPaddingStart,
-                                end = scrollHorizontalPaddingEnd
-                            ),
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                        book.chapters.forEachIndexed { chapIdx, chapter ->
-                            val chapterBookmarks = bookmarksByChapter[chapter.title.trim().lowercase()] ?: emptyList()
-                            item(key = "chap-header-$chapIdx", contentType = "chap_header") {
-                                DisableSelection {
-                                    Column(
+                    LazyColumn(
+                        state = listState,
+                        contentPadding = PaddingValues(
+                            top = (76 + verticalPadding).dp,
+                            bottom = 100.dp + progressBottomInset + verticalPadding.dp,
+                            start = scrollHorizontalPaddingStart,
+                            end = scrollHorizontalPaddingEnd
+                        ),
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                    book.chapters.forEachIndexed { chapIdx, chapter ->
+                        val chapterBookmarks = bookmarksByChapter[chapter.title.trim().lowercase()] ?: emptyList()
+                        item(key = "chap-header-$chapIdx", contentType = "chap_header") {
+                            Column(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .padding(top = if (chapIdx == 0) 16.dp else 48.dp, bottom = 28.dp),
@@ -1305,7 +1302,6 @@ fun ReaderScreen(
                                             )
                                         }
                                     }
-                                }
                             }
 
                             itemsIndexed(
@@ -1321,50 +1317,48 @@ fun ReaderScreen(
                                         q.isNotBlank() && para.contains(q, ignoreCase = true)
                                     }
                                 }
-                                val isBeingSpoken = isTtsSpeaking && speakingChapterIdx == chapIdx && speakingParaIdx == pIdx
+                                val isBeingSpoken = if (isTtsSpeaking) speakingChapterIdx == chapIdx && speakingParaIdx == pIdx else false
 
                                 if (para.startsWith("[IMG:") && para.endsWith("]")) {
-                                    DisableSelection {
-                                        // Inline illustration with safe image loading and placeholder
-                                        val imgPath = para.removePrefix("[IMG:").removeSuffix("]")
-                                        val bitmap = rememberBookImage(imgPath)
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(vertical = 22.dp)
-                                                .clickable(
-                                                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                                                    indication = null
-                                                ) {
-                                                    if (showSelectionMenu) showSelectionMenu = false else showControls = !showControls
-                                                },
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            if (bitmap != null) {
-                                                Image(
-                                                    bitmap = bitmap.asImageBitmap(),
-                                                    contentDescription = "Illustration",
-                                                    contentScale = ContentScale.Fit,
-                                                    modifier = Modifier
-                                                        .fillMaxWidth(0.94f)
-                                                        .clip(RoundedCornerShape(8.dp))
-                                                )
-                                            } else {
-                                                Surface(
-                                                    shape = RoundedCornerShape(8.dp),
-                                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-                                                    modifier = Modifier
-                                                        .fillMaxWidth(0.92f)
-                                                        .height(160.dp)
-                                                ) {
-                                                    Box(contentAlignment = Alignment.Center) {
-                                                        Text(
-                                                            text = "Illustration",
-                                                            fontFamily = FontFamily.SansSerif,
-                                                            fontSize = 12.sp,
-                                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                                                        )
-                                                    }
+                                    // Inline illustration with safe image loading and placeholder
+                                    val imgPath = para.removePrefix("[IMG:").removeSuffix("]")
+                                    val bitmap = rememberBookImage(imgPath)
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 22.dp)
+                                            .clickable(
+                                                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                                                indication = null
+                                            ) {
+                                                if (showSelectionMenu) showSelectionMenu = false else showControls = !showControls
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        if (bitmap != null) {
+                                            Image(
+                                                bitmap = bitmap.asImageBitmap(),
+                                                contentDescription = "Illustration",
+                                                contentScale = ContentScale.Fit,
+                                                modifier = Modifier
+                                                    .fillMaxWidth(0.94f)
+                                                    .clip(RoundedCornerShape(8.dp))
+                                            )
+                                        } else {
+                                            Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                                modifier = Modifier
+                                                    .fillMaxWidth(0.92f)
+                                                    .height(160.dp)
+                                            ) {
+                                                Box(contentAlignment = Alignment.Center) {
+                                                    Text(
+                                                        text = "Illustration",
+                                                        fontFamily = FontFamily.SansSerif,
+                                                        fontSize = 12.sp,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                                    )
                                                 }
                                             }
                                         }
@@ -1380,7 +1374,6 @@ fun ReaderScreen(
 
                                     val hasFormatting = matchingBookmarks.isNotEmpty() || isDropCap || isActiveMatch || activeSearchQ.isNotBlank()
 
-                                    val textLayoutRef = remember { AtomicReference<TextLayoutResult?>(null) }
                                     val paraBottomSpacing = (fontSize * 0.85f * paragraphSpacingMultiplier).dp.coerceIn(8.dp, 42.dp)
 
                                     Column(
@@ -1414,49 +1407,49 @@ fun ReaderScreen(
                                                 } else Modifier
                                             )
                                     ) {
-                                        if (hasFormatting) {
-                                            val annotatedText = remember(
-                                                para, matchingBookmarks, isDropCap, fontSize, fontFamily, onBgColor,
-                                                activeSearchQ, isActiveMatch
-                                            ) {
-                                                buildHighlightedAnnotatedString(
+                                        SelectionContainer(modifier = Modifier.fillMaxWidth()) {
+                                            if (hasFormatting) {
+                                                val annotatedText = remember(
+                                                    para, matchingBookmarks, isDropCap, fontSize, fontFamily, onBgColor,
+                                                    activeSearchQ, isActiveMatch
+                                                ) {
+                                                    buildHighlightedAnnotatedString(
+                                                        text = para,
+                                                        matchingBookmarks = matchingBookmarks,
+                                                        onBookmarkClick = { bm ->
+                                                            selectedBookmarkForModal = bm
+                                                            showBookmarkDetailModal = true
+                                                        },
+                                                        isDropCap = isDropCap,
+                                                        dropCapFontFamily = FontFamily.Serif,
+                                                        dropCapFontSize = (fontSize * 2.2f).sp,
+                                                        dropCapColor = secColor,
+                                                        baseFontFamily = fontFamily,
+                                                        baseFontSize = fontSize.sp,
+                                                        baseTextColor = onBgColor,
+                                                        searchQuery = activeSearchQ,
+                                                        isActiveSearchMatch = isActiveMatch
+                                                    )
+                                                }
+                                                Text(
+                                                    text = annotatedText,
+                                                    lineHeight = (fontSize * lineHeightMultiplier).sp,
+                                                    letterSpacing = letterSpacing.sp,
+                                                    textAlign = contentTextAlign,
+                                                    modifier = Modifier.fillMaxWidth()
+                                                )
+                                            } else {
+                                                Text(
                                                     text = para,
-                                                    matchingBookmarks = matchingBookmarks,
-                                                    onBookmarkClick = { bm ->
-                                                        selectedBookmarkForModal = bm
-                                                        showBookmarkDetailModal = true
-                                                    },
-                                                    isDropCap = isDropCap,
-                                                    dropCapFontFamily = FontFamily.Serif,
-                                                    dropCapFontSize = (fontSize * 2.2f).sp,
-                                                    dropCapColor = secColor,
-                                                    baseFontFamily = fontFamily,
-                                                    baseFontSize = fontSize.sp,
-                                                    baseTextColor = onBgColor,
-                                                    searchQuery = activeSearchQ,
-                                                    isActiveSearchMatch = isActiveMatch
+                                                    fontFamily = fontFamily,
+                                                    fontSize = fontSize.sp,
+                                                    color = onBgColor,
+                                                    lineHeight = (fontSize * lineHeightMultiplier).sp,
+                                                    letterSpacing = letterSpacing.sp,
+                                                    textAlign = contentTextAlign,
+                                                    modifier = Modifier.fillMaxWidth()
                                                 )
                                             }
-                                            Text(
-                                                text = annotatedText,
-                                                onTextLayout = { textLayoutRef.set(it) },
-                                                lineHeight = (fontSize * lineHeightMultiplier).sp,
-                                                letterSpacing = letterSpacing.sp,
-                                                textAlign = contentTextAlign,
-                                                modifier = Modifier.fillMaxWidth()
-                                            )
-                                        } else {
-                                            Text(
-                                                text = para,
-                                                onTextLayout = { textLayoutRef.set(it) },
-                                                fontFamily = fontFamily,
-                                                fontSize = fontSize.sp,
-                                                color = onBgColor,
-                                                lineHeight = (fontSize * lineHeightMultiplier).sp,
-                                                letterSpacing = letterSpacing.sp,
-                                                textAlign = contentTextAlign,
-                                                modifier = Modifier.fillMaxWidth()
-                                            )
                                         }
                                     }
                                 }
@@ -1487,7 +1480,6 @@ fun ReaderScreen(
                             )
                         }
                     }
-                }
             } else {
                 // ═════════════════════════════════════════════════════════════════════
                 // PAGED / PAGED_SCROLL MODE: Swipe horizontal pager
@@ -1868,7 +1860,7 @@ fun ReaderScreen(
             progressBottomInset = progressBottomInset,
             showNavBarInReader = showNavBarInReader,
             currentProgressPct = currentProgressPct,
-            currentReadTillPct = currentReadTillPct,
+            currentReadTillPct = readTillMapState?.value?.get(book.id) ?: currentProgressPct,
             readTimeLeft = book.readTimeLeft,
             activeChapterTitle = activeChapterTitle,
             onToggleNavBar = onToggleNavBar,
