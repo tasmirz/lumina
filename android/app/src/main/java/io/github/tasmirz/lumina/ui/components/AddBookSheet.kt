@@ -11,12 +11,15 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import io.github.tasmirz.lumina.data.LuminaDownloadService
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -44,6 +47,7 @@ fun AddBookSheet(
     var searchResults by remember { mutableStateOf<List<OnlineBookItem>>(OnlineEpubService.curatedClassics) }
     var isSearching by remember { mutableStateOf(false) }
     var downloadingBookId by remember { mutableStateOf<String?>(null) }
+    val downloadStates by LuminaDownloadService.downloadStates.collectAsState()
     var searchJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val searchCache = remember { mutableMapOf<String, List<OnlineBookItem>>() }
 
@@ -272,15 +276,34 @@ fun AddBookSheet(
                                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                             )
                                         }
+
+                                        val dState = downloadStates[book.id]
+                                        val isFailed = dState?.isFailed == true
+                                        val failureReason = dState?.errorMessage
+                                        if (isFailed && !failureReason.isNullOrBlank()) {
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                text = failureReason,
+                                                fontFamily = FontFamily.SansSerif,
+                                                fontSize = 10.sp,
+                                                color = MaterialTheme.colorScheme.error,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
                                     }
 
                                     Spacer(modifier = Modifier.width(8.dp))
 
-                                    // 1-Tap Download Button
-                                    val isDownloading = downloadingBookId == book.id
+                                    // 1-Tap Download Button with Live State Feedback
+                                    val dState = downloadStates[book.id]
+                                    val isDownloading = (downloadingBookId == book.id) || (dState != null && !dState.isComplete && !dState.isFailed)
+                                    val isDownloaded = dState?.isComplete == true
+                                    val isFailed = dState?.isFailed == true
+
                                     IconButton(
                                         onClick = {
-                                            if (!isDownloading) {
+                                            if (!isDownloading && !isDownloaded) {
                                                 downloadingBookId = book.id
                                                 onBookDownloaded(book)
                                             }
@@ -288,21 +311,56 @@ fun AddBookSheet(
                                         modifier = Modifier
                                             .size(40.dp)
                                             .clip(CircleShape)
-                                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+                                            .background(
+                                                when {
+                                                    isFailed -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f)
+                                                    isDownloaded -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
+                                                    else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                                                }
+                                            )
                                     ) {
-                                        if (isDownloading) {
-                                            CircularProgressIndicator(
-                                                modifier = Modifier.size(20.dp),
-                                                strokeWidth = 2.dp,
-                                                color = MaterialTheme.colorScheme.secondary
-                                            )
-                                        } else {
-                                            Icon(
-                                                Icons.Default.Download,
-                                                contentDescription = "Download",
-                                                tint = MaterialTheme.colorScheme.secondary,
-                                                modifier = Modifier.size(20.dp)
-                                            )
+                                        when {
+                                            isDownloading -> {
+                                                val progress = dState?.progress ?: 0
+                                                if (progress > 0) {
+                                                    CircularProgressIndicator(
+                                                        progress = { progress / 100f },
+                                                        modifier = Modifier.size(20.dp),
+                                                        strokeWidth = 2.dp,
+                                                        color = MaterialTheme.colorScheme.secondary
+                                                    )
+                                                } else {
+                                                    CircularProgressIndicator(
+                                                        modifier = Modifier.size(20.dp),
+                                                        strokeWidth = 2.dp,
+                                                        color = MaterialTheme.colorScheme.secondary
+                                                    )
+                                                }
+                                            }
+                                            isDownloaded -> {
+                                                Icon(
+                                                    Icons.Default.Check,
+                                                    contentDescription = "Downloaded",
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                            isFailed -> {
+                                                Icon(
+                                                    Icons.Default.Refresh,
+                                                    contentDescription = "Retry Download",
+                                                    tint = MaterialTheme.colorScheme.error,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                            else -> {
+                                                Icon(
+                                                    Icons.Default.Download,
+                                                    contentDescription = "Download",
+                                                    tint = MaterialTheme.colorScheme.secondary,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
                                         }
                                     }
                                 }

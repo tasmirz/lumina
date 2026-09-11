@@ -286,4 +286,47 @@ class PageCacheTest {
         assertTrue("Active pages size should be > 0", activePagesSize > 0)
         assertTrue("All pages size should be >= active pages size", allPages.size >= activePagesSize)
     }
+
+    @Test
+    fun testPagedScrollModeDoesNotLeaveBlankBottom() {
+        val paras = listOf(
+            "Short opening line.",
+            "A second paragraph with a moderate length describing the setting and the character walking through the stormy night.",
+            "A third paragraph that continues the scene with dialogue and observations of the rain hammering the windows.",
+            "A fourth paragraph that wraps up the sequence."
+        )
+        val chapter = Chapter("Chapter Paged Scroll", "", "5 min", paras)
+        val pages = PageCache.getOrCompute(
+            bookId = "test_paged_scroll_filling",
+            chapters = listOf(chapter),
+            fontSize = 16,
+            isStrictPaged = false
+        )
+        assertTrue("Expected computed pages", pages.isNotEmpty())
+        // In Paged+Scroll, the first page should accumulate paragraphs to avoid empty space below
+        val firstPageContent = pages[0].second
+        assertTrue("First page must accumulate paragraphs", firstPageContent.contains("Short opening line."))
+        assertTrue("First page must contain subsequent paragraphs", firstPageContent.contains("A second paragraph"))
+    }
+
+    @Test
+    fun testStrictPagedSplitsLongParagraphsCleanly() {
+        val longPara = "First sentence of the very long paragraph. " +
+                "Second sentence that continues to elaborate on the deep thoughts of the narrator while staring out at the sea. " +
+                "Third sentence providing more detail about the waves crashing against the rocky shores and the sound echoing in the distance. " +
+                "Fourth sentence expanding even further so that the paragraph spans well over eight hundred characters in total length. " +
+                "Fifth sentence concluding the narrative thought with a poignant reflection on mortality and time."
+        val chapter = Chapter("Strict Paged Chapter", "", "5 min", listOf(longPara))
+        val pages = PageCache.getOrCompute(
+            bookId = "test_strict_paged_split",
+            chapters = listOf(chapter),
+            fontSize = 20, // larger font means fewer chars per page
+            isStrictPaged = true
+        )
+        assertTrue("Long paragraph should break across pages", pages.size >= 2)
+        // First page should be well-filled
+        assertTrue("First page should have substantial content", pages[0].second.length >= 250)
+        // Second page should contain continuation
+        assertTrue("Second page should have continuation", pages[1].second.isNotBlank())
+    }
 }

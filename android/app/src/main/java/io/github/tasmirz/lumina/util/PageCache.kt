@@ -46,7 +46,7 @@ object PageCache {
         isStrictPaged: Boolean = false,
         dbHelper: LuminaDatabaseHelper? = null
     ): List<Pair<String, String>> {
-        val key = "v14_${bookId}_${chapters.size}_${fontSize}_${if (isLandscape) "land" else "port"}_${if (isStrictPaged) "strict" else "scroll"}"
+        val key = "v15_${bookId}_${chapters.size}_${fontSize}_${if (isLandscape) "land" else "port"}_${if (isStrictPaged) "strict" else "scroll"}"
         val cached = cache.get(key)
         if (cached != null) return cached
 
@@ -85,7 +85,7 @@ object PageCache {
         activeChapterIndex: Int = 0,
         onActiveChapterReady: ((List<Pair<String, String>>) -> Unit)? = null
     ): List<Pair<String, String>> = withContext(Dispatchers.Default) {
-        val key = "v14_${bookId}_${chapters.size}_${fontSize}_${if (isLandscape) "land" else "port"}_${if (isStrictPaged) "strict" else "scroll"}"
+        val key = "v15_${bookId}_${chapters.size}_${fontSize}_${if (isLandscape) "land" else "port"}_${if (isStrictPaged) "strict" else "scroll"}"
         val cached = cache.get(key)
         if (cached != null) {
             onActiveChapterReady?.invoke(cached)
@@ -335,21 +335,28 @@ object PageCache {
                     }
 
                     val target = if (isFirstPageOfChapter) firstPageTarget else targetCharsPerPage
-                    val minFill = (target * 0.72f).toInt()
 
                     if (currentBatch.isEmpty()) {
                         currentBatch.append(p)
-                    } else if (currentBatch.length + p.length + 2 <= target) {
+                        if (currentBatch.length >= target) {
+                            flushBatch(isChapterHeader = isFirstPageOfChapter)
+                            isFirstPageOfChapter = false
+                        }
+                    } else if (currentBatch.length < target) {
+                        // Keep appending until page reaches or exceeds target budget so bottom is never empty
                         currentBatch.append("\n\n").append(p)
-                    } else if (currentBatch.length < minFill && p.length <= (target - currentBatch.length + 120)) {
-                        // Underfilled page and p fits with small overflow: keep on this page and scroll
-                        currentBatch.append("\n\n").append(p)
-                        flushBatch(isChapterHeader = isFirstPageOfChapter)
-                        isFirstPageOfChapter = false
+                        if (currentBatch.length >= target) {
+                            flushBatch(isChapterHeader = isFirstPageOfChapter)
+                            isFirstPageOfChapter = false
+                        }
                     } else {
                         flushBatch(isChapterHeader = isFirstPageOfChapter)
                         isFirstPageOfChapter = false
                         currentBatch.append(p)
+                        if (currentBatch.length >= target) {
+                            flushBatch(isChapterHeader = isFirstPageOfChapter)
+                            isFirstPageOfChapter = false
+                        }
                     }
                 }
 
@@ -376,14 +383,14 @@ object PageCache {
         val len = text.length
         val candidateLimit = maxChars.coerceAtMost(len)
 
-        // 1. Find all sentence end candidates <= maxChars
+        // 1. Find all sentence end candidates <= candidateLimit
         var lastSentenceIdx = -1
         var i = 0
         while (i < candidateLimit) {
             val c = text[i]
             if (c == '.' || c == '!' || c == '?') {
                 var next = i + 1
-                if (next < len && (text[next] == '"' || text[next] == '”' || text[next] == '\'' || text[next] == '’')) {
+                while (next < len && (text[next] == '"' || text[next] == '”' || text[next] == '\'' || text[next] == '’' || text[next] == ')' || text[next] == ']')) {
                     next++
                 }
                 if (next < len && text[next].isWhitespace()) {
@@ -395,8 +402,8 @@ object PageCache {
             i++
         }
 
-        // If we found a sentence ending that fills at least 45% of maxChars, use it!
-        if (lastSentenceIdx >= (maxChars * 0.45f).toInt()) {
+        // Sentence boundary must fill at least 72% of candidateLimit to avoid premature page cutoffs
+        if (lastSentenceIdx >= (candidateLimit * 0.72f).toInt()) {
             val partA = text.substring(0, lastSentenceIdx).trimEnd()
             val partB = text.substring(lastSentenceIdx).trimStart()
             if (partA.isNotEmpty() && partB.isNotEmpty()) {
@@ -404,7 +411,7 @@ object PageCache {
             }
         }
 
-        // 2. Find clause boundary (; : — or comma) <= maxChars
+        // 2. Find clause boundary (; : — or comma) <= candidateLimit
         var lastClauseIdx = -1
         i = 0
         while (i < candidateLimit) {
@@ -420,8 +427,8 @@ object PageCache {
             i++
         }
 
-        // If clause fills at least 55% of maxChars, use it
-        if (lastClauseIdx >= (maxChars * 0.55f).toInt()) {
+        // Clause boundary must fill at least 78% of candidateLimit
+        if (lastClauseIdx >= (candidateLimit * 0.78f).toInt()) {
             val partA = text.substring(0, lastClauseIdx).trimEnd()
             val partB = text.substring(lastClauseIdx).trimStart()
             if (partA.isNotEmpty() && partB.isNotEmpty()) {
@@ -429,18 +436,9 @@ object PageCache {
             }
         }
 
-        // If we had a sentence boundary earlier (even if < 45%), prefer it over chopping words if > 25 chars
-        if (lastSentenceIdx >= 25) {
-            val partA = text.substring(0, lastSentenceIdx).trimEnd()
-            val partB = text.substring(lastSentenceIdx).trimStart()
-            if (partA.isNotEmpty() && partB.isNotEmpty()) {
-                return Pair(partA, partB)
-            }
-        }
-
-        // 3. Word boundary: last space before candidateLimit
+        // 3. Word boundary: last space before candidateLimit (fills > 50% to prevent blank page)
         val lastSpace = text.lastIndexOf(' ', candidateLimit)
-        if (lastSpace > 0) {
+        if (lastSpace > (candidateLimit * 0.50f).toInt()) {
             val partA = text.substring(0, lastSpace).trimEnd()
             val partB = text.substring(lastSpace).trimStart()
             if (partA.isNotEmpty() && partB.isNotEmpty()) {
