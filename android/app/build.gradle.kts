@@ -11,8 +11,8 @@ android {
         applicationId = "io.github.tasmirz.lumina"
         minSdk = 24
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.0.5-beta"
+        versionCode = 6
+        versionName = "0.0.6-beta"
     }
 
     buildTypes {
@@ -79,6 +79,7 @@ dependencies {
   // Local tests: jUnit, coroutines, Android runner
   testImplementation(libs.junit)
   testImplementation(libs.kotlinx.coroutines.test)
+  testImplementation("org.json:json:20240303")
 
   // Instrumented tests: jUnit rules and runners
   androidTestImplementation(libs.androidx.test.core)

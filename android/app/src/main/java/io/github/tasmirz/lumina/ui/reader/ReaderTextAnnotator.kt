@@ -88,40 +88,42 @@ fun buildHighlightedAnnotatedString(
         }
 
         matchingBookmarks.forEach { bm ->
-            val quote = bm.quote.trim()
-            if (quote.isNotEmpty()) {
-                if (text.contains(quote, ignoreCase = true)) {
-                    var searchIndex = 0
-                    while (searchIndex < text.length) {
-                        val idx = text.indexOf(quote, searchIndex, ignoreCase = true)
-                        if (idx == -1) break
-                        val end = (idx + quote.length).coerceAtMost(text.length)
-                        val bg = when (bm.color) {
-                            HighlightColor.GOLD -> Color(0x66F59E0B)
-                            HighlightColor.ROSE -> Color(0x66F43F5E)
-                            HighlightColor.SAGE -> Color(0x6610B981)
-                        }
-                        addStyle(
-                            SpanStyle(
-                                background = bg,
-                                textDecoration = if (bm.note.isNotBlank()) TextDecoration.Underline else TextDecoration.None
-                            ),
-                            start = idx,
-                            end = end
-                        )
-                        if (onBookmarkClick != null) {
-                            addLink(
-                                clickable = LinkAnnotation.Clickable(
-                                    tag = bm.id.toString(),
-                                    linkInteractionListener = {
-                                        onBookmarkClick(bm)
-                                    }
+            if (bm.isHighlight) {
+                val quote = bm.quote.trim()
+                if (quote.isNotEmpty()) {
+                    if (text.contains(quote, ignoreCase = true)) {
+                        var searchIndex = 0
+                        while (searchIndex < text.length) {
+                            val idx = text.indexOf(quote, searchIndex, ignoreCase = true)
+                            if (idx == -1) break
+                            val end = (idx + quote.length).coerceAtMost(text.length)
+                            val bg = when (bm.color) {
+                                HighlightColor.GOLD -> Color(0x66F59E0B)
+                                HighlightColor.ROSE -> Color(0x66F43F5E)
+                                HighlightColor.SAGE -> Color(0x6610B981)
+                            }
+                            addStyle(
+                                SpanStyle(
+                                    background = bg,
+                                    textDecoration = if (bm.note.isNotBlank()) TextDecoration.Underline else TextDecoration.None
                                 ),
                                 start = idx,
                                 end = end
                             )
+                            if (onBookmarkClick != null) {
+                                addLink(
+                                    clickable = LinkAnnotation.Clickable(
+                                        tag = bm.id.toString(),
+                                        linkInteractionListener = {
+                                            onBookmarkClick(bm)
+                                        }
+                                    ),
+                                    start = idx,
+                                    end = end
+                                )
+                            }
+                            searchIndex = end
                         }
-                        searchIndex = end
                     }
                 }
             }

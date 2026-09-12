@@ -433,7 +433,7 @@ class PageCacheTest {
             screenWidthDp = 360,
             screenHeightDp = 640
         )
-        assertTrue("Compact phone max lines in range 17..22", compactMetrics.maxLines in 17..22)
+        assertTrue("Compact phone max lines in range 17..22, got: ${compactMetrics.maxLines}", compactMetrics.maxLines in 17..22)
         assertTrue("Compact phone chars per line in range 40..48", compactMetrics.charsPerLine in 40..48)
 
         // Modern tall phone (392x828 dp)
@@ -442,7 +442,7 @@ class PageCacheTest {
             screenWidthDp = 392,
             screenHeightDp = 828
         )
-        assertTrue("Tall phone max lines in range 25..30", tallMetrics.maxLines in 25..30)
+        assertTrue("Tall phone max lines in range 25..30, got: ${tallMetrics.maxLines}", tallMetrics.maxLines in 25..30)
         assertTrue("Tall phone chars per line in range 46..54", tallMetrics.charsPerLine in 46..54)
 
         // Large 10-inch Tablet (800x1280 dp)
@@ -460,8 +460,33 @@ class PageCacheTest {
             screenWidthDp = 670,
             screenHeightDp = 800
         )
-        assertTrue("Foldable max lines in range 22..28", foldMetrics.maxLines in 22..28)
+        assertTrue("Foldable max lines in range 22..28, got: ${foldMetrics.maxLines}", foldMetrics.maxLines in 22..28)
         assertTrue("Foldable chars per line should be >= 75", foldMetrics.charsPerLine >= 75)
+    }
+
+    @Test
+    fun testSafeLinesToRemoveReducesMaxLines() {
+        val defaultMetrics = PageCache.calculateDeviceMetrics(
+            fontSize = 16,
+            screenWidthDp = 392,
+            screenHeightDp = 828,
+            safeLinesToRemove = 0
+        )
+        val safe2Metrics = PageCache.calculateDeviceMetrics(
+            fontSize = 16,
+            screenWidthDp = 392,
+            screenHeightDp = 828,
+            safeLinesToRemove = 2
+        )
+        assertEquals(defaultMetrics.maxLines - 2, safe2Metrics.maxLines)
+
+        val safe4Metrics = PageCache.calculateDeviceMetrics(
+            fontSize = 16,
+            screenWidthDp = 392,
+            screenHeightDp = 828,
+            safeLinesToRemove = 4
+        )
+        assertEquals(defaultMetrics.maxLines - 4, safe4Metrics.maxLines)
     }
 
     @Test

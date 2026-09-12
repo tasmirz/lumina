@@ -27,6 +27,8 @@ enum class ThemeFamily(val displayName: String) {
     FOREST("Serene Forest"),
     PARCHMENT("Parchment"),
     LINEN("Linen Canvas"),
+    HIGH_CONTRAST("High Contrast"),
+    COLORBLIND("Colorblind Safe"),
     CUSTOM("Custom")
 }
 
@@ -40,8 +42,23 @@ enum class BackgroundTexture(val displayName: String) {
     NONE("Clean"),
     GRAIN("Paper Grain"),
     PARCHMENT("Parchment"),
-    LINEN("Linen Canvas")
+    LINEN("Linen Weave"),
+    CANVAS("Artist Canvas"),
+    KRAFT("Kraft Fiber"),
+    RULED_FINE("Fine Lined"),
+    RULED_WIDE("Wide Lined"),
+    RULED_GRID("Grid Lined"),
+    CUSTOM("Custom")
 }
+
+data class CustomTextureData(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val name: String,
+    val imagePath: String,
+    val isTiled: Boolean = true,
+    val opacity: Float = 0.5f,
+    val createdAt: Long = System.currentTimeMillis()
+)
 
 enum class OrbActionItem(val displayName: String, val description: String) {
     READING_MODE("Scroll / Paged Mode", "Toggle between continuous scroll and page flip"),
@@ -75,7 +92,8 @@ enum class OrbColor(val displayName: String, val colorValue: Long) {
     AMBER("Amber", 0xFFD97706L),
     ROSE("Rose", 0xFFE11D48L),
     EMERALD("Emerald", 0xFF059669L),
-    INDIGO("Indigo", 0xFF4F46E5L)
+    INDIGO("Indigo", 0xFF4F46E5L),
+    CUSTOM("Custom", -1L)
 }
 
 enum class TextAlignmentMode(val displayName: String) {
@@ -94,6 +112,19 @@ enum class TypefaceMode(val displayName: String) {
     PALATINO("Palatino"),
     MERRIWEATHER("Merriweather"),
     ROUNDED("Soft Rounded")
+}
+
+fun TypefaceMode.toFontFamily(): androidx.compose.ui.text.font.FontFamily = when (this) {
+    TypefaceMode.SERIF -> androidx.compose.ui.text.font.FontFamily.Serif
+    TypefaceMode.SANS -> androidx.compose.ui.text.font.FontFamily.SansSerif
+    TypefaceMode.MONO -> androidx.compose.ui.text.font.FontFamily.Monospace
+    TypefaceMode.LITERARY -> androidx.compose.ui.text.font.FontFamily.Cursive
+    TypefaceMode.DYSLEXIC -> androidx.compose.ui.text.font.FontFamily.SansSerif
+    TypefaceMode.GEORGIA -> androidx.compose.ui.text.font.FontFamily.Serif
+    TypefaceMode.GARAMOND -> androidx.compose.ui.text.font.FontFamily.Serif
+    TypefaceMode.PALATINO -> androidx.compose.ui.text.font.FontFamily.Serif
+    TypefaceMode.MERRIWEATHER -> androidx.compose.ui.text.font.FontFamily.Serif
+    TypefaceMode.ROUNDED -> androidx.compose.ui.text.font.FontFamily.SansSerif
 }
 
 enum class GestureAction(val displayName: String) {
@@ -125,7 +156,9 @@ data class Bookmark(
     val color: HighlightColor = HighlightColor.GOLD,
     val note: String = "",
     val timestamp: String = "Just now",
-    val pageNumber: Int = 0
+    val pageNumber: Int = 0,
+    val isHighlight: Boolean = false,
+    val isLastRead: Boolean = false
 )
 
 @Immutable
@@ -224,6 +257,8 @@ data class ReaderSettings(
     val themeFamily: ThemeFamily = ThemeFamily.PAPER,
     val themeVariant: ThemeVariant = ThemeVariant.LIGHT,
     val backgroundTexture: BackgroundTexture = BackgroundTexture.NONE,
+    val selectedCustomTextureId: String = "",
+    val dynamicRollingTexture: Boolean = true,
     val customBgUri: String = "",
     val orbActionItems: Set<OrbActionItem> = OrbActionItem.entries.toSet(),
     val orbActionOrder: List<OrbActionItem> = OrbActionItem.entries.toList(),
@@ -235,9 +270,12 @@ data class ReaderSettings(
     val showFloatingAssistant: Boolean = true,
     val horizontalPadding: Int = 20,
     val verticalPadding: Int = 16,
+    val pagedSafeLinesToRemove: Int = 0,
+    val showStartupLoadingScreen: Boolean = false,
     val assistantOrbStyle: String = "EDGE_DOT",
     val spoilerShield: Boolean = true,
     val autoScrollSpeed: Float = 1.0f,
+    val localOnlyMode: Boolean = false,
     val disableAi: Boolean = false,
     val disableTts: Boolean = false,
     val disableStt: Boolean = false,
@@ -268,8 +306,20 @@ data class ReaderSettings(
     val orbLandscapeX: Float = -1f,
     val orbLandscapeY: Float = -1f,
     val orbColor: OrbColor = OrbColor.THEME,
+    val customOrbColor: Long = 0xFF4F46E5L,
     val orbOpacity: Float = 0.85f,
     val preferredLanguage: String = "auto",
-    val openLibraryApiKey: String = ""
+    val openLibraryApiKey: String = "",
+    val customEndpoints: List<CustomCatalogEndpoint> = emptyList()
+)
+
+data class CustomCatalogEndpoint(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val name: String,
+    val galleryUrl: String = "",
+    val searchUrl: String = "",
+    val apiKey: String = "",
+    val authHeader: String = "Authorization",
+    val isEnabled: Boolean = true
 )
 

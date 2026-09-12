@@ -86,6 +86,12 @@ class BookRepository private constructor(private val context: Context) {
     private val _customThemes = MutableStateFlow<List<CustomThemeData>>(emptyList())
     val customThemes: StateFlow<List<CustomThemeData>> = _customThemes.asStateFlow()
 
+    private val _customTextures = MutableStateFlow<List<CustomTextureData>>(emptyList())
+    val customTextures: StateFlow<List<CustomTextureData>> = _customTextures.asStateFlow()
+
+    private val _selectedCustomTextureId = MutableStateFlow(prefs.getString("selected_custom_texture_id", "") ?: "")
+    val selectedCustomTextureId: StateFlow<String> = _selectedCustomTextureId.asStateFlow()
+
     private val _isIndexingActive = MutableStateFlow(false)
     val isIndexingActive: StateFlow<Boolean> = _isIndexingActive.asStateFlow()
 
@@ -104,6 +110,18 @@ class BookRepository private constructor(private val context: Context) {
     private val _verticalPadding = MutableStateFlow(prefs.getInt("vertical_padding", 16))
     val verticalPadding: StateFlow<Int> = _verticalPadding.asStateFlow()
 
+    private val _pagedSafeLinesToRemove = MutableStateFlow(prefs.getInt("paged_safe_lines_to_remove", 0))
+    val pagedSafeLinesToRemove: StateFlow<Int> = _pagedSafeLinesToRemove.asStateFlow()
+
+    private val _showStartupLoadingScreen = MutableStateFlow(prefs.getBoolean("show_startup_loading_screen", false))
+    val showStartupLoadingScreen: StateFlow<Boolean> = _showStartupLoadingScreen.asStateFlow()
+
+    private val _isStartupInitialized = MutableStateFlow(false)
+    val isStartupInitialized: StateFlow<Boolean> = _isStartupInitialized.asStateFlow()
+
+    private val _startupStatusMessage = MutableStateFlow("Initializing Lumina library…")
+    val startupStatusMessage: StateFlow<String> = _startupStatusMessage.asStateFlow()
+
     private val _assistantOrbStyle = MutableStateFlow(prefs.getString("assistant_orb_style", "EDGE_DOT") ?: "EDGE_DOT")
     val assistantOrbStyle: StateFlow<String> = _assistantOrbStyle.asStateFlow()
 
@@ -112,6 +130,9 @@ class BookRepository private constructor(private val context: Context) {
 
     private val _autoScrollSpeed = MutableStateFlow(prefs.getFloat("auto_scroll_speed", 1.0f))
     val autoScrollSpeed: StateFlow<Float> = _autoScrollSpeed.asStateFlow()
+
+    private val _localOnlyMode = MutableStateFlow(prefs.getBoolean("local_only_mode", false))
+    val localOnlyMode: StateFlow<Boolean> = _localOnlyMode.asStateFlow()
 
     private val _disableAi = MutableStateFlow(prefs.getBoolean("disable_ai", false))
     val disableAi: StateFlow<Boolean> = _disableAi.asStateFlow()
@@ -207,6 +228,9 @@ class BookRepository private constructor(private val context: Context) {
     )
     val orbColor: StateFlow<OrbColor> = _orbColor.asStateFlow()
 
+    private val _customOrbColor = MutableStateFlow(prefs.getLong("custom_orb_color", 0xFF4F46E5L))
+    val customOrbColor: StateFlow<Long> = _customOrbColor.asStateFlow()
+
     private val _orbOpacity = MutableStateFlow(prefs.getFloat("orb_opacity", 0.85f))
     val orbOpacity: StateFlow<Float> = _orbOpacity.asStateFlow()
 
@@ -230,6 +254,9 @@ class BookRepository private constructor(private val context: Context) {
         } catch (_: Exception) { BackgroundTexture.NONE }
     )
     val backgroundTexture: StateFlow<BackgroundTexture> = _backgroundTexture.asStateFlow()
+
+    private val _dynamicRollingTexture = MutableStateFlow(prefs.getBoolean("dynamic_rolling_texture", true))
+    val dynamicRollingTexture: StateFlow<Boolean> = _dynamicRollingTexture.asStateFlow()
 
     private val _customBgUri = MutableStateFlow(prefs.getString("custom_bg_uri", "") ?: "")
     val customBgUri: StateFlow<String> = _customBgUri.asStateFlow()
@@ -282,6 +309,9 @@ class BookRepository private constructor(private val context: Context) {
         OnlineEpubService.openLibraryApiKey = it.value
     }
     val openLibraryApiKey: StateFlow<String> = _openLibraryApiKey.asStateFlow()
+
+    private val _customEndpoints = MutableStateFlow<List<CustomCatalogEndpoint>>(emptyList())
+    val customEndpoints: StateFlow<List<CustomCatalogEndpoint>> = _customEndpoints.asStateFlow()
 
     private val _aiProvider = MutableStateFlow(
         try {
@@ -352,6 +382,8 @@ class BookRepository private constructor(private val context: Context) {
             letterSpacing = prefs.getFloat("letter_spacing", 0.2f),
             horizontalPadding = prefs.getInt("horizontal_padding", 20),
             verticalPadding = prefs.getInt("vertical_padding", 16),
+            pagedSafeLinesToRemove = prefs.getInt("paged_safe_lines_to_remove", 0),
+            showStartupLoadingScreen = prefs.getBoolean("show_startup_loading_screen", false),
             showFloatingAssistant = prefs.getBoolean("show_floating_assistant", true),
             orbSize = try { OrbSize.valueOf(prefs.getString("orb_size", OrbSize.NANO.name) ?: OrbSize.NANO.name) } catch (_: Exception) { OrbSize.NANO },
             orbMenuSize = try { OrbMenuSize.valueOf(prefs.getString("orb_menu_size", OrbMenuSize.MEDIUM.name) ?: OrbMenuSize.MEDIUM.name) } catch (_: Exception) { OrbMenuSize.MEDIUM },
@@ -361,8 +393,11 @@ class BookRepository private constructor(private val context: Context) {
             orbLandscapeX = prefs.getFloat("orb_pos_x_landscape", -1f),
             orbLandscapeY = prefs.getFloat("orb_pos_y_landscape", -1f),
             orbColor = try { OrbColor.valueOf(prefs.getString("orb_color", OrbColor.THEME.name) ?: OrbColor.THEME.name) } catch (_: Exception) { OrbColor.THEME },
+            customOrbColor = prefs.getLong("custom_orb_color", 0xFF4F46E5L),
             orbOpacity = prefs.getFloat("orb_opacity", 0.85f),
             backgroundTexture = try { BackgroundTexture.valueOf(prefs.getString("background_texture", BackgroundTexture.NONE.name) ?: BackgroundTexture.NONE.name) } catch (_: Exception) { BackgroundTexture.NONE },
+            selectedCustomTextureId = prefs.getString("selected_custom_texture_id", "") ?: "",
+            dynamicRollingTexture = prefs.getBoolean("dynamic_rolling_texture", true),
             customBgUri = prefs.getString("custom_bg_uri", "") ?: "",
             customBgColor = prefs.getLong("custom_bg_color", 0xFF1C1917L),
             customTextColor = prefs.getLong("custom_text_color", 0xFFE7E5E4L),
@@ -383,6 +418,7 @@ class BookRepository private constructor(private val context: Context) {
                 savedList + OrbActionItem.entries.filter { it !in set }
             } ?: OrbActionItem.entries.toList(),
             autoScrollSpeed = prefs.getFloat("auto_scroll_speed", 1.0f),
+            localOnlyMode = prefs.getBoolean("local_only_mode", false),
             disableAi = prefs.getBoolean("disable_ai", false),
             disableTts = prefs.getBoolean("disable_tts", false),
             ttsEngine = prefs.getString("tts_engine", "EDGE_NEURAL") ?: "EDGE_NEURAL",
@@ -501,11 +537,13 @@ class BookRepository private constructor(private val context: Context) {
     init {
         repoScope.launch(Dispatchers.IO) {
             val startMs = System.currentTimeMillis()
+            _startupStatusMessage.value = "Reading library database…"
             var loadedBooks = loadAllBooks()
             // If books are empty (fresh install / reinstall), restore from persistent backup on SD card / home storage
             if (loadedBooks.isEmpty()) {
                 val backupFile = LuminaStorageManager.getPersistentBackupFile(context)
                 if (backupFile.exists() && backupFile.length() > 0L) {
+                    _startupStatusMessage.value = "Restoring library from backup…"
                     val restored = dbHelper.restoreStateFromPersistentFile(backupFile)
                     if (restored) {
                         loadedBooks = loadAllBooks()
@@ -513,33 +551,86 @@ class BookRepository private constructor(private val context: Context) {
                 }
             }
 
+            _startupStatusMessage.value = "Loading bookmarks & themes…"
             val loadedBookmarks = loadPersistedBookmarks()
             val loadedWishlist = try { dbHelper.getAllWishlist() } catch (_: Exception) { emptyList() }
             val loadedCompleted = try { dbHelper.getAllCompletedBookIds() } catch (_: Exception) { emptySet() }
             val loadedThemes = try { dbHelper.getAllCustomThemes() } catch (_: Exception) { emptyList() }
+            val loadedTextures = try { dbHelper.getAllCustomTextures() } catch (_: Exception) { emptyList() }
+            val loadedEndpoints = try { dbHelper.getAllCustomEndpoints() } catch (_: Exception) { emptyList() }
 
             _books.value = loadedBooks
             _bookmarks.value = loadedBookmarks
             _wishlistBooks.value = loadedWishlist
             _completedBookIds.value = loadedCompleted
             _customThemes.value = loadedThemes
-            io.github.tasmirz.lumina.util.LuminaLog.perf("BookRepository.init", System.currentTimeMillis() - startMs, "Loaded ${loadedBooks.size} books, ${loadedBookmarks.size} bookmarks")
+            _customTextures.value = loadedTextures
+            _customEndpoints.value = loadedEndpoints
+            OnlineEpubService.customEndpoints = loadedEndpoints
+            io.github.tasmirz.lumina.util.LuminaLog.perf("BookRepository.init", System.currentTimeMillis() - startMs, "Loaded ${loadedBooks.size} books, ${loadedBookmarks.size} bookmarks, ${loadedTextures.size} custom textures, ${loadedEndpoints.size} custom endpoints")
+
+            // Pre-warm active book chapters in memory cache so Reader opens instantly without disk stall
+            val activeId = prefs.getString("active_book_id", "") ?: ""
+            val active = loadedBooks.find { it.id == activeId } ?: loadedBooks.firstOrNull()
+            if (active != null) {
+                _startupStatusMessage.value = "Warming up chapters for \"${active.title}\"…"
+                val chapters = getChaptersForBook(active.id)
+                val currentSettings = _readerSettings.value
+                // For Paged mode, precompute asynchronously in background without blocking startup initialization.
+                // For Scroll mode, page cache is not used by ContinuousReaderLayout, so zero computation is needed.
+                if (chapters.isNotEmpty() && currentSettings.readingMode != ReadingMode.SCROLL) {
+                    val config = context.resources?.configuration
+                    val sw = config?.screenWidthDp ?: 392
+                    val sh = config?.screenHeightDp ?: 820
+                    val isLand = config?.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+                    launch(Dispatchers.Default) {
+                        PageCache.getOrComputeAsync(
+                            bookId = active.id,
+                            chapters = chapters,
+                            fontSize = currentSettings.fontSize,
+                            isLandscape = isLand,
+                            isStrictPaged = currentSettings.readingMode == ReadingMode.PAGED,
+                            screenWidthDp = sw,
+                            screenHeightDp = sh,
+                            horizontalPaddingDp = currentSettings.horizontalPadding,
+                            verticalPaddingDp = currentSettings.verticalPadding,
+                            lineHeightMultiplier = currentSettings.lineHeightMultiplier,
+                            paragraphSpacingMultiplier = currentSettings.paragraphSpacingMultiplier,
+                            safeLinesToRemove = currentSettings.pagedSafeLinesToRemove,
+                            dbHelper = dbHelper,
+                            context = context
+                        )
+                    }
+                }
+            }
+
+            _startupStatusMessage.value = "Ready"
+            _isStartupInitialized.value = true
 
             try {
                 syncSettings()
             } catch (_: Exception) {}
 
-            // Background compression pass on legacy / uncompressed cover files to reclaim storage
-            try {
-                val coversDir = File(context.filesDir, "covers")
-                if (coversDir.exists() && coversDir.isDirectory) {
-                    coversDir.listFiles()?.forEach { file ->
-                        if (file.isFile && file.length() > 120 * 1024L) {
-                            EpubParser.compressExistingCoverFile(file, maxDimension = 640, quality = 82)
+            // Background database maintenance: compact database if oversized due to previous cache churn
+            launch(Dispatchers.IO) {
+                delay(3000)
+                dbHelper.compactDatabaseIfNeeded()
+            }
+
+            // Defer background cover compression pass by 4 seconds so startup stays instantaneous
+            launch(Dispatchers.IO) {
+                delay(4000)
+                try {
+                    val coversDir = File(context.filesDir, "covers")
+                    if (coversDir.exists() && coversDir.isDirectory) {
+                        coversDir.listFiles()?.forEach { file ->
+                            if (file.isFile && file.length() > 120 * 1024L) {
+                                EpubParser.compressExistingCoverFile(file, maxDimension = 640, quality = 82)
+                            }
                         }
                     }
-                }
-            } catch (_: Exception) {}
+                } catch (_: Exception) {}
+            }
 
             // Only if library is completely empty (e.g. fresh install with no backup),
             // do a one-time initial scan of persistent directories
@@ -611,6 +702,23 @@ class BookRepository private constructor(private val context: Context) {
         persistSettingToDb("vertical_padding", padding.toString())
     }
 
+    fun updatePagedSafeLinesToRemove(lines: Int) {
+        val clamped = lines.coerceIn(0, 10)
+        _pagedSafeLinesToRemove.value = clamped
+        updateReaderSettings { it.copy(pagedSafeLinesToRemove = clamped) }
+        prefs.edit().putInt("paged_safe_lines_to_remove", clamped).apply()
+        persistSettingToDb("paged_safe_lines_to_remove", clamped.toString())
+    }
+
+    fun setPagedSafeLinesToRemove(lines: Int) = updatePagedSafeLinesToRemove(lines)
+
+    fun setShowStartupLoadingScreen(enabled: Boolean) {
+        _showStartupLoadingScreen.value = enabled
+        updateReaderSettings { it.copy(showStartupLoadingScreen = enabled) }
+        prefs.edit().putBoolean("show_startup_loading_screen", enabled).apply()
+        persistSettingToDb("show_startup_loading_screen", enabled.toString())
+    }
+
     fun setAssistantOrbStyle(style: String) {
         _assistantOrbStyle.value = style
         updateReaderSettings { it.copy(assistantOrbStyle = style) }
@@ -672,6 +780,27 @@ class BookRepository private constructor(private val context: Context) {
         persistSettingToDb("tts_pitch", pitch.toString())
     }
 
+    fun setLocalOnlyMode(enabled: Boolean) {
+        _localOnlyMode.value = enabled
+        if (enabled) {
+            _disableAi.value = true
+            _ttsEngine.value = "SYSTEM"
+            prefs.edit()
+                .putBoolean("local_only_mode", true)
+                .putBoolean("disable_ai", true)
+                .putString("tts_engine", "SYSTEM")
+                .apply()
+            updateReaderSettings { it.copy(localOnlyMode = true, disableAi = true, ttsEngine = "SYSTEM") }
+            persistSettingToDb("local_only_mode", "true")
+            persistSettingToDb("disable_ai", "true")
+            persistSettingToDb("tts_engine", "SYSTEM")
+        } else {
+            prefs.edit().putBoolean("local_only_mode", false).apply()
+            updateReaderSettings { it.copy(localOnlyMode = false) }
+            persistSettingToDb("local_only_mode", "false")
+        }
+    }
+
     fun setDisableAi(disabled: Boolean) {
         _disableAi.value = disabled
         updateReaderSettings { it.copy(disableAi = disabled) }
@@ -711,6 +840,8 @@ class BookRepository private constructor(private val context: Context) {
         settings.put("text_alignment_mode", _textAlignmentMode.value.name)
         settings.put("horizontal_padding", _horizontalPadding.value)
         settings.put("vertical_padding", _verticalPadding.value)
+        settings.put("paged_safe_lines_to_remove", _pagedSafeLinesToRemove.value)
+        settings.put("show_startup_loading_screen", _showStartupLoadingScreen.value)
         settings.put("assistant_orb_style", _assistantOrbStyle.value)
         settings.put("spoiler_shield", _spoilerShield.value)
         settings.put("auto_scroll_speed", _autoScrollSpeed.value.toDouble())
@@ -722,10 +853,26 @@ class BookRepository private constructor(private val context: Context) {
         settings.put("gemini_api_key", _geminiApiKey.value)
         settings.put("open_library_api_key", _openLibraryApiKey.value)
         settings.put("background_texture", _backgroundTexture.value.name)
+        settings.put("selected_custom_texture_id", _selectedCustomTextureId.value)
+        settings.put("dynamic_rolling_texture", _dynamicRollingTexture.value)
         settings.put("custom_bg_uri", _customBgUri.value)
         settings.put("custom_bg_color", _customBgColor.value)
         settings.put("custom_text_color", _customTextColor.value)
         settings.put("custom_accent_color", _customAccentColor.value)
+        settings.put("orb_color", _orbColor.value.name)
+        settings.put("custom_orb_color", _customOrbColor.value)
+        val delIds = prefs.getStringSet("deleted_book_ids", emptySet()) ?: emptySet()
+        val delTitles = prefs.getStringSet("deleted_book_titles", emptySet()) ?: emptySet()
+        val delPaths = prefs.getStringSet("deleted_book_paths", emptySet()) ?: emptySet()
+        val delIdsArr = JSONArray()
+        delIds.forEach { delIdsArr.put(it) }
+        settings.put("deleted_book_ids", delIdsArr)
+        val delTitlesArr = JSONArray()
+        delTitles.forEach { delTitlesArr.put(it) }
+        settings.put("deleted_book_titles", delTitlesArr)
+        val delPathsArr = JSONArray()
+        delPaths.forEach { delPathsArr.put(it) }
+        settings.put("deleted_book_paths", delPathsArr)
         root.put("settings", settings)
 
         // 2. Reading progress of books
@@ -818,6 +965,8 @@ class BookRepository private constructor(private val context: Context) {
                 }
                 if (s.has("horizontal_padding")) setHorizontalPadding(s.getInt("horizontal_padding"))
                 if (s.has("vertical_padding")) setVerticalPadding(s.getInt("vertical_padding"))
+                if (s.has("paged_safe_lines_to_remove")) setPagedSafeLinesToRemove(s.getInt("paged_safe_lines_to_remove"))
+                if (s.has("show_startup_loading_screen")) setShowStartupLoadingScreen(s.getBoolean("show_startup_loading_screen"))
                 if (s.has("assistant_orb_style")) setAssistantOrbStyle(s.getString("assistant_orb_style"))
                 if (s.has("spoiler_shield")) setSpoilerShield(s.getBoolean("spoiler_shield"))
                 if (s.has("auto_scroll_speed")) setAutoScrollSpeed(s.getDouble("auto_scroll_speed").toFloat())
@@ -833,9 +982,37 @@ class BookRepository private constructor(private val context: Context) {
                 if (s.has("background_texture")) {
                     try { setBackgroundTexture(BackgroundTexture.valueOf(s.getString("background_texture"))) } catch (_: Exception) {}
                 }
+                if (s.has("selected_custom_texture_id")) {
+                    val texId = s.getString("selected_custom_texture_id")
+                    _selectedCustomTextureId.value = texId
+                    prefs.edit().putString("selected_custom_texture_id", texId).apply()
+                    persistSettingToDb("selected_custom_texture_id", texId)
+                }
                 if (s.has("custom_bg_uri")) setCustomBgUri(s.getString("custom_bg_uri"))
                 if (s.has("custom_bg_color") && s.has("custom_text_color") && s.has("custom_accent_color")) {
                     setCustomThemeColors(s.getLong("custom_bg_color"), s.getLong("custom_text_color"), s.getLong("custom_accent_color"))
+                }
+                if (s.has("custom_orb_color")) {
+                    setCustomOrbColor(s.getLong("custom_orb_color"))
+                }
+                if (s.has("orb_color")) {
+                    try { setOrbColor(OrbColor.valueOf(s.getString("orb_color"))) } catch (_: Exception) {}
+                }
+                if (s.has("deleted_book_ids")) {
+                    val arr = s.getJSONArray("deleted_book_ids")
+                    val set = mutableSetOf<String>()
+                    for (i in 0 until arr.length()) set.add(arr.getString(i))
+                    val current = prefs.getStringSet("deleted_book_ids", emptySet()) ?: emptySet()
+                    prefs.edit().putStringSet("deleted_book_ids", current + set).apply()
+                    persistSettingToDb("deleted_book_ids", (current + set).joinToString(","))
+                }
+                if (s.has("deleted_book_titles")) {
+                    val arr = s.getJSONArray("deleted_book_titles")
+                    val set = mutableSetOf<String>()
+                    for (i in 0 until arr.length()) set.add(arr.getString(i))
+                    val current = prefs.getStringSet("deleted_book_titles", emptySet()) ?: emptySet()
+                    prefs.edit().putStringSet("deleted_book_titles", current + set).apply()
+                    persistSettingToDb("deleted_book_titles", (current + set).joinToString(","))
                 }
             }
 
@@ -999,6 +1176,78 @@ class BookRepository private constructor(private val context: Context) {
     fun deleteCustomTheme(themeId: String) {
         dbHelper.deleteCustomTheme(themeId)
         _customThemes.value = dbHelper.getAllCustomThemes()
+    }
+
+    // --- Custom Texture Functions ---
+
+    fun importCustomTexture(name: String, sourceUri: Uri, isTiled: Boolean = true, opacity: Float = 0.5f): CustomTextureData? {
+        return try {
+            val textureId = java.util.UUID.randomUUID().toString()
+            val texturesDir = File(context.filesDir, "textures").apply { if (!exists()) mkdirs() }
+            val targetFile = File(texturesDir, "$textureId.png")
+
+            context.contentResolver.openInputStream(sourceUri)?.use { input ->
+                targetFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            } ?: return null
+
+            val texture = CustomTextureData(
+                id = textureId,
+                name = name.ifBlank { "Texture ${_customTextures.value.size + 1}" },
+                imagePath = targetFile.absolutePath,
+                isTiled = isTiled,
+                opacity = opacity.coerceIn(0.05f, 1.0f),
+                createdAt = System.currentTimeMillis()
+            )
+            dbHelper.saveCustomTexture(texture)
+            _customTextures.value = dbHelper.getAllCustomTextures()
+            selectCustomTexture(texture.id)
+            texture
+        } catch (e: Exception) {
+            io.github.tasmirz.lumina.util.LuminaLog.w("BookRepository", "importCustomTexture error", e)
+            null
+        }
+    }
+
+    fun selectCustomTexture(textureId: String) {
+        _selectedCustomTextureId.value = textureId
+        _backgroundTexture.value = BackgroundTexture.CUSTOM
+        updateReaderSettings { it.copy(backgroundTexture = BackgroundTexture.CUSTOM, selectedCustomTextureId = textureId) }
+        prefs.edit()
+            .putString("background_texture", BackgroundTexture.CUSTOM.name)
+            .putString("selected_custom_texture_id", textureId)
+            .apply()
+        persistSettingToDb("background_texture", BackgroundTexture.CUSTOM.name)
+        persistSettingToDb("selected_custom_texture_id", textureId)
+    }
+
+    fun renameCustomTexture(textureId: String, newName: String) {
+        dbHelper.updateCustomTextureName(textureId, newName)
+        _customTextures.value = dbHelper.getAllCustomTextures()
+    }
+
+    fun deleteCustomTexture(textureId: String) {
+        val existing = _customTextures.value.find { it.id == textureId }
+        existing?.imagePath?.let { path ->
+            try {
+                val f = File(path)
+                if (f.exists()) f.delete()
+            } catch (_: Exception) {}
+        }
+        dbHelper.deleteCustomTexture(textureId)
+        _customTextures.value = dbHelper.getAllCustomTextures()
+        if (_selectedCustomTextureId.value == textureId) {
+            val fallback = _customTextures.value.firstOrNull()
+            if (fallback != null) {
+                selectCustomTexture(fallback.id)
+            } else {
+                setBackgroundTexture(BackgroundTexture.NONE)
+                _selectedCustomTextureId.value = ""
+                prefs.edit().putString("selected_custom_texture_id", "").apply()
+                persistSettingToDb("selected_custom_texture_id", "")
+            }
+        }
     }
 
     fun searchScenes(bookId: String, query: String): List<SceneMatch> {
@@ -1431,6 +1680,13 @@ class BookRepository private constructor(private val context: Context) {
         persistSettingToDb("background_texture", texture.name)
     }
 
+    fun setDynamicRollingTexture(enabled: Boolean) {
+        _dynamicRollingTexture.value = enabled
+        updateReaderSettings { it.copy(dynamicRollingTexture = enabled) }
+        prefs.edit().putBoolean("dynamic_rolling_texture", enabled).apply()
+        persistSettingToDb("dynamic_rolling_texture", enabled.toString())
+    }
+
     fun setCustomBgUri(uri: String) {
         _customBgUri.value = uri
         updateReaderSettings { it.copy(customBgUri = uri) }
@@ -1543,6 +1799,15 @@ class BookRepository private constructor(private val context: Context) {
         persistSettingToDb("orb_color", color.name)
     }
 
+    fun setCustomOrbColor(color: Long) {
+        _customOrbColor.value = color
+        _orbColor.value = OrbColor.CUSTOM
+        updateReaderSettings { it.copy(customOrbColor = color, orbColor = OrbColor.CUSTOM) }
+        prefs.edit().putLong("custom_orb_color", color).putString("orb_color", OrbColor.CUSTOM.name).apply()
+        persistSettingToDb("custom_orb_color", color.toString())
+        persistSettingToDb("orb_color", OrbColor.CUSTOM.name)
+    }
+
     fun setOrbOpacity(opacity: Float) {
         _orbOpacity.value = opacity
         updateReaderSettings { it.copy(orbOpacity = opacity) }
@@ -1565,6 +1830,38 @@ class BookRepository private constructor(private val context: Context) {
         persistSettingToDb("open_library_api_key", key)
     }
 
+    // --- Custom Catalog Endpoints ---
+
+    fun addCustomEndpoint(endpoint: CustomCatalogEndpoint) {
+        dbHelper.insertCustomEndpoint(endpoint)
+        val updated = dbHelper.getAllCustomEndpoints()
+        _customEndpoints.value = updated
+        OnlineEpubService.customEndpoints = updated
+        updateReaderSettings { it.copy(customEndpoints = updated) }
+    }
+
+    fun updateCustomEndpoint(endpoint: CustomCatalogEndpoint) {
+        dbHelper.insertCustomEndpoint(endpoint)
+        val updated = dbHelper.getAllCustomEndpoints()
+        _customEndpoints.value = updated
+        OnlineEpubService.customEndpoints = updated
+        updateReaderSettings { it.copy(customEndpoints = updated) }
+    }
+
+    fun deleteCustomEndpoint(endpointId: String) {
+        dbHelper.deleteCustomEndpoint(endpointId)
+        val updated = dbHelper.getAllCustomEndpoints()
+        _customEndpoints.value = updated
+        OnlineEpubService.customEndpoints = updated
+        updateReaderSettings { it.copy(customEndpoints = updated) }
+    }
+
+    fun toggleCustomEndpoint(endpointId: String, isEnabled: Boolean) {
+        val current = _customEndpoints.value.find { it.id == endpointId } ?: return
+        val updatedEndpoint = current.copy(isEnabled = isEnabled)
+        updateCustomEndpoint(updatedEndpoint)
+    }
+
     fun setLastTab(tab: String) {
         prefs.edit().putString("last_screen_tab", tab).apply()
     }
@@ -1578,11 +1875,18 @@ class BookRepository private constructor(private val context: Context) {
         color: HighlightColor = HighlightColor.GOLD,
         note: String = "",
         chapterTitle: String? = null,
-        pageNumber: Int = 0
+        pageNumber: Int = 0,
+        isHighlight: Boolean = false,
+        isLastRead: Boolean = false
     ) {
         val book = getActiveBook() ?: return
         val chapter = chapterTitle?.ifBlank { null } ?: book.chapters.getOrNull(book.currentChapter)?.title ?: "Chapter"
         val actualPage = if (pageNumber > 0) pageNumber else (book.currentPage + 1)
+        val existingWithoutLastRead = if (isLastRead) {
+            _bookmarks.value.filterNot { it.bookTitle == book.title && it.isLastRead }
+        } else {
+            _bookmarks.value
+        }
         val mark = Bookmark(
             bookTitle = book.title,
             chapter = chapter,
@@ -1590,9 +1894,38 @@ class BookRepository private constructor(private val context: Context) {
             color = color,
             note = note.trim(),
             timestamp = "Just now",
-            pageNumber = actualPage
+            pageNumber = actualPage,
+            isHighlight = isHighlight,
+            isLastRead = isLastRead
         )
-        val updated = listOf(mark) + _bookmarks.value
+        val updated = listOf(mark) + existingWithoutLastRead
+        _bookmarks.value = updated
+        dbHelper.insertBookmark(mark)
+        saveBookmarks(updated)
+    }
+
+    fun updateLastReadBookmark(
+        bookId: String,
+        chapterTitle: String,
+        pageNumber: Int,
+        paragraphSnippet: String
+    ) {
+        val book = _books.value.find { it.id == bookId } ?: return
+        val existingWithout = _bookmarks.value.filterNot { it.bookTitle == book.title && it.isLastRead }
+        val deterministicId = (book.id.hashCode().toLong() and 0x7FFFFFFF) + 8888000000L
+        val mark = Bookmark(
+            id = deterministicId,
+            bookTitle = book.title,
+            chapter = chapterTitle,
+            quote = paragraphSnippet.ifBlank { if (pageNumber > 0) "Page $pageNumber" else chapterTitle },
+            color = HighlightColor.GOLD,
+            note = "Last Read Position",
+            timestamp = "Auto-saved",
+            pageNumber = pageNumber,
+            isHighlight = false,
+            isLastRead = true
+        )
+        val updated = listOf(mark) + existingWithout
         _bookmarks.value = updated
         dbHelper.insertBookmark(mark)
         saveBookmarks(updated)
@@ -1763,21 +2096,99 @@ class BookRepository private constructor(private val context: Context) {
         context.startActivity(shareIntent)
     }
 
+    fun isDuplicateBook(b1: Book, b2: Book): Boolean {
+        if (b1.id == b2.id) return true
+        if (b1.filePath.isNotBlank() && b2.filePath.isNotBlank()) {
+            val p1 = try { File(b1.filePath).canonicalPath } catch (_: Exception) { b1.filePath }
+            val p2 = try { File(b2.filePath).canonicalPath } catch (_: Exception) { b2.filePath }
+            if (p1 == p2) return true
+        }
+        val t1 = b1.title.trim().lowercase().replace("&", "and").replace(Regex("[^a-z0-9]"), "")
+        val t2 = b2.title.trim().lowercase().replace("&", "and").replace(Regex("[^a-z0-9]"), "")
+        if (t1.isNotBlank() && t1 == t2) {
+            val a1 = b1.author.trim().lowercase().replace("&", "and").replace(Regex("[^a-z0-9]"), "")
+            val a2 = b2.author.trim().lowercase().replace("&", "and").replace(Regex("[^a-z0-9]"), "")
+            val a1Generic = a1.isBlank() || a1 == "unknown" || a1 == "unknownauthor"
+            val a2Generic = a2.isBlank() || a2 == "unknown" || a2 == "unknownauthor"
+            if (a1Generic || a2Generic || a1 == a2) {
+                return true
+            }
+        }
+        return false
+    }
+
     fun addBook(book: Book) {
         // Undelete if previously deleted
-        val currentDeleted = prefs.getStringSet("deleted_book_ids", emptySet())?.toMutableSet() ?: mutableSetOf()
-        if (currentDeleted.contains(book.id)) {
-            currentDeleted.remove(book.id)
-            prefs.edit().putStringSet("deleted_book_ids", currentDeleted).apply()
+        val currentDeletedIds = prefs.getStringSet("deleted_book_ids", emptySet())?.toMutableSet() ?: mutableSetOf()
+        currentDeletedIds.remove(book.id)
+        prefs.edit().putStringSet("deleted_book_ids", currentDeletedIds).apply()
+
+        val normTitle = book.title.trim().lowercase()
+        if (normTitle.isNotBlank()) {
+            val currentDeletedTitles = prefs.getStringSet("deleted_book_titles", emptySet())?.toMutableSet() ?: mutableSetOf()
+            currentDeletedTitles.remove(normTitle)
+            prefs.edit().putStringSet("deleted_book_titles", currentDeletedTitles).apply()
         }
 
-        val updated = listOf(book) + _books.value.filterNot { it.id == book.id }
-        _books.value = updated
-        if (book.chapters.isNotEmpty()) {
-            chapterCache.put(book.id, book.chapters)
+        if (book.filePath.isNotBlank()) {
+            val currentDeletedPaths = prefs.getStringSet("deleted_book_paths", emptySet())?.toMutableSet() ?: mutableSetOf()
+            currentDeletedPaths.remove(book.filePath)
+            try { currentDeletedPaths.remove(File(book.filePath).canonicalPath) } catch (_: Exception) {}
+            prefs.edit().putStringSet("deleted_book_paths", currentDeletedPaths).apply()
         }
-        setActiveBook(book.id)
-        dbHelper.insertOrUpdateBook(book, book.filePath, book.isDownloaded, book.downloadUrl, book.fileSize)
+
+        // Check for existing duplicate book in memory or DB
+        val existing = _books.value.find { isDuplicateBook(it, book) }
+            ?: dbHelper.getAllBooks().find { isDuplicateBook(it, book) }
+
+        val finalBook = if (existing != null) {
+            // Merge into single book: preserve reading progress & bookmarks if existing had them
+            val mergedProgress = if (existing.progress > 0 && book.progress == 0) existing.progress else book.progress
+            val mergedChapter = if (existing.currentChapter > 0 && book.currentChapter == 0) existing.currentChapter else book.currentChapter
+            val mergedPage = if (existing.currentPage > 0 && book.currentPage == 0) existing.currentPage else book.currentPage
+            val mergedScroll = if (existing.scrollPos > 0 && book.scrollPos == 0) existing.scrollPos else book.scrollPos
+            val mergedLastRead = if (existing.lastRead != "Never read" && existing.lastRead != "Just now" && book.lastRead == "Just now") existing.lastRead else book.lastRead
+            val mergedPath = if (book.filePath.isNotBlank() && File(book.filePath).exists()) book.filePath else existing.filePath
+            val mergedSize = if (book.fileSize > 0L) book.fileSize else existing.fileSize
+            val mergedChapters = if (book.chapters.isNotEmpty()) book.chapters else existing.chapters
+            val mergedCover = if (book.coverUrl.isNotBlank() && !book.coverUrl.startsWith("http")) book.coverUrl else (existing.coverUrl.ifBlank { book.coverUrl })
+
+            // Clean up old duplicate DB record if IDs differed
+            if (existing.id != book.id) {
+                dbHelper.deleteBook(existing.id)
+                chapterCache.remove(existing.id)
+            }
+
+            book.copy(
+                id = book.id,
+                progress = mergedProgress,
+                currentChapter = mergedChapter,
+                currentPage = mergedPage,
+                scrollPos = mergedScroll,
+                lastRead = mergedLastRead,
+                filePath = mergedPath,
+                fileSize = mergedSize,
+                chapters = mergedChapters,
+                coverUrl = mergedCover
+            )
+        } else {
+            book
+        }
+
+        // Atomically replace all duplicate variants in memory with the single merged book
+        val updated = listOf(finalBook) + _books.value.filterNot { isDuplicateBook(it, finalBook) }
+        _books.value = updated
+        if (finalBook.chapters.isNotEmpty()) {
+            chapterCache.put(finalBook.id, finalBook.chapters)
+        }
+        setActiveBook(finalBook.id)
+        dbHelper.insertOrUpdateBook(finalBook, finalBook.filePath, finalBook.isDownloaded, finalBook.downloadUrl, finalBook.fileSize)
+
+        // Update persistent backup
+        try {
+            val backupFile = LuminaStorageManager.getPersistentBackupFile(context)
+            dbHelper.backupStateToPersistentFile(backupFile)
+        } catch (_: Exception) {}
     }
 
     suspend fun importEpubFromUri(uri: Uri): Book? = withContext(Dispatchers.IO) {
@@ -1801,25 +2212,50 @@ class BookRepository private constructor(private val context: Context) {
             } else {
                 "${fileName ?: "Imported"}.epub"
             }
-            val epubDir = LuminaStorageManager.getPersistentEpubDirectory(context)
-            val destFile = File(epubDir, "${System.currentTimeMillis()}_$cleanName")
 
+            // Copy to temporary cache file first to parse and check duplicate before committing to persistent storage
+            val tempFile = File(context.cacheDir, "temp_import_${System.currentTimeMillis()}.epub")
             context.contentResolver.openInputStream(uri)?.use { input ->
-                destFile.outputStream().use { output ->
+                tempFile.outputStream().use { output ->
                     input.copyTo(output)
                 }
             } ?: return@withContext null
 
-            destFile.inputStream().use { stream ->
-                val parsedBook = EpubParser.parseEpub(stream, cleanName, context)
-                val bookToSave = parsedBook.copy(
-                    filePath = destFile.absolutePath,
-                    fileSize = destFile.length(),
-                    isDownloaded = false
-                )
-                addBook(bookToSave)
-                bookToSave
+            if (tempFile.length() == 0L) {
+                tempFile.delete()
+                return@withContext null
             }
+
+            val parsedBook = tempFile.inputStream().use { stream ->
+                EpubParser.parseEpub(stream, cleanName, context)
+            }
+
+            // Check if book already exists in library
+            val existing = _books.value.find { isDuplicateBook(it, parsedBook) }
+                ?: dbHelper.getAllBooks().find { isDuplicateBook(it, parsedBook) }
+
+            if (existing != null && existing.filePath.isNotBlank() && File(existing.filePath).exists()) {
+                // Book is already present in library with a valid file - do not duplicate!
+                tempFile.delete()
+                withContext(Dispatchers.Main) {
+                    setActiveBook(existing.id)
+                }
+                return@withContext existing
+            }
+
+            // Move temp file to persistent EPUB directory
+            val epubDir = LuminaStorageManager.getPersistentEpubDirectory(context)
+            val destFile = File(epubDir, "${System.currentTimeMillis()}_$cleanName")
+            tempFile.copyTo(destFile, overwrite = true)
+            tempFile.delete()
+
+            val bookToSave = parsedBook.copy(
+                filePath = destFile.absolutePath,
+                fileSize = destFile.length(),
+                isDownloaded = false
+            )
+            addBook(bookToSave)
+            bookToSave
         } catch (e: Exception) {
             e.printStackTrace()
             null
@@ -1829,14 +2265,98 @@ class BookRepository private constructor(private val context: Context) {
     fun removeBook(bookId: String) {
         chapterCache.remove(bookId)
         PageCache.invalidate(bookId, dbHelper)
-        val currentDeleted = prefs.getStringSet("deleted_book_ids", emptySet())?.toMutableSet() ?: mutableSetOf()
-        currentDeleted.add(bookId)
-        prefs.edit().putStringSet("deleted_book_ids", currentDeleted).apply()
 
-        val updated = _books.value.filterNot { it.id == bookId }
+        // Find target book before removing from memory
+        val targetBook = _books.value.find { it.id == bookId } ?: dbHelper.getAllBooks().find { it.id == bookId }
+        val targetTitle = targetBook?.title?.trim()?.lowercase() ?: ""
+        val targetAuthor = targetBook?.author?.trim()?.lowercase() ?: ""
+        val targetFilePath = targetBook?.filePath ?: ""
+        val targetFileName = targetFilePath.substringAfterLast('/')
+
+        // 1. Record persistently in deleted sets so auto-scan will NEVER re-import it
+        val currentDeletedIds = prefs.getStringSet("deleted_book_ids", emptySet())?.toMutableSet() ?: mutableSetOf()
+        currentDeletedIds.add(bookId)
+        if (targetBook != null) {
+            currentDeletedIds.add(targetBook.id)
+            if (targetFileName.isNotBlank()) {
+                currentDeletedIds.add(targetFileName.removeSuffix(".epub"))
+                currentDeletedIds.add(targetFileName)
+            }
+        }
+        prefs.edit().putStringSet("deleted_book_ids", currentDeletedIds).apply()
+        persistSettingToDb("deleted_book_ids", currentDeletedIds.joinToString(","))
+
+        val currentDeletedTitles = prefs.getStringSet("deleted_book_titles", emptySet())?.toMutableSet() ?: mutableSetOf()
+        if (targetTitle.isNotBlank()) {
+            currentDeletedTitles.add(targetTitle)
+            val normT = targetTitle.replace(Regex("[^a-z0-9]"), "")
+            if (normT.isNotBlank()) currentDeletedTitles.add(normT)
+            prefs.edit().putStringSet("deleted_book_titles", currentDeletedTitles).apply()
+            persistSettingToDb("deleted_book_titles", currentDeletedTitles.joinToString(","))
+        }
+
+        val currentDeletedPaths = prefs.getStringSet("deleted_book_paths", emptySet())?.toMutableSet() ?: mutableSetOf()
+        if (targetFilePath.isNotBlank()) {
+            currentDeletedPaths.add(targetFilePath)
+            try { currentDeletedPaths.add(File(targetFilePath).canonicalPath) } catch (_: Exception) {}
+            prefs.edit().putStringSet("deleted_book_paths", currentDeletedPaths).apply()
+            persistSettingToDb("deleted_book_paths", currentDeletedPaths.joinToString(","))
+        }
+
+        // 2. Remove all matching duplicates from state flow & SQLite
+        val updated = _books.value.filterNot { it.id == bookId || (targetBook != null && isDuplicateBook(it, targetBook)) }
         _books.value = updated
         dbHelper.deleteBook(bookId)
+        if (targetBook != null && targetTitle.isNotBlank()) {
+            dbHelper.deleteDuplicateBooks(targetTitle, targetAuthor, targetFilePath)
+        }
 
+        // 3. Delete physical book EPUB file(s) from persistent & internal storage
+        try {
+            if (targetFilePath.isNotBlank()) {
+                val f = File(targetFilePath)
+                if (f.exists()) {
+                    f.delete()
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        // Search all candidate search directories for matching file names, IDs, or titles and delete them
+        try {
+            val searchDirs = LuminaStorageManager.getAllSearchDirectories(context)
+            val targetNormTitle = targetTitle.replace(Regex("[^a-z0-9]"), "")
+            for (dir in searchDirs) {
+                val candidate1 = File(dir, "${bookId}.epub")
+                if (candidate1.exists()) candidate1.delete()
+                if (targetBook != null) {
+                    val candidate2 = File(dir, "${targetBook.id}.epub")
+                    if (candidate2.exists()) candidate2.delete()
+                }
+                if (targetFileName.isNotBlank() && targetFileName.endsWith(".epub", ignoreCase = true)) {
+                    val candidate3 = File(dir, targetFileName)
+                    if (candidate3.exists()) candidate3.delete()
+                }
+                // Check all files in directory for matching normalized title or ID
+                dir.listFiles { f -> f.isFile && f.name.endsWith(".epub", ignoreCase = true) }?.forEach { f ->
+                    val fNorm = f.nameWithoutExtension.trim().lowercase().replace(Regex("[^a-z0-9]"), "")
+                    if ((targetNormTitle.isNotBlank() && fNorm == targetNormTitle) ||
+                        f.nameWithoutExtension.equals(bookId, ignoreCase = true) ||
+                        (targetBook != null && f.nameWithoutExtension.equals(targetBook.id, ignoreCase = true)) ||
+                        f.name in currentDeletedIds ||
+                        f.nameWithoutExtension in currentDeletedIds ||
+                        f.absolutePath in currentDeletedPaths
+                    ) {
+                        try { f.delete() } catch (_: Exception) {}
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        // 4. Delete extracted assets & cover cache files
         try {
             val imgDir = File(context.filesDir, "books/$bookId")
             if (imgDir.exists()) {
@@ -1847,16 +2367,35 @@ class BookRepository private constructor(private val context: Context) {
         }
 
         try {
-            val epubFile = File(context.filesDir, "epubs/${bookId}.epub")
-            if (epubFile.exists()) {
-                epubFile.delete()
+            val coversDir = File(context.filesDir, "covers")
+            if (coversDir.exists()) {
+                File(coversDir, "${bookId}.webp").takeIf { it.exists() }?.delete()
+                File(coversDir, "${bookId}.jpg").takeIf { it.exists() }?.delete()
+                File(coversDir, "${bookId}.png").takeIf { it.exists() }?.delete()
+                if (targetBook != null) {
+                    File(coversDir, "${targetBook.id}.webp").takeIf { it.exists() }?.delete()
+                    File(coversDir, "${targetBook.id}.jpg").takeIf { it.exists() }?.delete()
+                }
+            }
+            if (targetBook?.coverUrl?.startsWith("/") == true || targetBook?.coverUrl?.startsWith("file:") == true) {
+                val path = targetBook.coverUrl.removePrefix("file:")
+                val cFile = File(path)
+                if (cFile.exists() && cFile.absolutePath.startsWith(context.filesDir.absolutePath)) {
+                    cFile.delete()
+                }
             }
         } catch (e: Exception) {
             e.printStackTrace()
         }
 
-        // If active book was removed, switch to another book or empty
-        if (_activeBookId.value == bookId) {
+        // 5. Update persistent backup file immediately
+        try {
+            val backupFile = LuminaStorageManager.getPersistentBackupFile(context)
+            dbHelper.backupStateToPersistentFile(backupFile)
+        } catch (_: Exception) {}
+
+        // 6. If active book was removed, switch to another book or empty
+        if (_activeBookId.value == bookId || (targetBook != null && _activeBookId.value == targetBook.id)) {
             val fallback = updated.firstOrNull()
             if (fallback != null) {
                 setActiveBook(fallback.id)
@@ -1879,10 +2418,39 @@ class BookRepository private constructor(private val context: Context) {
             }
         } catch (_: Exception) {}
 
+        val dbDeletedIds = dbHelper.getSetting("deleted_book_ids")?.split(",")?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
+        val dbDeletedTitles = dbHelper.getSetting("deleted_book_titles")?.split(",")?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
+        val dbDeletedPaths = dbHelper.getSetting("deleted_book_paths")?.split(",")?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
+
+        val deletedIds = (prefs.getStringSet("deleted_book_ids", emptySet()) ?: emptySet()) + dbDeletedIds
+        val deletedTitles = (prefs.getStringSet("deleted_book_titles", emptySet()) ?: emptySet()) + dbDeletedTitles
+        val deletedPaths = (prefs.getStringSet("deleted_book_paths", emptySet()) ?: emptySet()) + dbDeletedPaths
+
+        if (dbDeletedIds.isNotEmpty() || dbDeletedTitles.isNotEmpty()) {
+            prefs.edit()
+                .putStringSet("deleted_book_ids", deletedIds)
+                .putStringSet("deleted_book_titles", deletedTitles)
+                .putStringSet("deleted_book_paths", deletedPaths)
+                .apply()
+        }
+
         val fromDb = try { dbHelper.getAllBooks() } catch (_: Exception) { emptyList() }
         val searchDirs = LuminaStorageManager.getAllSearchDirectories(context)
 
-        val resolvedBooks = fromDb.map { raw ->
+        // Filter out deleted books from DB and purge them from DB
+        val activeFromDb = fromDb.filterNot { b ->
+            val normT = b.title.trim().lowercase().replace(Regex("[^a-z0-9]"), "")
+            val isDeleted = b.id in deletedIds ||
+                b.title.trim().lowercase() in deletedTitles ||
+                (normT.isNotBlank() && normT in deletedTitles) ||
+                (b.filePath.isNotBlank() && (b.filePath in deletedPaths || try { File(b.filePath).canonicalPath in deletedPaths } catch (_: Exception) { false }))
+            if (isDeleted) {
+                try { dbHelper.deleteBook(b.id) } catch (_: Exception) {}
+            }
+            isDeleted
+        }
+
+        val resolvedBooks = activeFromDb.map { raw ->
             val b = if (raw.coverUrl.contains("images.unsplash.com")) raw.copy(coverUrl = "") else raw
             if (!b.filePath.isNullOrBlank() && File(b.filePath).exists()) {
                 b
@@ -1916,10 +2484,51 @@ class BookRepository private constructor(private val context: Context) {
             }
         }
 
-        return resolvedBooks.filterNot { b ->
+        val validBooks = resolvedBooks.filterNot { b ->
             b.id in setOf("book-kafka", "book-alice", "book-artofwar", "1", "2", "3", "demo-kafka", "demo-alice", "demo-artofwar") ||
             ((b.filePath.isNullOrBlank() || !File(b.filePath).exists()) && !b.isDownloaded)
         }
+
+        // Deduplicate loaded books: if multiple books have same title+author or same path, keep the best one and purge duplicate DB rows
+        val deduplicated = mutableListOf<Book>()
+        val seenSignatures = mutableSetOf<String>()
+
+        for (book in validBooks) {
+            val normTitle = book.title.trim().lowercase().replace(Regex("[^a-z0-9]"), "")
+            val normAuthor = book.author.trim().lowercase().replace(Regex("[^a-z0-9]"), "")
+            val signature = if (normTitle.isNotBlank()) "$normTitle::$normAuthor" else book.id
+            val pathSig = if (book.filePath.isNotBlank()) {
+                try { File(book.filePath).canonicalPath } catch (_: Exception) { book.filePath }
+            } else ""
+
+            val isDup = (signature.isNotBlank() && !seenSignatures.add(signature)) ||
+                        (pathSig.isNotBlank() && !seenSignatures.add(pathSig))
+
+            if (isDup) {
+                // Found duplicate in DB - find master and purge duplicate row
+                val existingMaster = deduplicated.find { isDuplicateBook(it, book) }
+                if (existingMaster != null) {
+                    // If the current duplicate had more progress, merge it
+                    if (book.progress > existingMaster.progress) {
+                        val merged = existingMaster.copy(
+                            progress = book.progress,
+                            currentChapter = book.currentChapter,
+                            currentPage = book.currentPage,
+                            scrollPos = book.scrollPos,
+                            lastRead = book.lastRead
+                        )
+                        deduplicated.remove(existingMaster)
+                        deduplicated.add(merged)
+                        dbHelper.updateBookProgress(merged.id, merged.currentChapter, merged.currentPage, merged.scrollPos, merged.progress, merged.lastRead)
+                    }
+                }
+                try { dbHelper.deleteBook(book.id) } catch (_: Exception) {}
+            } else {
+                deduplicated.add(book)
+            }
+        }
+
+        return deduplicated
     }
 
     suspend fun autoScanAndLoadPersistentEpubs() = withContext(Dispatchers.IO) {
@@ -1930,8 +2539,15 @@ class BookRepository private constructor(private val context: Context) {
             val currentBooks = _books.value
             val existingPaths = currentBooks.mapNotNull { it.filePath.takeIf { p -> p.isNotBlank() } }
                 .map { try { File(it).canonicalPath } catch (_: Exception) { it } }.toSet()
-            val existingTitles = currentBooks.map { it.title.trim().lowercase() }.toSet()
-            val deletedIds = prefs.getStringSet("deleted_book_ids", emptySet()) ?: emptySet()
+            val existingTitles = currentBooks.map { it.title.trim().lowercase().replace(Regex("[^a-z0-9]"), "") }.filter { it.isNotBlank() }.toSet()
+            
+            val dbDeletedIds = dbHelper.getSetting("deleted_book_ids")?.split(",")?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
+            val dbDeletedTitles = dbHelper.getSetting("deleted_book_titles")?.split(",")?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
+            val dbDeletedPaths = dbHelper.getSetting("deleted_book_paths")?.split(",")?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
+
+            val deletedIds = (prefs.getStringSet("deleted_book_ids", emptySet()) ?: emptySet()) + dbDeletedIds
+            val deletedTitles = (prefs.getStringSet("deleted_book_titles", emptySet()) ?: emptySet()) + dbDeletedTitles
+            val deletedPaths = (prefs.getStringSet("deleted_book_paths", emptySet()) ?: emptySet()) + dbDeletedPaths
 
             // Pre-index SQLite books once to avoid querying SQLite inside the loop
             val dbBooks = try { dbHelper.getAllBooks() } catch (_: Exception) { emptyList() }
@@ -1947,6 +2563,18 @@ class BookRepository private constructor(private val context: Context) {
 
             for (epubFile in scannedFiles) {
                 val canonical = try { epubFile.canonicalPath } catch (_: Exception) { epubFile.absolutePath }
+
+                // If this file was deleted, skip and delete lingering file from Lumina storage
+                if (canonical in deletedPaths || epubFile.name in deletedIds || epubFile.nameWithoutExtension in deletedIds) {
+                    try {
+                        val persistentDir = LuminaStorageManager.getPersistentEpubDirectory(context)
+                        if (epubFile.absolutePath.startsWith(persistentDir.absolutePath) || epubFile.absolutePath.startsWith(context.filesDir.absolutePath)) {
+                            epubFile.delete()
+                        }
+                    } catch (_: Exception) {}
+                    continue
+                }
+
                 if (canonical in existingPaths) continue
 
                 // Check if already in SQLite db via fast in-memory map lookup
@@ -1960,13 +2588,23 @@ class BookRepository private constructor(private val context: Context) {
                     continue
                 }
 
-                // If user previously deleted this book explicitly by ID, do not re-import unless filename changed
-                if (epubFile.nameWithoutExtension in deletedIds) continue
-
                 // Parse and stage new book with ultra-fast metadata-only parsing (~3-5ms)
                 try {
                     val metadataBook = EpubParser.parseBookMetadata(epubFile, context)
-                    if (metadataBook.title.trim().lowercase() in existingTitles) {
+                    val normTitle = metadataBook.title.trim().lowercase().replace(Regex("[^a-z0-9]"), "")
+                    if (normTitle in existingTitles || metadataBook.title.trim().lowercase() in deletedTitles) {
+                        // If deleted title and in Lumina private storage, remove lingering file
+                        if (metadataBook.title.trim().lowercase() in deletedTitles) {
+                            try {
+                                val persistentDir = LuminaStorageManager.getPersistentEpubDirectory(context)
+                                if (epubFile.absolutePath.startsWith(persistentDir.absolutePath) || epubFile.absolutePath.startsWith(context.filesDir.absolutePath)) {
+                                    epubFile.delete()
+                                }
+                            } catch (_: Exception) {}
+                        }
+                        continue
+                    }
+                    if (newlyDiscoveredBooks.any { isDuplicateBook(it, metadataBook) }) {
                         continue
                     }
                     val bookToSave = metadataBook.copy(
@@ -1992,8 +2630,9 @@ class BookRepository private constructor(private val context: Context) {
                         merged = merged.map { updatedMap[it.id] ?: it }
                     }
                     if (newlyDiscoveredBooks.isNotEmpty()) {
-                        val existingIds = merged.map { it.id }.toSet()
-                        val toAppend = newlyDiscoveredBooks.filterNot { it.id in existingIds }
+                        val toAppend = newlyDiscoveredBooks.filterNot { newBook ->
+                            merged.any { isDuplicateBook(it, newBook) }
+                        }
                         if (toAppend.isNotEmpty()) {
                             merged = merged + toAppend
                         }
@@ -2132,6 +2771,8 @@ class BookRepository private constructor(private val context: Context) {
             dbSettings["background_texture"]?.let {
                 try { s = s.copy(backgroundTexture = BackgroundTexture.valueOf(it)) } catch (_: Exception) {}
             }
+            dbSettings["selected_custom_texture_id"]?.let { s = s.copy(selectedCustomTextureId = it) }
+            dbSettings["dynamic_rolling_texture"]?.toBooleanStrictOrNull()?.let { s = s.copy(dynamicRollingTexture = it) }
             dbSettings["custom_bg_uri"]?.let { s = s.copy(customBgUri = it) }
             dbSettings["text_alignment_mode"]?.let {
                 try { s = s.copy(textAlignmentMode = TextAlignmentMode.valueOf(it)) } catch (_: Exception) {}
@@ -2243,6 +2884,8 @@ class BookRepository private constructor(private val context: Context) {
             _themeFamily.value = s.themeFamily
             _themeVariant.value = s.themeVariant
             _backgroundTexture.value = s.backgroundTexture
+            _selectedCustomTextureId.value = s.selectedCustomTextureId
+            _dynamicRollingTexture.value = s.dynamicRollingTexture
             _customBgUri.value = s.customBgUri
             _textAlignmentMode.value = s.textAlignmentMode
             _horizontalPadding.value = s.horizontalPadding
@@ -2300,6 +2943,8 @@ class BookRepository private constructor(private val context: Context) {
                 "theme_family" to s.themeFamily.name,
                 "theme_variant" to s.themeVariant.name,
                 "background_texture" to s.backgroundTexture.name,
+                "selected_custom_texture_id" to s.selectedCustomTextureId,
+                "dynamic_rolling_texture" to s.dynamicRollingTexture.toString(),
                 "custom_bg_uri" to s.customBgUri,
                 "text_alignment_mode" to s.textAlignmentMode.name,
                 "horizontal_padding" to s.horizontalPadding.toString(),

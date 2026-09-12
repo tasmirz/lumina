@@ -15,16 +15,21 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
+import androidx.compose.material.icons.automirrored.filled.*
+import androidx.compose.material.icons.automirrored.outlined.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -34,9 +39,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -47,22 +56,42 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import io.github.tasmirz.lumina.data.AiProvider
 import io.github.tasmirz.lumina.data.BookRepository
 import io.github.tasmirz.lumina.data.EdgeTtsService
+import io.github.tasmirz.lumina.data.OnlineEpubService
 import java.util.Locale
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.roundToInt
+import kotlin.math.sin
+import kotlin.math.sqrt
 import io.github.tasmirz.lumina.model.BackgroundTexture
+import io.github.tasmirz.lumina.ui.components.TexturePreviewCard
+import io.github.tasmirz.lumina.model.CustomCatalogEndpoint
+import io.github.tasmirz.lumina.model.CustomTextureData
 import io.github.tasmirz.lumina.model.CustomThemeData
 import io.github.tasmirz.lumina.model.GestureAction
 import io.github.tasmirz.lumina.model.OrbActionItem
 import io.github.tasmirz.lumina.model.OrbSize
 import io.github.tasmirz.lumina.model.OrbMenuSize
 import io.github.tasmirz.lumina.model.OrbColor
+import io.github.tasmirz.lumina.model.ReadingMode
 import io.github.tasmirz.lumina.model.TextAlignmentMode
 import io.github.tasmirz.lumina.model.ThemeFamily
 import io.github.tasmirz.lumina.model.ThemeVariant
 import io.github.tasmirz.lumina.model.TypefaceMode
+
+private enum class ColorPickerTarget { BACKGROUND, TEXT, ACCENT, ORB }
+
+private data class ThemeStarterTemplate(
+    val name: String,
+    val bg: Color,
+    val text: Color,
+    val accent: Color
+)
 
 enum class SettingsSubScreen(val title: String, val subtitle: String, val icon: ImageVector) {
     MENU("Advanced Settings", "Personalization, Storage & FOSS Engine", Icons.Default.Settings),
@@ -77,6 +106,10 @@ enum class SettingsSubScreen(val title: String, val subtitle: String, val icon: 
 @Composable
 fun AdvancedSettingsScreen(
     repository: BookRepository? = null,
+    fontSize: Int = 18,
+    onFontSizeChange: (Int) -> Unit = {},
+    readingMode: ReadingMode = ReadingMode.SCROLL,
+    onReadingModeChange: (ReadingMode) -> Unit = {},
     showFloatingOrb: Boolean,
     onToggleFloatingOrb: (Boolean) -> Unit,
     activeOrbActions: Set<OrbActionItem>,
@@ -91,6 +124,8 @@ fun AdvancedSettingsScreen(
     onToggleQuickTheme: (ThemeFamily) -> Unit,
     backgroundTexture: BackgroundTexture,
     onBackgroundTextureChange: (BackgroundTexture) -> Unit,
+    dynamicRollingTexture: Boolean = true,
+    onDynamicRollingTextureChange: (Boolean) -> Unit = {},
     customBgUri: String,
     onCustomBgUriChange: (String) -> Unit,
     typeface: TypefaceMode,
@@ -140,6 +175,19 @@ fun AdvancedSettingsScreen(
     val orbColorState = repository?.orbColor?.collectAsState(initial = OrbColor.THEME)
     val orbColor = orbColorState?.value ?: OrbColor.THEME
 
+    val customOrbColorState = repository?.customOrbColor?.collectAsState(initial = 0xFF4F46E5L)
+    val customOrbColor = customOrbColorState?.value ?: 0xFF4F46E5L
+
+    val coroutineScope = rememberCoroutineScope()
+    var playingVoiceId by remember { mutableStateOf<String?>(null) }
+    var isVoiceDemoLoading by remember { mutableStateOf<String?>(null) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            EdgeTtsService.stopVoiceDemo()
+        }
+    }
+
     val orbOpacityState = repository?.orbOpacity?.collectAsState(initial = 0.85f)
     val orbOpacity = orbOpacityState?.value ?: 0.85f
 
@@ -148,6 +196,9 @@ fun AdvancedSettingsScreen(
 
     val autoScrollSpeedState = repository?.autoScrollSpeed?.collectAsState(initial = 1.0f)
     val autoScrollSpeed = autoScrollSpeedState?.value ?: 1.0f
+
+    val localOnlyModeState = repository?.localOnlyMode?.collectAsState(initial = false)
+    val localOnlyMode = localOnlyModeState?.value ?: false
 
     val disableAiState = repository?.disableAi?.collectAsState(initial = false)
     val disableAi = disableAiState?.value ?: false
@@ -192,6 +243,18 @@ fun AdvancedSettingsScreen(
     val verticalPaddingState = repository?.verticalPadding?.collectAsState(initial = 16)
     val verticalPadding = verticalPaddingState?.value ?: 16
 
+    val pagedSafeLinesToRemoveState = repository?.pagedSafeLinesToRemove?.collectAsState(initial = 0)
+    val pagedSafeLinesToRemove = pagedSafeLinesToRemoveState?.value ?: 0
+
+    val showStartupLoadingScreenState = repository?.showStartupLoadingScreen?.collectAsState(initial = false)
+    val showStartupLoadingScreen = showStartupLoadingScreenState?.value ?: false
+
+    val fontSizeState = repository?.fontSize?.collectAsState(initial = fontSize)
+    val currentFontSize = fontSizeState?.value ?: fontSize
+
+    val readingModeState = repository?.readingMode?.collectAsState(initial = readingMode)
+    val currentReadingMode = readingModeState?.value ?: readingMode
+
     val customThemesState = repository?.customThemes?.collectAsState(initial = emptyList())
     val customThemes = customThemesState?.value ?: emptyList()
 
@@ -218,9 +281,10 @@ fun AdvancedSettingsScreen(
 
     // Custom Theme Builder state
     var customThemeName by remember { mutableStateOf("") }
-    var customBgColor by remember { mutableStateOf(Color(0xFF1E1E1E)) }
-    var customTextColor by remember { mutableStateOf(Color(0xFFE0E0E0)) }
-    var customAccentColor by remember { mutableStateOf(Color(0xFF64FFDA)) }
+    var customBgColor by remember { mutableStateOf(Color(0xFFF4ECD8)) }
+    var customTextColor by remember { mutableStateOf(Color(0xFF3B2E25)) }
+    var customAccentColor by remember { mutableStateOf(Color(0xFFC86446)) }
+    var colorPickerTarget by remember { mutableStateOf<ColorPickerTarget?>(null) }
 
     // Dialog states
     var showCssImportDialog by remember { mutableStateOf(false) }
@@ -231,6 +295,38 @@ fun AdvancedSettingsScreen(
     var showLicenseDialog by remember { mutableStateOf(false) }
     var themeToRename by remember { mutableStateOf<CustomThemeData?>(null) }
     var renameThemeInput by remember { mutableStateOf("") }
+    val customEndpointsState = repository?.customEndpoints?.collectAsState(initial = emptyList())
+    val customEndpoints = customEndpointsState?.value ?: emptyList()
+    var showEndpointDialog by remember { mutableStateOf(false) }
+    var editingEndpoint by remember { mutableStateOf<CustomCatalogEndpoint?>(null) }
+
+    val customTexturesState = repository?.customTextures?.collectAsState(initial = emptyList())
+    val customTextures = customTexturesState?.value ?: emptyList()
+    val selectedCustomTextureIdState = repository?.selectedCustomTextureId?.collectAsState(initial = "")
+    val selectedCustomTextureId = selectedCustomTextureIdState?.value ?: ""
+
+    var showTextureImportDialog by remember { mutableStateOf(false) }
+    var pendingTextureUri by remember { mutableStateOf<Uri?>(null) }
+    var textureImportName by remember { mutableStateOf("") }
+    var textureImportIsTiled by remember { mutableStateOf(true) }
+    var textureImportOpacity by remember { mutableStateOf(0.5f) }
+
+    var textureToRename by remember { mutableStateOf<CustomTextureData?>(null) }
+    var renameTextureInput by remember { mutableStateOf("") }
+    var textureToDelete by remember { mutableStateOf<CustomTextureData?>(null) }
+
+    // Launcher for selecting custom surface texture
+    val texturePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            pendingTextureUri = uri
+            textureImportName = "Custom Texture ${customTextures.size + 1}"
+            textureImportIsTiled = true
+            textureImportOpacity = 0.5f
+            showTextureImportDialog = true
+        }
+    }
 
     // Launcher for selecting custom background image
     val bgPickerLauncher = rememberLauncherForActivityResult(
@@ -387,6 +483,90 @@ fun AdvancedSettingsScreen(
                     SettingsSubScreen.STORAGE_BACKUP to "Manage live FTS5 search index and image caches, export/import complete unified JSON backups, and view AGPLv3 terms."
                 )
 
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (localOnlyMode) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                        ),
+                        border = BorderStroke(
+                            1.dp,
+                            if (localOnlyMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+                        ),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(CircleShape)
+                                    .background(if (localOnlyMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = if (localOnlyMode) Icons.Default.CloudOff else Icons.Default.CloudQueue,
+                                    contentDescription = null,
+                                    tint = if (localOnlyMode) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        text = "Local-Only Mode",
+                                        fontFamily = FontFamily.Serif,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 14.5.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false),
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    if (localOnlyMode) {
+                                        Surface(
+                                            shape = RoundedCornerShape(4.dp),
+                                            color = MaterialTheme.colorScheme.primary,
+                                            contentColor = MaterialTheme.colorScheme.onPrimary
+                                        ) {
+                                            Text(
+                                                text = "OFFLINE",
+                                                fontSize = 8.5.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                letterSpacing = 0.5.sp,
+                                                maxLines = 1,
+                                                softWrap = false,
+                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.5.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(3.dp))
+                                Text(
+                                    text = if (localOnlyMode) "All online features disabled. Operating strictly offline." else "Turn off all online features, cloud AI, and network requests.",
+                                    fontSize = 11.5.sp,
+                                    lineHeight = 15.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Switch(
+                                checked = localOnlyMode,
+                                onCheckedChange = { repository?.setLocalOnlyMode(it) }
+                            )
+                        }
+                    }
+                }
+
                 items(menuItems) { (screen, desc) ->
                     Card(
                         modifier = Modifier
@@ -463,6 +643,67 @@ fun AdvancedSettingsScreen(
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 14.dp)
                     ) {
+                        // Reading Mode Selector
+                        Text(
+                            text = "Reading Mode",
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 13.sp
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+                                .padding(3.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            listOf(
+                                Triple(ReadingMode.SCROLL, "Continuous", Icons.Filled.SwapVert),
+                                Triple(ReadingMode.PAGED, "Full Paged", Icons.AutoMirrored.Filled.MenuBook),
+                                Triple(ReadingMode.PAGED_SCROLL, "Paged + Scroll", Icons.Filled.UnfoldMore)
+                            ).forEach { (mode, label, icon) ->
+                                val isSelected = currentReadingMode == mode
+                                Surface(
+                                    shape = RoundedCornerShape(9.dp),
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(9.dp))
+                                        .clickable {
+                                            repository?.setReadingMode(mode)
+                                            onReadingModeChange(mode)
+                                        }
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(vertical = 8.dp, horizontal = 2.dp),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = icon,
+                                            contentDescription = label,
+                                            modifier = Modifier.size(13.dp),
+                                            tint = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Text(
+                                            text = label,
+                                            fontSize = 10.5.sp,
+                                            maxLines = 1,
+                                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                            color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        HorizontalDivider(
+                            modifier = Modifier.padding(vertical = 12.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+                        )
+
                         // Theme Variant Chips
                         Text(
                             text = "Color Mode",
@@ -581,6 +822,200 @@ fun AdvancedSettingsScreen(
                             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
                         )
 
+                        // Background Surface Texture
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Background Surface Texture",
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 13.sp
+                            )
+                            FilledTonalButton(
+                                onClick = { texturePickerLauncher.launch("image/*") },
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Load Texture", fontSize = 11.sp)
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        val isDarkSettings = isSystemInDarkTheme()
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf(
+                                BackgroundTexture.NONE to "Clean",
+                                BackgroundTexture.GRAIN to "Paper Grain",
+                                BackgroundTexture.PARCHMENT to "Parchment",
+                                BackgroundTexture.LINEN to "Linen",
+                                BackgroundTexture.CANVAS to "Canvas",
+                                BackgroundTexture.KRAFT to "Kraft",
+                                BackgroundTexture.RULED_FINE to "Fine Lined",
+                                BackgroundTexture.RULED_WIDE to "Wide Lined",
+                                BackgroundTexture.RULED_GRID to "Grid Lined"
+                            ).forEach { (tex, label) ->
+                                val isSel = backgroundTexture == tex
+                                TexturePreviewCard(
+                                    label = label,
+                                    isSelected = isSel,
+                                    texture = tex,
+                                    isDark = isDarkSettings,
+                                    onClick = { onBackgroundTextureChange(tex) }
+                                )
+                            }
+                            customTextures.forEach { customTex ->
+                                val isSel = backgroundTexture == BackgroundTexture.CUSTOM && selectedCustomTextureId == customTex.id
+                                TexturePreviewCard(
+                                    label = customTex.name,
+                                    isSelected = isSel,
+                                    texture = BackgroundTexture.CUSTOM,
+                                    isDark = isDarkSettings,
+                                    onClick = { repository?.selectCustomTexture(customTex.id) }
+                                )
+                            }
+                        }
+
+                        if (customTextures.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = "Custom Surface Textures",
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                customTextures.forEach { tex ->
+                                    val isSelected = backgroundTexture == BackgroundTexture.CUSTOM && selectedCustomTextureId == tex.id
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                        border = BorderStroke(
+                                            1.dp,
+                                            if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
+                                        ),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { repository?.selectCustomTexture(tex.id) }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 12.dp, vertical = 7.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(26.dp)
+                                                        .clip(RoundedCornerShape(6.dp))
+                                                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Icon(
+                                                        Icons.Outlined.Texture,
+                                                        contentDescription = null,
+                                                        tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        modifier = Modifier.size(15.dp)
+                                                    )
+                                                }
+                                                Spacer(modifier = Modifier.width(10.dp))
+                                                Column {
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Text(
+                                                            text = tex.name,
+                                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                            fontSize = 12.sp,
+                                                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                                        )
+                                                        if (isSelected) {
+                                                            Spacer(modifier = Modifier.width(6.dp))
+                                                            Surface(
+                                                                shape = RoundedCornerShape(4.dp),
+                                                                color = MaterialTheme.colorScheme.primary
+                                                            ) {
+                                                                Text(
+                                                                    "Active",
+                                                                    fontSize = 8.5.sp,
+                                                                    color = MaterialTheme.colorScheme.onPrimary,
+                                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                    Text(
+                                                        text = "${if (tex.isTiled) "Seamless Tiled" else "Cover Fit"} • ${(tex.opacity * 100).toInt()}% opacity",
+                                                        fontSize = 10.sp,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                            }
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                IconButton(
+                                                    onClick = {
+                                                        textureToRename = tex
+                                                        renameTextureInput = tex.name
+                                                    },
+                                                    modifier = Modifier.size(28.dp)
+                                                ) {
+                                                    Icon(
+                                                        Icons.Outlined.Edit,
+                                                        contentDescription = "Rename",
+                                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        modifier = Modifier.size(15.dp)
+                                                    )
+                                                }
+                                                IconButton(
+                                                    onClick = { textureToDelete = tex },
+                                                    modifier = Modifier.size(28.dp)
+                                                ) {
+                                                    Icon(
+                                                        Icons.Outlined.Delete,
+                                                        contentDescription = "Delete",
+                                                        tint = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
+                                                        modifier = Modifier.size(15.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Dynamic Rolling Texture", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                                Text("Roll background textures when scrolling or swiping pages", fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(
+                                checked = dynamicRollingTexture,
+                                onCheckedChange = onDynamicRollingTextureChange
+                            )
+                        }
+
+                        HorizontalDivider(
+                            modifier = Modifier.padding(vertical = 12.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+                        )
+
                         // Page Margins & Spacing
                         Text(
                             text = "Page Margins & Padding",
@@ -627,6 +1062,29 @@ fun AdvancedSettingsScreen(
                             modifier = Modifier.fillMaxWidth()
                         )
 
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Paged Safe Lines to Remove
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Paged Safe Lines to Remove", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("Subtracts lines per page in Paged Mode to prevent bottom clipping", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                            }
+                            Text(if (pagedSafeLinesToRemove == 0) "0 (Default)" else "$pagedSafeLinesToRemove lines", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Slider(
+                            value = pagedSafeLinesToRemove.toFloat(),
+                            onValueChange = { repository?.setPagedSafeLinesToRemove(it.toInt()) },
+                            valueRange = 0f..5f,
+                            steps = 4,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
                         HorizontalDivider(
                             modifier = Modifier.padding(vertical = 12.dp),
                             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
@@ -660,6 +1118,58 @@ fun AdvancedSettingsScreen(
                         }
 
                         Spacer(modifier = Modifier.height(10.dp))
+
+                        // Font Size Stepper & Slider
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Font Size", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                IconButton(
+                                    onClick = {
+                                        val newSize = (currentFontSize - 1).coerceAtLeast(12)
+                                        repository?.setFontSize(newSize)
+                                        onFontSizeChange(newSize)
+                                    },
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(Icons.Default.Remove, contentDescription = "Decrease Font Size", modifier = Modifier.size(16.dp))
+                                }
+                                Text(
+                                    text = "${currentFontSize} sp",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.secondary,
+                                    modifier = Modifier.padding(horizontal = 4.dp)
+                                )
+                                IconButton(
+                                    onClick = {
+                                        val newSize = (currentFontSize + 1).coerceAtMost(36)
+                                        repository?.setFontSize(newSize)
+                                        onFontSizeChange(newSize)
+                                    },
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(Icons.Default.Add, contentDescription = "Increase Font Size", modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Slider(
+                            value = currentFontSize.toFloat(),
+                            onValueChange = {
+                                val s = it.roundToInt()
+                                repository?.setFontSize(s)
+                                onFontSizeChange(s)
+                            },
+                            valueRange = 12f..36f,
+                            steps = 23,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
 
                         // Line Height
                         Row(
@@ -805,10 +1315,56 @@ fun AdvancedSettingsScreen(
                         }
                         Spacer(modifier = Modifier.height(10.dp))
 
+                        // Quick Reading Starter Templates
+                        Text(
+                            text = "Reading Palette Presets",
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            val templates = listOf(
+                                ThemeStarterTemplate("Warm Sepia", Color(0xFFF4ECD8), Color(0xFF3B2E25), Color(0xFFC86446)),
+                                ThemeStarterTemplate("Matcha Calm", Color(0xFFEFF4ED), Color(0xFF1C281F), Color(0xFF5B8A68)),
+                                ThemeStarterTemplate("Nord Slate", Color(0xFF181D24), Color(0xFFD6DBE0), Color(0xFF5E81AC)),
+                                ThemeStarterTemplate("Velvet Dark", Color(0xFF211B17), Color(0xFFEDE6D6), Color(0xFFD4A017)),
+                                ThemeStarterTemplate("High Contrast", Color(0xFF000000), Color(0xFFFFFFFF), Color(0xFFFFD600)),
+                                ThemeStarterTemplate("Colorblind Safe", Color(0xFFF6F6F2), Color(0xFF101828), Color(0xFFD55E00))
+                            )
+                            templates.forEach { tmpl ->
+                                AssistChip(
+                                    onClick = {
+                                        customThemeName = tmpl.name
+                                        customBgColor = tmpl.bg
+                                        customTextColor = tmpl.text
+                                        customAccentColor = tmpl.accent
+                                    },
+                                    label = { Text(tmpl.name, fontSize = 10.5.sp) },
+                                    leadingIcon = {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(10.dp)
+                                                .clip(CircleShape)
+                                                .background(tmpl.bg)
+                                                .border(0.5.dp, Color.Gray, CircleShape)
+                                        )
+                                    }
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
                         OutlinedTextField(
                             value = customThemeName,
                             onValueChange = { customThemeName = it },
-                            placeholder = { Text("Theme Name (e.g. Cyberpunk / Nord)", fontSize = 12.sp) },
+                            placeholder = { Text("Theme Name (e.g. Warm Sepia / Nord)", fontSize = 12.sp) },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(8.dp)
@@ -817,46 +1373,91 @@ fun AdvancedSettingsScreen(
                         Spacer(modifier = Modifier.height(12.dp))
 
                         // Background Color Row
-                        Text("Background Color", fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
-                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Background Color", fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
+                            TextButton(
+                                onClick = { colorPickerTarget = ColorPickerTarget.BACKGROUND },
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
+                            ) {
+                                Icon(Icons.Default.Palette, contentDescription = null, modifier = Modifier.size(13.dp))
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text("Custom Hex", fontSize = 10.5.sp)
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(2.dp))
                         ColorSwatchScrollRow(
                             selectedColor = customBgColor,
                             onColorSelected = { customBgColor = it },
                             presets = listOf(
-                                Color(0xFF121212), Color(0xFF1E1E1E), Color(0xFF0F172A),
-                                Color(0xFFFBF0D9), Color(0xFFF4ECD8), Color(0xFF0A192F),
-                                Color(0xFF263238), Color(0xFF1A1A2E), Color(0xFF2E3440)
-                            )
+                                Color(0xFFFAF6EE), Color(0xFFF4ECD8), Color(0xFFEFE8D8), Color(0xFFEFF4ED),
+                                Color(0xFFFBF2EE), Color(0xFF1E1C1A), Color(0xFF181D24), Color(0xFF211B17),
+                                Color(0xFF141D17), Color(0xFF131722), Color(0xFF000000), Color(0xFFFFFFFF)
+                            ),
+                            onOpenPicker = { colorPickerTarget = ColorPickerTarget.BACKGROUND }
                         )
 
                         Spacer(modifier = Modifier.height(10.dp))
 
                         // Text Color Row
-                        Text("Text Color", fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
-                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Text Color", fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
+                            TextButton(
+                                onClick = { colorPickerTarget = ColorPickerTarget.TEXT },
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
+                            ) {
+                                Icon(Icons.Default.Palette, contentDescription = null, modifier = Modifier.size(13.dp))
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text("Custom Hex", fontSize = 10.5.sp)
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(2.dp))
                         ColorSwatchScrollRow(
                             selectedColor = customTextColor,
                             onColorSelected = { customTextColor = it },
                             presets = listOf(
-                                Color(0xFFE0E0E0), Color(0xFFFFFFFF), Color(0xFF3C2F2F),
-                                Color(0xFF64FFDA), Color(0xFFE2E8F0), Color(0xFFFFD54F),
-                                Color(0xFFB0BEC5), Color(0xFF81C784), Color(0xFFECEFF4)
-                            )
+                                Color(0xFF24201D), Color(0xFF33302C), Color(0xFF3B2E25), Color(0xFF1C281F),
+                                Color(0xFFEDE6D6), Color(0xFFE2DAD0), Color(0xFFD6DBE0), Color(0xFFD8CDBA),
+                                Color(0xFFFFE8B2), Color(0xFF000000), Color(0xFFFFFFFF)
+                            ),
+                            onOpenPicker = { colorPickerTarget = ColorPickerTarget.TEXT }
                         )
 
                         Spacer(modifier = Modifier.height(10.dp))
 
                         // Accent Color Row
-                        Text("Accent Color", fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
-                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Accent Color", fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
+                            TextButton(
+                                onClick = { colorPickerTarget = ColorPickerTarget.ACCENT },
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
+                            ) {
+                                Icon(Icons.Default.Palette, contentDescription = null, modifier = Modifier.size(13.dp))
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text("Custom Hex", fontSize = 10.5.sp)
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(2.dp))
                         ColorSwatchScrollRow(
                             selectedColor = customAccentColor,
                             onColorSelected = { customAccentColor = it },
                             presets = listOf(
-                                Color(0xFF64FFDA), Color(0xFFFF9800), Color(0xFF00B0FF),
-                                Color(0xFFE91E63), Color(0xFF4CAF50), Color(0xFF9C27B0),
-                                Color(0xFF88C0D0), Color(0xFFFF7043)
-                            )
+                                Color(0xFFC86446), Color(0xFFD4A017), Color(0xFF5B8A68), Color(0xFFBD6B78),
+                                Color(0xFF5E81AC), Color(0xFFCC7A24), Color(0xFFD55E00), Color(0xFF0072B2),
+                                Color(0xFFFFD600)
+                            ),
+                            onOpenPicker = { colorPickerTarget = ColorPickerTarget.ACCENT }
                         )
 
                         Spacer(modifier = Modifier.height(12.dp))
@@ -1017,26 +1618,192 @@ fun AdvancedSettingsScreen(
                         )
 
                         // Background Textures
-                        Text(
-                            text = "Background Textures",
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 13.sp
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Background Surface Textures",
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 13.sp
+                            )
+                            FilledTonalButton(
+                                onClick = { texturePickerLauncher.launch("image/*") },
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Load Texture", fontSize = 11.sp)
+                            }
+                        }
                         Spacer(modifier = Modifier.height(6.dp))
+                        val isDarkSettingsTab = isSystemInDarkTheme()
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            BackgroundTexture.entries.forEach { tex ->
-                                val isSel = tex == backgroundTexture
-                                FilterChip(
-                                    selected = isSel,
-                                    onClick = { onBackgroundTextureChange(tex) },
-                                    label = { Text(tex.displayName, fontSize = 11.sp) }
+                            listOf(
+                                BackgroundTexture.NONE to "Clean",
+                                BackgroundTexture.GRAIN to "Paper Grain",
+                                BackgroundTexture.PARCHMENT to "Parchment",
+                                BackgroundTexture.LINEN to "Linen",
+                                BackgroundTexture.CANVAS to "Canvas",
+                                BackgroundTexture.KRAFT to "Kraft",
+                                BackgroundTexture.RULED_FINE to "Fine Lined",
+                                BackgroundTexture.RULED_WIDE to "Wide Lined",
+                                BackgroundTexture.RULED_GRID to "Grid Lined"
+                            ).forEach { (tex, label) ->
+                                val isSel = backgroundTexture == tex
+                                TexturePreviewCard(
+                                    label = label,
+                                    isSelected = isSel,
+                                    texture = tex,
+                                    isDark = isDarkSettingsTab,
+                                    onClick = { onBackgroundTextureChange(tex) }
                                 )
                             }
+                            customTextures.forEach { customTex ->
+                                val isSel = backgroundTexture == BackgroundTexture.CUSTOM && selectedCustomTextureId == customTex.id
+                                TexturePreviewCard(
+                                    label = customTex.name,
+                                    isSelected = isSel,
+                                    texture = BackgroundTexture.CUSTOM,
+                                    isDark = isDarkSettingsTab,
+                                    onClick = { repository?.selectCustomTexture(customTex.id) }
+                                )
+                            }
+                        }
+
+                        if (customTextures.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = "Custom Surface Textures",
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                customTextures.forEach { tex ->
+                                    val isSelected = backgroundTexture == BackgroundTexture.CUSTOM && selectedCustomTextureId == tex.id
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                        border = BorderStroke(
+                                            1.dp,
+                                            if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
+                                        ),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { repository?.selectCustomTexture(tex.id) }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 12.dp, vertical = 7.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(26.dp)
+                                                        .clip(RoundedCornerShape(6.dp))
+                                                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Icon(
+                                                        Icons.Outlined.Texture,
+                                                        contentDescription = null,
+                                                        tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        modifier = Modifier.size(15.dp)
+                                                    )
+                                                }
+                                                Spacer(modifier = Modifier.width(10.dp))
+                                                Column {
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Text(
+                                                            text = tex.name,
+                                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                            fontSize = 12.sp,
+                                                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                                        )
+                                                        if (isSelected) {
+                                                            Spacer(modifier = Modifier.width(6.dp))
+                                                            Surface(
+                                                                shape = RoundedCornerShape(4.dp),
+                                                                color = MaterialTheme.colorScheme.primary
+                                                            ) {
+                                                                Text(
+                                                                    "Active",
+                                                                    fontSize = 8.5.sp,
+                                                                    color = MaterialTheme.colorScheme.onPrimary,
+                                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                    Text(
+                                                        text = "${if (tex.isTiled) "Seamless Tiled" else "Cover Fit"} • ${(tex.opacity * 100).toInt()}% opacity",
+                                                        fontSize = 10.sp,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                            }
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                IconButton(
+                                                    onClick = {
+                                                        textureToRename = tex
+                                                        renameTextureInput = tex.name
+                                                    },
+                                                    modifier = Modifier.size(28.dp)
+                                                ) {
+                                                    Icon(
+                                                        Icons.Outlined.Edit,
+                                                        contentDescription = "Rename",
+                                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        modifier = Modifier.size(15.dp)
+                                                    )
+                                                }
+                                                IconButton(
+                                                    onClick = { textureToDelete = tex },
+                                                    modifier = Modifier.size(28.dp)
+                                                ) {
+                                                    Icon(
+                                                        Icons.Outlined.Delete,
+                                                        contentDescription = "Delete",
+                                                        tint = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
+                                                        modifier = Modifier.size(15.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Dynamic Rolling Texture", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                                Text("Roll background textures when scrolling or swiping pages", fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(
+                                checked = dynamicRollingTexture,
+                                onCheckedChange = onDynamicRollingTextureChange
+                            )
                         }
 
                         Spacer(modifier = Modifier.height(10.dp))
@@ -1130,7 +1897,9 @@ fun AdvancedSettingsScreen(
                                 )
                                 Spacer(modifier = Modifier.height(6.dp))
                                 Row(
-                                    modifier = Modifier.fillMaxWidth(),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(IntrinsicSize.Max),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     val isEdge = ttsEngine == "EDGE_NEURAL"
@@ -1139,10 +1908,18 @@ fun AdvancedSettingsScreen(
                                         shape = RoundedCornerShape(10.dp),
                                         color = if (isEdge) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
                                         border = BorderStroke(1.dp, if (isEdge) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-                                        modifier = Modifier.weight(1f)
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .fillMaxHeight()
                                     ) {
-                                        Column(modifier = Modifier.padding(10.dp)) {
-                                            Text(text = "Edge Neural (Audiobook)", fontWeight = FontWeight.Bold, fontSize = 11.5.sp)
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .padding(10.dp),
+                                            verticalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Text(text = "Edge Neural\n(Audiobook)", fontWeight = FontWeight.Bold, fontSize = 11.5.sp)
+                                            Spacer(modifier = Modifier.height(6.dp))
                                             Text(text = "Natural human voice synthesis", fontSize = 9.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     }
@@ -1152,11 +1929,19 @@ fun AdvancedSettingsScreen(
                                         shape = RoundedCornerShape(10.dp),
                                         color = if (isSystem) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
                                         border = BorderStroke(1.dp, if (isSystem) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-                                        modifier = Modifier.weight(1f)
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .fillMaxHeight()
                                     ) {
-                                        Column(modifier = Modifier.padding(10.dp)) {
-                                            Text(text = "System TTS", fontWeight = FontWeight.Bold, fontSize = 11.5.sp)
-                                            Text(text = "On-device speech engine", fontSize = 9.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .padding(10.dp),
+                                            verticalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Text(text = "System TTS\n(On-device)", fontWeight = FontWeight.Bold, fontSize = 11.5.sp)
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            Text(text = "Local speech engine synthesis", fontSize = 9.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     }
                                 }
@@ -1172,8 +1957,38 @@ fun AdvancedSettingsScreen(
                                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                         EdgeTtsService.AVAILABLE_VOICES.forEach { voice ->
                                             val isSelected = ttsEdgeVoice == voice.id
+                                            val isPlaying = playingVoiceId == voice.id
+                                            val isLoading = isVoiceDemoLoading == voice.id
+
+                                            val toggleVoiceDemo = {
+                                                if (isPlaying) {
+                                                    EdgeTtsService.stopVoiceDemo()
+                                                    playingVoiceId = null
+                                                } else {
+                                                    isVoiceDemoLoading = voice.id
+                                                    coroutineScope.launch {
+                                                        EdgeTtsService.playVoiceDemo(context, voice.id) { playing ->
+                                                            if (playing) {
+                                                                playingVoiceId = voice.id
+                                                                isVoiceDemoLoading = null
+                                                            } else {
+                                                                if (playingVoiceId == voice.id) {
+                                                                    playingVoiceId = null
+                                                                }
+                                                                if (isVoiceDemoLoading == voice.id) {
+                                                                    isVoiceDemoLoading = null
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+
                                             Surface(
-                                                onClick = { repository?.setTtsEdgeVoice(voice.id) },
+                                                onClick = {
+                                                    repository?.setTtsEdgeVoice(voice.id)
+                                                    toggleVoiceDemo()
+                                                },
                                                 shape = RoundedCornerShape(10.dp),
                                                 color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f),
                                                 border = BorderStroke(1.dp, if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)),
@@ -1185,13 +2000,42 @@ fun AdvancedSettingsScreen(
                                                 ) {
                                                     RadioButton(
                                                         selected = isSelected,
-                                                        onClick = { repository?.setTtsEdgeVoice(voice.id) },
+                                                        onClick = {
+                                                            repository?.setTtsEdgeVoice(voice.id)
+                                                            toggleVoiceDemo()
+                                                        },
                                                         modifier = Modifier.size(20.dp)
                                                     )
                                                     Spacer(modifier = Modifier.width(10.dp))
-                                                    Column {
+                                                    Column(modifier = Modifier.weight(1f)) {
                                                         Text(text = voice.displayName, fontWeight = FontWeight.Medium, fontSize = 11.5.sp)
                                                         Text(text = voice.description, fontSize = 9.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                    }
+                                                    IconButton(
+                                                        onClick = { toggleVoiceDemo() },
+                                                        modifier = Modifier.size(28.dp)
+                                                    ) {
+                                                        if (isLoading) {
+                                                            CircularProgressIndicator(
+                                                                modifier = Modifier.size(14.dp),
+                                                                strokeWidth = 2.dp,
+                                                                color = MaterialTheme.colorScheme.primary
+                                                            )
+                                                        } else if (isPlaying) {
+                                                            Icon(
+                                                                imageVector = Icons.Default.Stop,
+                                                                contentDescription = "Stop voice sample",
+                                                                tint = MaterialTheme.colorScheme.primary,
+                                                                modifier = Modifier.size(18.dp)
+                                                            )
+                                                        } else {
+                                                            Icon(
+                                                                imageVector = Icons.Outlined.VolumeUp,
+                                                                contentDescription = "Play voice sample",
+                                                                tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                                modifier = Modifier.size(18.dp)
+                                                            )
+                                                        }
                                                     }
                                                 }
                                             }
@@ -1475,39 +2319,67 @@ fun AdvancedSettingsScreen(
                                     Spacer(modifier = Modifier.height(14.dp))
 
                                     // Orb Color Customization
-                                    Text(
-                                        text = "Orb Color",
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 12.sp
-                                    )
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    Text(
-                                        text = "Personalize the tint of the floating assistant",
-                                        fontSize = 10.5.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    Spacer(modifier = Modifier.height(6.dp))
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f, fill = false)) {
+                                            Text(
+                                                text = "Orb Color",
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontSize = 12.sp
+                                            )
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Text(
+                                                text = "Personalize the tint of the floating assistant",
+                                                fontSize = 10.5.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        TextButton(
+                                            onClick = { colorPickerTarget = ColorPickerTarget.ORB },
+                                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                        ) {
+                                            Icon(Icons.Default.Palette, contentDescription = null, modifier = Modifier.size(13.dp))
+                                            Spacer(modifier = Modifier.width(3.dp))
+                                            Text("Custom Hex", fontSize = 10.5.sp, maxLines = 1, softWrap = false)
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .horizontalScroll(rememberScrollState()),
                                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
                                         OrbColor.entries.forEach { colorOption ->
                                             val isSelected = orbColor == colorOption
-                                            val previewColor = if (colorOption == OrbColor.THEME) MaterialTheme.colorScheme.primary else Color(colorOption.colorValue)
+                                            val previewColor = when (colorOption) {
+                                                OrbColor.THEME -> MaterialTheme.colorScheme.primary
+                                                OrbColor.CUSTOM -> Color(customOrbColor)
+                                                else -> Color(colorOption.colorValue)
+                                            }
                                             Surface(
-                                                onClick = { repository?.setOrbColor(colorOption) },
+                                                onClick = {
+                                                    if (colorOption == OrbColor.CUSTOM && isSelected) {
+                                                        colorPickerTarget = ColorPickerTarget.ORB
+                                                    } else {
+                                                        repository?.setOrbColor(colorOption)
+                                                    }
+                                                },
                                                 shape = RoundedCornerShape(8.dp),
                                                 color = if (isSelected) previewColor.copy(alpha = 0.18f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
                                                 border = BorderStroke(
                                                     1.dp,
                                                     if (isSelected) previewColor else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
                                                 ),
-                                                modifier = Modifier.weight(1f)
+                                                modifier = Modifier.widthIn(min = 58.dp)
                                             ) {
                                                 Column(
                                                     modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .padding(vertical = 8.dp),
+                                                        .padding(horizontal = 8.dp, vertical = 8.dp),
                                                     horizontalAlignment = Alignment.CenterHorizontally
                                                 ) {
                                                     Box(
@@ -1521,7 +2393,9 @@ fun AdvancedSettingsScreen(
                                                         text = colorOption.displayName,
                                                         fontSize = 9.5.sp,
                                                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                                        color = if (isSelected) previewColor else MaterialTheme.colorScheme.onSurface
+                                                        color = if (isSelected) previewColor else MaterialTheme.colorScheme.onSurface,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
                                                     )
                                                 }
                                             }
@@ -2356,6 +3230,37 @@ fun AdvancedSettingsScreen(
                                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
                             )
 
+                            // Startup Loading Screen Toggle
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Startup Initialization Screen",
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 12.5.sp
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = if (showStartupLoadingScreen) "Active. Displays a smooth loading screen until chapter caching and database warm-ups finish (with instant skip option)." else "Disabled. Launches directly into library or reader.",
+                                        fontSize = 10.5.sp,
+                                        lineHeight = 14.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = showStartupLoadingScreen,
+                                    onCheckedChange = { repository?.setShowStartupLoadingScreen(it) }
+                                )
+                            }
+
+                            HorizontalDivider(
+                                modifier = Modifier.padding(vertical = 12.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+                            )
+
                             // Unified Backup & Restore Card
                             Text(
                                 text = "Unified Data Backup & Restore",
@@ -2551,6 +3456,176 @@ fun AdvancedSettingsScreen(
                                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
                             )
 
+                            // Custom Catalogs & Private Download Sources
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Dns,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Custom Catalogs & OPDS Endpoints",
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 13.sp
+                                    )
+                                }
+                                TextButton(
+                                    onClick = {
+                                        editingEndpoint = null
+                                        showEndpointDialog = true
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                ) {
+                                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Add Source", fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Connect self-hosted Calibre-Web, Kavita, custom OPDS feeds, or private download endpoints with custom search (%s) and authentication.",
+                                fontSize = 10.5.sp,
+                                lineHeight = 14.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            if (customEndpoints.isEmpty()) {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(12.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        Text(
+                                            text = "No custom endpoints configured yet.",
+                                            fontSize = 11.5.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = "Tap 'Add Source' above to connect your personal Calibre-Web or OPDS server.",
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
+                                }
+                            } else {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    customEndpoints.forEach { endpoint ->
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Column(modifier = Modifier.padding(10.dp)) {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Column(modifier = Modifier.weight(1f)) {
+                                                        Text(
+                                                            text = endpoint.name,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            fontSize = 12.5.sp
+                                                        )
+                                                        Text(
+                                                            text = endpoint.searchUrl.ifBlank { endpoint.galleryUrl },
+                                                            fontSize = 10.sp,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                    }
+                                                    Switch(
+                                                        checked = endpoint.isEnabled,
+                                                        onCheckedChange = { isChecked ->
+                                                            repository?.toggleCustomEndpoint(endpoint.id, isChecked)
+                                                        }
+                                                    )
+                                                }
+
+                                                if (endpoint.apiKey.isNotBlank()) {
+                                                    Spacer(modifier = Modifier.height(4.dp))
+                                                    Surface(
+                                                        shape = RoundedCornerShape(4.dp),
+                                                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                                                    ) {
+                                                        Text(
+                                                            text = "🔑 Auth Configured (${endpoint.authHeader})",
+                                                            fontSize = 9.5.sp,
+                                                            color = MaterialTheme.colorScheme.primary,
+                                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                        )
+                                                    }
+                                                }
+
+                                                Spacer(modifier = Modifier.height(6.dp))
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.End,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    var isTestingThis by remember { mutableStateOf(false) }
+                                                    val coroutineScope = rememberCoroutineScope()
+                                                    TextButton(
+                                                        onClick = {
+                                                            isTestingThis = true
+                                                            coroutineScope.launch {
+                                                                val (ok, msg) = OnlineEpubService.testEndpointConnection(endpoint)
+                                                                Toast.makeText(context, if (ok) "✓ $msg" else "✗ $msg", Toast.LENGTH_LONG).show()
+                                                                isTestingThis = false
+                                                            }
+                                                        },
+                                                        enabled = !isTestingThis,
+                                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                                    ) {
+                                                        Text(if (isTestingThis) "Testing..." else "Test", fontSize = 11.sp)
+                                                    }
+
+                                                    TextButton(
+                                                        onClick = {
+                                                            editingEndpoint = endpoint
+                                                            showEndpointDialog = true
+                                                        },
+                                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                                    ) {
+                                                        Text("Edit", fontSize = 11.sp)
+                                                    }
+
+                                                    TextButton(
+                                                        onClick = {
+                                                            repository?.deleteCustomEndpoint(endpoint.id)
+                                                            Toast.makeText(context, "Deleted ${endpoint.name}", Toast.LENGTH_SHORT).show()
+                                                        },
+                                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                                    ) {
+                                                        Text("Delete", fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            HorizontalDivider(
+                                modifier = Modifier.padding(vertical = 12.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+                            )
+
                             // AGPLv3 Open Source License
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -2609,6 +3684,35 @@ fun AdvancedSettingsScreen(
     // =============================================================
     // MODAL DIALOGS
     // =============================================================
+
+    // 0. Custom Color Picker Dialog
+    val currentPickerTarget = colorPickerTarget
+    if (currentPickerTarget != null) {
+        val (pickerTitle, initialPickerColor) = when (currentPickerTarget) {
+            ColorPickerTarget.BACKGROUND -> "Pick Background Color" to customBgColor
+            ColorPickerTarget.TEXT -> "Pick Text Color" to customTextColor
+            ColorPickerTarget.ACCENT -> "Pick Accent Color" to customAccentColor
+            ColorPickerTarget.ORB -> "Pick Assistant Orb Color" to Color(customOrbColor)
+        }
+        LuminaColorPickerDialog(
+            title = pickerTitle,
+            initialColor = initialPickerColor,
+            onDismiss = { colorPickerTarget = null },
+            onColorConfirmed = { chosenColor ->
+                when (currentPickerTarget) {
+                    ColorPickerTarget.BACKGROUND -> customBgColor = chosenColor
+                    ColorPickerTarget.TEXT -> customTextColor = chosenColor
+                    ColorPickerTarget.ACCENT -> customAccentColor = chosenColor
+                    ColorPickerTarget.ORB -> {
+                        val argb = chosenColor.toArgb().toLong() and 0xFFFFFFFFL
+                        repository?.setCustomOrbColor(argb)
+                        repository?.setOrbColor(OrbColor.CUSTOM)
+                    }
+                }
+                colorPickerTarget = null
+            }
+        )
+    }
 
     // 1. CSS Import Dialog
     if (showCssImportDialog) {
@@ -3061,6 +4165,224 @@ fun AdvancedSettingsScreen(
             }
         )
     }
+
+    // 6. Custom Catalog / OPDS Endpoint Editor Dialog
+    if (showEndpointDialog) {
+        CustomEndpointEditorDialog(
+            initialEndpoint = editingEndpoint,
+            onDismiss = {
+                showEndpointDialog = false
+                editingEndpoint = null
+            },
+            onSave = { endpoint ->
+                if (editingEndpoint != null) {
+                    repository?.updateCustomEndpoint(endpoint)
+                    Toast.makeText(context, "Updated ${endpoint.name}", Toast.LENGTH_SHORT).show()
+                } else {
+                    repository?.addCustomEndpoint(endpoint)
+                    Toast.makeText(context, "Added ${endpoint.name}", Toast.LENGTH_SHORT).show()
+                }
+                showEndpointDialog = false
+                editingEndpoint = null
+            }
+        )
+    }
+
+    // 7. Import & Name Custom Texture Dialog
+    if (showTextureImportDialog && pendingTextureUri != null) {
+        AlertDialog(
+            onDismissRequest = {
+                showTextureImportDialog = false
+                pendingTextureUri = null
+            },
+            title = {
+                Text(
+                    text = "Name Custom Texture",
+                    fontFamily = FontFamily.Serif,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "Give your imported surface texture a name:",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = textureImportName,
+                        onValueChange = { textureImportName = it },
+                        label = { Text("Texture Name", fontSize = 12.sp) },
+                        placeholder = { Text("e.g. Vintage Japanese Washi", fontSize = 12.sp) },
+                        singleLine = true,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Seamless Tiling", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                            Text(
+                                if (textureImportIsTiled) "Repeats as seamless pattern" else "Stretches to cover page",
+                                fontSize = 10.5.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = textureImportIsTiled,
+                            onCheckedChange = { textureImportIsTiled = it }
+                        )
+                    }
+
+                    Column {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("Overlay Opacity", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                            Text("${(textureImportOpacity * 100).toInt()}%", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        }
+                        Slider(
+                            value = textureImportOpacity,
+                            onValueChange = { textureImportOpacity = it },
+                            valueRange = 0.1f..1.0f,
+                            steps = 17
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val name = textureImportName.trim().ifBlank { "Custom Texture ${customTextures.size + 1}" }
+                        val uri = pendingTextureUri
+                        if (uri != null) {
+                            val created = repository?.importCustomTexture(name, uri, textureImportIsTiled, textureImportOpacity)
+                            if (created != null) {
+                                Toast.makeText(context, "Texture '$name' saved and applied", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(context, "Failed to import texture", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                        showTextureImportDialog = false
+                        pendingTextureUri = null
+                    },
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("Save & Apply", fontSize = 12.sp)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showTextureImportDialog = false
+                    pendingTextureUri = null
+                }) {
+                    Text("Cancel", fontSize = 12.sp)
+                }
+            }
+        )
+    }
+
+    // 8. Rename Custom Texture Dialog
+    if (textureToRename != null) {
+        AlertDialog(
+            onDismissRequest = { textureToRename = null },
+            title = {
+                Text(
+                    text = "Rename Surface Texture",
+                    fontFamily = FontFamily.Serif,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Enter a new name for this texture:",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = renameTextureInput,
+                        onValueChange = { renameTextureInput = it },
+                        label = { Text("Texture Name", fontSize = 12.sp) },
+                        singleLine = true,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val newName = renameTextureInput.trim()
+                        val target = textureToRename
+                        if (newName.isNotBlank() && target != null) {
+                            repository?.renameCustomTexture(target.id, newName)
+                            Toast.makeText(context, "Renamed to '$newName'", Toast.LENGTH_SHORT).show()
+                        }
+                        textureToRename = null
+                    },
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("Save", fontSize = 12.sp)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { textureToRename = null }) {
+                    Text("Cancel", fontSize = 12.sp)
+                }
+            }
+        )
+    }
+
+    // 9. Delete Custom Texture Dialog
+    if (textureToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { textureToDelete = null },
+            title = {
+                Text(
+                    text = "Delete Texture",
+                    fontFamily = FontFamily.Serif,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+            },
+            text = {
+                Text(
+                    text = "Are you sure you want to delete '${textureToDelete?.name}'?",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val target = textureToDelete
+                        if (target != null) {
+                            repository?.deleteCustomTexture(target.id)
+                            Toast.makeText(context, "Deleted '${target.name}'", Toast.LENGTH_SHORT).show()
+                        }
+                        textureToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("Delete", fontSize = 12.sp)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { textureToDelete = null }) {
+                    Text("Cancel", fontSize = 12.sp)
+                }
+            }
+        )
+    }
 }
 
 // =============================================================
@@ -3245,13 +4567,15 @@ private fun GestureGuideItem(
 private fun ColorSwatchScrollRow(
     selectedColor: Color,
     onColorSelected: (Color) -> Unit,
-    presets: List<Color>
+    presets: List<Color>,
+    onOpenPicker: (() -> Unit)? = null
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
         presets.forEach { color ->
             val isSelected = color == selectedColor
@@ -3278,7 +4602,344 @@ private fun ColorSwatchScrollRow(
                 }
             }
         }
+        if (onOpenPicker != null) {
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+                    .border(
+                        width = 1.dp,
+                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                        shape = CircleShape
+                    )
+                    .clickable { onOpenPicker() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Default.Add,
+                    contentDescription = "Pick Custom Color",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        }
     }
+}
+
+@Composable
+private fun LuminaColorPickerDialog(
+    title: String,
+    initialColor: Color,
+    onDismiss: () -> Unit,
+    onColorConfirmed: (Color) -> Unit
+) {
+    // Convert initialColor to HSV components
+    val initialHsv = remember(initialColor) {
+        val hsv = FloatArray(3)
+        val r = (initialColor.red * 255f).roundToInt().coerceIn(0, 255)
+        val g = (initialColor.green * 255f).roundToInt().coerceIn(0, 255)
+        val b = (initialColor.blue * 255f).roundToInt().coerceIn(0, 255)
+        android.graphics.Color.RGBToHSV(r, g, b, hsv)
+        hsv
+    }
+
+    var hue by remember { mutableFloatStateOf(initialHsv[0]) } // 0..360
+    var saturation by remember { mutableFloatStateOf(initialHsv[1].coerceIn(0f, 1f)) } // 0..1
+    var valueBrightness by remember { mutableFloatStateOf(initialHsv[2].coerceIn(0f, 1f)) } // 0..1
+
+    fun hsvToRgbColor(h: Float, s: Float, v: Float): Color {
+        val rgb = android.graphics.Color.HSVToColor(floatArrayOf(h, s, v))
+        return Color(rgb)
+    }
+
+    val currentColor = remember(hue, saturation, valueBrightness) {
+        hsvToRgbColor(hue, saturation, valueBrightness)
+    }
+
+    var hexInput by remember(currentColor) {
+        val r = (currentColor.red * 255f).roundToInt().coerceIn(0, 255)
+        val g = (currentColor.green * 255f).roundToInt().coerceIn(0, 255)
+        val b = (currentColor.blue * 255f).roundToInt().coerceIn(0, 255)
+        mutableStateOf(String.format(Locale.US, "#%02X%02X%02X", r, g, b))
+    }
+    var hexError by remember { mutableStateOf(false) }
+
+    fun updateFromHex(hex: String) {
+        hexInput = hex
+        val clean = hex.removePrefix("#").trim()
+        if (clean.length == 6) {
+            try {
+                val parsed = java.lang.Long.parseLong(clean, 16).toInt()
+                val r = (parsed shr 16) and 0xFF
+                val g = (parsed shr 8) and 0xFF
+                val b = parsed and 0xFF
+                val hsv = FloatArray(3)
+                android.graphics.Color.RGBToHSV(r, g, b, hsv)
+                hue = hsv[0]
+                saturation = hsv[1]
+                valueBrightness = hsv[2]
+                hexError = false
+            } catch (_: Exception) {
+                hexError = true
+            }
+        } else {
+            hexError = hex.isNotBlank() && clean.length != 6
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = title,
+                fontFamily = FontFamily.Serif,
+                fontWeight = FontWeight.Bold,
+                fontSize = 16.sp
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Real-time Color Preview Box
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = currentColor,
+                    border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = hexInput.uppercase(),
+                            color = if (currentColor.luminance() > 0.5f) Color.Black else Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            letterSpacing = 1.sp
+                        )
+                    }
+                }
+
+                // Interactive Circular HSV Color Wheel
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(190.dp)
+                        .padding(4.dp)
+                ) {
+                    Canvas(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .pointerInput(Unit) {
+                                fun handlePointer(offset: Offset) {
+                                    val centerX = size.width / 2f
+                                    val centerY = size.height / 2f
+                                    val radius = minOf(centerX, centerY)
+                                    val dx = offset.x - centerX
+                                    val dy = offset.y - centerY
+                                    val dist = sqrt(dx * dx + dy * dy)
+                                    val sat = (dist / radius).coerceIn(0f, 1f)
+                                    val angleRad = atan2(dy, dx)
+                                    val angleDeg = ((Math.toDegrees(angleRad.toDouble()).toFloat() + 360f) % 360f)
+                                    hue = angleDeg
+                                    saturation = sat
+                                    hexError = false
+                                }
+
+                                detectTapGestures(
+                                    onPress = { handlePointer(it) }
+                                )
+                            }
+                            .pointerInput(Unit) {
+                                detectDragGestures { change, _ ->
+                                    val centerX = size.width / 2f
+                                    val centerY = size.height / 2f
+                                    val radius = minOf(centerX, centerY)
+                                    val dx = change.position.x - centerX
+                                    val dy = change.position.y - centerY
+                                    val dist = sqrt(dx * dx + dy * dy)
+                                    val sat = (dist / radius).coerceIn(0f, 1f)
+                                    val angleRad = atan2(dy, dx)
+                                    val angleDeg = ((Math.toDegrees(angleRad.toDouble()).toFloat() + 360f) % 360f)
+                                    hue = angleDeg
+                                    saturation = sat
+                                    hexError = false
+                                }
+                            }
+                    ) {
+                        val centerX = size.width / 2f
+                        val centerY = size.height / 2f
+                        val radius = minOf(centerX, centerY)
+
+                        // 1. Angular Hue Sweep Gradient
+                        val sweepBrush = Brush.sweepGradient(
+                            colors = listOf(
+                                Color.Red,
+                                Color.Yellow,
+                                Color.Green,
+                                Color.Cyan,
+                                Color.Blue,
+                                Color.Magenta,
+                                Color.Red
+                            ),
+                            center = Offset(centerX, centerY)
+                        )
+                        drawCircle(
+                            brush = sweepBrush,
+                            radius = radius,
+                            center = Offset(centerX, centerY)
+                        )
+
+                        // 2. Radial Saturation Gradient (White at center -> Transparent at outer edge)
+                        val radialBrush = Brush.radialGradient(
+                            colors = listOf(Color.White, Color.Transparent),
+                            center = Offset(centerX, centerY),
+                            radius = radius
+                        )
+                        drawCircle(
+                            brush = radialBrush,
+                            radius = radius,
+                            center = Offset(centerX, centerY)
+                        )
+
+                        // 3. Brightness overlay if value < 1.0
+                        if (valueBrightness < 1.0f) {
+                            drawCircle(
+                                color = Color.Black.copy(alpha = 1.0f - valueBrightness),
+                                radius = radius,
+                                center = Offset(centerX, centerY)
+                            )
+                        }
+
+                        // 4. Outer Rim
+                        drawCircle(
+                            color = Color.Gray.copy(alpha = 0.35f),
+                            radius = radius,
+                            center = Offset(centerX, centerY),
+                            style = Stroke(width = 1.5.dp.toPx())
+                        )
+
+                        // 5. Draggable Selector Thumb
+                        val thumbAngleRad = Math.toRadians(hue.toDouble())
+                        val thumbDist = saturation * radius
+                        val thumbX = centerX + (thumbDist * cos(thumbAngleRad)).toFloat()
+                        val thumbY = centerY + (thumbDist * sin(thumbAngleRad)).toFloat()
+
+                        drawCircle(
+                            color = Color.Black.copy(alpha = 0.6f),
+                            radius = 11.dp.toPx(),
+                            center = Offset(thumbX, thumbY),
+                            style = Stroke(width = 2.5.dp.toPx())
+                        )
+                        drawCircle(
+                            color = Color.White,
+                            radius = 9.dp.toPx(),
+                            center = Offset(thumbX, thumbY),
+                            style = Stroke(width = 2.dp.toPx())
+                        )
+                        drawCircle(
+                            color = currentColor,
+                            radius = 7.dp.toPx(),
+                            center = Offset(thumbX, thumbY)
+                        )
+                    }
+                }
+
+                // Brightness / Value Slider
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Brightness", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("${(valueBrightness * 100f).roundToInt()}%", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                    Slider(
+                        value = valueBrightness,
+                        onValueChange = {
+                            valueBrightness = it
+                            hexError = false
+                        },
+                        valueRange = 0f..1f,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                // Hex Code Input Field
+                OutlinedTextField(
+                    value = hexInput,
+                    onValueChange = { updateFromHex(it) },
+                    label = { Text("Hex Code (#RRGGBB)", fontSize = 11.sp) },
+                    singleLine = true,
+                    isError = hexError,
+                    supportingText = if (hexError) {
+                        { Text("Invalid 6-digit hex code", color = MaterialTheme.colorScheme.error, fontSize = 10.sp) }
+                    } else null,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp)
+                )
+
+                // Quick Palette Presets
+                Text("Reading Presets", fontSize = 11.sp, fontWeight = FontWeight.Medium, modifier = Modifier.align(Alignment.Start))
+                val quickPicks = listOf(
+                    Color(0xFFFAF6EE), Color(0xFFF4ECD8), Color(0xFFEFE8D8), Color(0xFFEFF4ED),
+                    Color(0xFF1E1C1A), Color(0xFF181D24), Color(0xFF211B17), Color(0xFF131722),
+                    Color(0xFF000000), Color(0xFFFFFFFF), Color(0xFFD55E00), Color(0xFF0072B2),
+                    Color(0xFFC86446), Color(0xFFD4A017), Color(0xFF5B8A68), Color(0xFF5E81AC)
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    quickPicks.forEach { col ->
+                        Box(
+                            modifier = Modifier
+                                .size(26.dp)
+                                .clip(CircleShape)
+                                .background(col)
+                                .border(1.dp, Color.Gray.copy(alpha = 0.4f), CircleShape)
+                                .clickable {
+                                    val hsv = FloatArray(3)
+                                    val r = (col.red * 255f).roundToInt().coerceIn(0, 255)
+                                    val g = (col.green * 255f).roundToInt().coerceIn(0, 255)
+                                    val b = (col.blue * 255f).roundToInt().coerceIn(0, 255)
+                                    android.graphics.Color.RGBToHSV(r, g, b, hsv)
+                                    hue = hsv[0]
+                                    saturation = hsv[1]
+                                    valueBrightness = hsv[2]
+                                    hexError = false
+                                }
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onColorConfirmed(currentColor) },
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text("Apply Color", fontSize = 12.sp)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", fontSize = 12.sp)
+            }
+        }
+    )
 }
 
 private fun Color.luminance(): Float {
@@ -3379,4 +5040,261 @@ private fun formatBytes(bytes: Long): String {
     val mb = kb / 1024.0
     return if (mb >= 1.0) String.format("%.2f MB", mb) else String.format("%.1f KB", kb)
 }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CustomEndpointEditorDialog(
+    initialEndpoint: CustomCatalogEndpoint?,
+    onDismiss: () -> Unit,
+    onSave: (CustomCatalogEndpoint) -> Unit
+) {
+    val coroutineScope = rememberCoroutineScope()
+    var name by remember { mutableStateOf(initialEndpoint?.name ?: "") }
+    var galleryUrl by remember { mutableStateOf(initialEndpoint?.galleryUrl ?: "") }
+    var searchUrl by remember { mutableStateOf(initialEndpoint?.searchUrl ?: "") }
+    var apiKey by remember { mutableStateOf(initialEndpoint?.apiKey ?: "") }
+    var authHeader by remember { mutableStateOf(initialEndpoint?.authHeader ?: "Authorization") }
+    var isEnabled by remember { mutableStateOf(initialEndpoint?.isEnabled ?: true) }
+    var isKeyVisible by remember { mutableStateOf(false) }
+
+    var isTesting by remember { mutableStateOf(false) }
+    var testStatusMessage by remember { mutableStateOf<String?>(null) }
+    var testStatusSuccess by remember { mutableStateOf<Boolean?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = if (initialEndpoint != null) Icons.Outlined.Edit else Icons.Outlined.AddCircleOutline,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = if (initialEndpoint != null) "Edit Custom Catalog" else "Add Custom Catalog",
+                    fontFamily = FontFamily.Serif,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 480.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = "Quick Presets:",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                // Quick preset chips
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    AssistChip(
+                        onClick = {
+                            name = "Calibre-Web"
+                            galleryUrl = "http://192.168.1.100:8083/opds"
+                            searchUrl = "http://192.168.1.100:8083/opds/search?query=%s"
+                            authHeader = "Authorization"
+                        },
+                        label = { Text("Calibre-Web", fontSize = 10.5.sp) }
+                    )
+                    AssistChip(
+                        onClick = {
+                            name = "Kavita"
+                            galleryUrl = "http://192.168.1.100:5000/api/opds/YOUR_API_KEY"
+                            searchUrl = "http://192.168.1.100:5000/api/opds/YOUR_API_KEY/search?query=%s"
+                            authHeader = "Authorization"
+                        },
+                        label = { Text("Kavita", fontSize = 10.5.sp) }
+                    )
+                    AssistChip(
+                        onClick = {
+                            name = "Standard Ebooks (OPDS)"
+                            galleryUrl = "https://standardebooks.org/opds/all"
+                            searchUrl = "https://standardebooks.org/opds/all?query=%s"
+                            authHeader = "Authorization"
+                        },
+                        label = { Text("Standard Ebooks", fontSize = 10.5.sp) }
+                    )
+                    AssistChip(
+                        onClick = {
+                            name = "Custom JSON Feed"
+                            galleryUrl = "https://example.com/books.json"
+                            searchUrl = "https://example.com/search?q=%s"
+                            authHeader = "Authorization"
+                        },
+                        label = { Text("JSON Feed", fontSize = 10.5.sp) }
+                    )
+                }
+
+                // Name
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Source / Catalog Name *", fontSize = 12.sp) },
+                    placeholder = { Text("e.g. Home Calibre, Kavita", fontSize = 12.sp) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp)
+                )
+
+                // Search URL template
+                OutlinedTextField(
+                    value = searchUrl,
+                    onValueChange = { searchUrl = it },
+                    label = { Text("Search URL (use %s for query) *", fontSize = 12.sp) },
+                    placeholder = { Text("https://my-server.com/opds/search?q=%s", fontSize = 12.sp) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp)
+                )
+
+                // Gallery URL
+                OutlinedTextField(
+                    value = galleryUrl,
+                    onValueChange = { galleryUrl = it },
+                    label = { Text("Gallery / Browse URL (Optional)", fontSize = 12.sp) },
+                    placeholder = { Text("https://my-server.com/opds", fontSize = 12.sp) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp)
+                )
+
+                // API Key / Auth Token
+                OutlinedTextField(
+                    value = apiKey,
+                    onValueChange = { apiKey = it },
+                    label = { Text("API Key / Token / Basic Auth (Optional)", fontSize = 12.sp) },
+                    placeholder = { Text("Bearer token or user:pass", fontSize = 12.sp) },
+                    singleLine = true,
+                    visualTransformation = if (isKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(onClick = { isKeyVisible = !isKeyVisible }) {
+                            Icon(
+                                imageVector = if (isKeyVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                contentDescription = if (isKeyVisible) "Hide" else "Show",
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp)
+                )
+
+                // Auth Header Name
+                OutlinedTextField(
+                    value = authHeader,
+                    onValueChange = { authHeader = it },
+                    label = { Text("HTTP Header Name", fontSize = 12.sp) },
+                    placeholder = { Text("Authorization, X-API-Key, etc.", fontSize = 12.sp) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp)
+                )
+
+                // Test Connection Action
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            val temp = CustomCatalogEndpoint(
+                                id = initialEndpoint?.id ?: java.util.UUID.randomUUID().toString(),
+                                name = name.ifBlank { "Test Source" },
+                                galleryUrl = galleryUrl.trim(),
+                                searchUrl = searchUrl.trim(),
+                                apiKey = apiKey.trim(),
+                                authHeader = authHeader.trim().ifBlank { "Authorization" },
+                                isEnabled = true
+                            )
+                            isTesting = true
+                            testStatusMessage = null
+                            testStatusSuccess = null
+                            coroutineScope.launch {
+                                val (ok, msg) = OnlineEpubService.testEndpointConnection(temp)
+                                testStatusSuccess = ok
+                                testStatusMessage = msg
+                                isTesting = false
+                            }
+                        },
+                        enabled = !isTesting && (searchUrl.isNotBlank() || galleryUrl.isNotBlank()),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        if (isTesting) {
+                            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Testing...", fontSize = 11.5.sp)
+                        } else {
+                            Icon(Icons.Outlined.NetworkCheck, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Test Connection", fontSize = 11.5.sp)
+                        }
+                    }
+                }
+
+                // Test result banner
+                if (testStatusMessage != null) {
+                    val isOk = testStatusSuccess == true
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = if (isOk) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f) else MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = testStatusMessage.orEmpty(),
+                            fontSize = 11.sp,
+                            color = if (isOk) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(8.dp)
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val endpoint = CustomCatalogEndpoint(
+                        id = initialEndpoint?.id ?: java.util.UUID.randomUUID().toString(),
+                        name = name.trim(),
+                        galleryUrl = galleryUrl.trim(),
+                        searchUrl = searchUrl.trim(),
+                        apiKey = apiKey.trim(),
+                        authHeader = authHeader.trim().ifBlank { "Authorization" },
+                        isEnabled = isEnabled
+                    )
+                    onSave(endpoint)
+                },
+                enabled = name.isNotBlank() && (searchUrl.isNotBlank() || galleryUrl.isNotBlank()),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text("Save", fontSize = 12.sp)
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text("Cancel", fontSize = 12.sp)
+            }
+        }
+    )
+}
+
 

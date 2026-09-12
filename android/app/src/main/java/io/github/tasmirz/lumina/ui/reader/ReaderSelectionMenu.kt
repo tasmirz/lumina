@@ -51,7 +51,7 @@ fun ReaderSelectionMenu(
     bookTitle: String,
     activeBookmark: Bookmark?,
     bottomPadding: Dp,
-    onAddBookmark: (String, HighlightColor, Int, String) -> Unit,
+    onAddBookmark: (String, HighlightColor, Int, String, Boolean) -> Unit,
     onRemoveBookmark: (Long) -> Unit,
     onOpenNoteModal: (Bookmark) -> Unit,
     onReadFromHere: (String) -> Unit,
@@ -188,7 +188,7 @@ fun ReaderSelectionMenu(
                                 onClick = {
                                     val title = bookmarkNameDraft.trim()
                                     val targetQuote = if (bookmarkScope == "PARAGRAPH" && paragraphText.isNotBlank()) paragraphText else selectedText
-                                    onAddBookmark(targetQuote, selectedColor, activePage, title)
+                                    onAddBookmark(targetQuote, selectedColor, activePage, title, false)
                                     showNamingPrompt = false
                                     bookmarkNameDraft = ""
                                     onDismiss()
@@ -241,7 +241,7 @@ fun ReaderSelectionMenu(
                                 .clip(CircleShape)
                                 .background(Color(0xFFD4AF37))
                                 .clickable {
-                                    onAddBookmark(selectedText, HighlightColor.GOLD, activePage, "")
+                                    onAddBookmark(selectedText, HighlightColor.GOLD, activePage, "", true)
                                     onDismiss()
                                     Toast.makeText(context, "Added Gold highlight", Toast.LENGTH_SHORT).show()
                                 }
@@ -252,7 +252,7 @@ fun ReaderSelectionMenu(
                                 .clip(CircleShape)
                                 .background(Color(0xFFE5B7B7))
                                 .clickable {
-                                    onAddBookmark(selectedText, HighlightColor.ROSE, activePage, "")
+                                    onAddBookmark(selectedText, HighlightColor.ROSE, activePage, "", true)
                                     onDismiss()
                                     Toast.makeText(context, "Added Rose highlight", Toast.LENGTH_SHORT).show()
                                 }
@@ -263,7 +263,7 @@ fun ReaderSelectionMenu(
                                 .clip(CircleShape)
                                 .background(Color(0xFFB2C2B2))
                                 .clickable {
-                                    onAddBookmark(selectedText, HighlightColor.SAGE, activePage, "")
+                                    onAddBookmark(selectedText, HighlightColor.SAGE, activePage, "", true)
                                     onDismiss()
                                     Toast.makeText(context, "Added Sage highlight", Toast.LENGTH_SHORT).show()
                                 }
@@ -314,10 +314,11 @@ fun ReaderSelectionMenu(
                                 quote = selectedText,
                                 color = HighlightColor.GOLD,
                                 timestamp = "Just now",
-                                pageNumber = activePage
+                                pageNumber = activePage,
+                                isHighlight = false
                             )
                             if (activeBookmark == null) {
-                                onAddBookmark(selectedText, HighlightColor.GOLD, activePage, "")
+                                onAddBookmark(selectedText, HighlightColor.GOLD, activePage, "", false)
                             }
                             onOpenNoteModal(mark)
                             onDismiss()

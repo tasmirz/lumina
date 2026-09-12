@@ -41,6 +41,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.material.icons.filled.Search
@@ -171,8 +172,10 @@ import io.github.tasmirz.lumina.data.AssistantService
 import io.github.tasmirz.lumina.model.BackgroundTexture
 import io.github.tasmirz.lumina.model.Book
 import io.github.tasmirz.lumina.model.Bookmark
+import io.github.tasmirz.lumina.model.CustomTextureData
 import io.github.tasmirz.lumina.model.HighlightColor
 import io.github.tasmirz.lumina.model.OrbActionItem
+import androidx.compose.ui.graphics.asImageBitmap
 import io.github.tasmirz.lumina.model.ThemeFamily
 import io.github.tasmirz.lumina.model.ThemeVariant
 import io.github.tasmirz.lumina.model.ReadingMode
@@ -188,6 +191,7 @@ import io.github.tasmirz.lumina.util.CitationHelper
 import io.github.tasmirz.lumina.util.PageCache
 import io.github.tasmirz.lumina.util.AnnotatedTextCache
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.drawscope.withTransform
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import java.util.concurrent.atomic.AtomicReference
@@ -380,7 +384,7 @@ fun ReaderScreen(
     onModeChange: (ReadingMode) -> Unit,
     onBackToLibrary: () -> Unit,
     onPositionChange: (chapterIdx: Int, pageIdx: Int, scrollPos: Int, progressPct: Int) -> Unit,
-    onAddBookmark: (String, HighlightColor, Int, String) -> Unit = { _, _, _, _ -> },
+    onAddBookmark: (String, HighlightColor, Int, String, Boolean) -> Unit = { _, _, _, _, _ -> },
     onRemoveBookmark: (Long) -> Unit,
     onUpdateBookmark: (Bookmark) -> Unit = {},
     onLookupWord: (String) -> Unit,
@@ -391,6 +395,9 @@ fun ReaderScreen(
     onToggleFloatingAssistant: (Boolean) -> Unit = {},
     activeOrbActions: Set<OrbActionItem> = OrbActionItem.entries.toSet(),
     backgroundTexture: BackgroundTexture = BackgroundTexture.NONE,
+    customTextures: List<CustomTextureData> = emptyList(),
+    selectedCustomTextureId: String = "",
+    dynamicRollingTexture: Boolean = true,
     customBgUri: String = "",
     textAlignment: TextAlignmentMode = TextAlignmentMode.JUSTIFY,
     letterSpacing: Float = 0.2f,
@@ -429,6 +436,8 @@ fun ReaderScreen(
     val horizontalPadding = horizontalPaddingState?.value ?: 22
     val verticalPaddingState = repository?.verticalPadding?.collectAsState(initial = 0)
     val verticalPadding = verticalPaddingState?.value ?: 0
+    val pagedSafeLinesToRemoveState = repository?.pagedSafeLinesToRemove?.collectAsState(initial = 0)
+    val pagedSafeLinesToRemove = pagedSafeLinesToRemoveState?.value ?: 0
     val paragraphSpacingState = repository?.paragraphSpacingMultiplier?.collectAsState(initial = 1.2f)
     val paragraphSpacingMultiplier = paragraphSpacingState?.value ?: 1.2f
     val assistantOrbStyleState = repository?.assistantOrbStyle?.collectAsState(initial = "DOCK_DOT")
@@ -445,6 +454,8 @@ fun ReaderScreen(
     val orbEdgeSnap = orbEdgeSnapState?.value ?: true
     val orbColorState = repository?.orbColor?.collectAsState(initial = OrbColor.THEME)
     val orbColor = orbColorState?.value ?: OrbColor.THEME
+    val customOrbColorState = repository?.customOrbColor?.collectAsState(initial = 0xFF4F46E5L)
+    val customOrbColor = customOrbColorState?.value ?: 0xFF4F46E5L
     val orbOpacityState = repository?.orbOpacity?.collectAsState(initial = 0.85f)
     val orbOpacity = orbOpacityState?.value ?: 0.85f
     val autoStartMicState = repository?.autoStartMic?.collectAsState(initial = true)
@@ -470,6 +481,7 @@ fun ReaderScreen(
     var selectedText by remember { mutableStateOf("") }
     var selectedChapterTitle by rememberSaveable { mutableStateOf("") }
     var showSelectionMenu by remember { mutableStateOf(false) }
+    var activeReleaseSelectionAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     var selectedBookmarkForModal by remember { mutableStateOf<Bookmark?>(null) }
     var showBookmarkDetailModal by remember { mutableStateOf(false) }
     var showTocSheet by rememberSaveable { mutableStateOf(false) }
@@ -617,11 +629,25 @@ fun ReaderScreen(
 
     // Hardware & Gesture Back Button Handling
     BackHandler(enabled = true) {
-        if (showInBookSearchDialog) {
+        if (showSelectionMenu || selectedText.isNotBlank()) {
+            try {
+                activeReleaseSelectionAction?.invoke()
+            } catch (_: Throwable) {}
+            activeReleaseSelectionAction = null
+            showSelectionMenu = false
+            selectedText = ""
+        } else if (showBookmarkDetailModal) {
+            showBookmarkDetailModal = false
+            selectedBookmarkForModal = null
+        } else if (showInBookSearchDialog) {
             showInBookSearchDialog = false
             inBookSearchQuery = ""
             inBookSearchResults = emptyList()
             inBookCurrentMatchIndex = 0
+        } else if (showTocSheet) {
+            showTocSheet = false
+        } else if (showAssistantChatSheet) {
+            showAssistantChatSheet = false
         } else if (isFullscreen) {
             onToggleFullscreen()
         } else if (showTtsDock) {
@@ -712,7 +738,6 @@ fun ReaderScreen(
     val defaultToolbar = LocalTextToolbar.current
     var suppressToolbarHide by remember { mutableStateOf(false) }
     var lastSelectionTimestamp by remember { mutableLongStateOf(0L) }
-    var activeReleaseSelectionAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     val customTextToolbar = remember(defaultToolbar) {
         object : TextToolbar {
             override val status: TextToolbarStatus
@@ -807,12 +832,12 @@ fun ReaderScreen(
     val screenWidthDp = configuration.screenWidthDp
     val screenHeightDp = configuration.screenHeightDp
 
-    val currentConfigKey = "${fontSize}_${isLandscape}_${screenWidthDp}_${screenHeightDp}"
+    val currentConfigKey = "${book.id}_${fontSize}_${isLandscape}_${readingMode}_${screenWidthDp}_${screenHeightDp}_${horizontalPadding}_${verticalPadding}_${(lineHeightMultiplier * 100).toInt()}_${(paragraphSpacingMultiplier * 100).toInt()}_${pagedSafeLinesToRemove}"
     var pagesConfigKey by remember { mutableStateOf(currentConfigKey) }
 
     // Prepared pages for Paged Mode with smart character/sentence budgeting so text never overflows
     // Non-blocking in-memory cache lookup on composition; background precomputation via getOrComputeAsync
-    var pages by remember(book.id, book.chapters.size, fontSize, readingMode, isLandscape, screenWidthDp, screenHeightDp, horizontalPadding, verticalPadding, lineHeightMultiplier, paragraphSpacingMultiplier) {
+    var pages by remember(book.id, book.chapters.size, fontSize, readingMode, isLandscape, screenWidthDp, screenHeightDp, horizontalPadding, verticalPadding, lineHeightMultiplier, paragraphSpacingMultiplier, pagedSafeLinesToRemove) {
         val cached = if (isPagedReading) {
             PageCache.getCached(
                 bookId = book.id,
@@ -824,7 +849,8 @@ fun ReaderScreen(
                 screenHeightDp = screenHeightDp,
                 horizontalPaddingDp = horizontalPadding,
                 verticalPaddingDp = verticalPadding,
-                paragraphSpacingMultiplier = paragraphSpacingMultiplier
+                paragraphSpacingMultiplier = paragraphSpacingMultiplier,
+                safeLinesToRemove = pagedSafeLinesToRemove
             )
         } else null
         if (cached != null) {
@@ -833,7 +859,7 @@ fun ReaderScreen(
         mutableStateOf(cached ?: emptyList())
     }
 
-    LaunchedEffect(book.id, book.chapters.size, fontSize, readingMode, isLandscape, isPagedReading, screenWidthDp, screenHeightDp, horizontalPadding, verticalPadding, lineHeightMultiplier, paragraphSpacingMultiplier) {
+    LaunchedEffect(book.id, book.chapters.size, fontSize, readingMode, isLandscape, isPagedReading, screenWidthDp, screenHeightDp, horizontalPadding, verticalPadding, lineHeightMultiplier, paragraphSpacingMultiplier, pagedSafeLinesToRemove) {
         if (isPagedReading && (pages.isEmpty() || pagesConfigKey != currentConfigKey) && book.chapters.isNotEmpty()) {
             val allPages = PageCache.getOrComputeAsync(
                 bookId = book.id,
@@ -847,6 +873,7 @@ fun ReaderScreen(
                 verticalPaddingDp = verticalPadding,
                 lineHeightMultiplier = lineHeightMultiplier,
                 paragraphSpacingMultiplier = paragraphSpacingMultiplier,
+                safeLinesToRemove = pagedSafeLinesToRemove,
                 dbHelper = repository?.dbHelper,
                 activeChapterIndex = book.currentChapter,
                 onActiveChapterReady = { activePages ->
@@ -1047,10 +1074,34 @@ fun ReaderScreen(
             GestureAction.ADD_BOOKMARK -> {
                 val preview = book.chapters.getOrNull(chapIdx)?.paragraphs?.getOrNull(pIdx)?.take(60) ?: "Bookmark"
                 val activePage = if (readingMode != ReadingMode.SCROLL) pagerState.currentPage + 1 else book.currentPage + 1
-                onAddBookmark(preview, HighlightColor.GOLD, activePage, "")
+                onAddBookmark(preview, HighlightColor.GOLD, activePage, "", false)
                 Toast.makeText(context, "Bookmark added", Toast.LENGTH_SHORT).show()
             }
             GestureAction.NONE -> {}
+        }
+    }
+
+    LaunchedEffect(listState.isScrollInProgress) {
+        if (listState.isScrollInProgress) {
+            if (showSelectionMenu) {
+                showSelectionMenu = false
+                selectedText = ""
+            }
+            if (isAutoScrolling) {
+                isAutoScrolling = false
+            }
+        }
+    }
+
+    LaunchedEffect(pagerState.isScrollInProgress) {
+        if (pagerState.isScrollInProgress) {
+            if (showSelectionMenu) {
+                showSelectionMenu = false
+                selectedText = ""
+            }
+            if (isAutoScrolling) {
+                isAutoScrolling = false
+            }
         }
     }
 
@@ -1268,7 +1319,7 @@ fun ReaderScreen(
             }
             is AssistantAction.AddNote -> {
                 val activePage = if (readingMode != ReadingMode.SCROLL) pagerState.currentPage + 1 else book.currentPage + 1
-                onAddBookmark(action.noteContent, HighlightColor.GOLD, activePage, "")
+                onAddBookmark(action.noteContent, HighlightColor.GOLD, activePage, "", false)
             }
             is AssistantAction.Answer -> {}
         }
@@ -1394,155 +1445,25 @@ fun ReaderScreen(
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background)
                 .nestedScroll(nestedScrollConnection)
-                .pointerInput(Unit) {
-                    awaitEachGesture {
-                        var cumulativeZoom = 1.0f
-                        var pinchStarted = false
-                        var currentTargetFontSize = currentFontSize
-
-                        try {
-                            do {
-                                val event = awaitPointerEvent()
-                                val downPointers = event.changes.filter { it.pressed }
-                                if (downPointers.size >= 2) {
-                                    val p0 = downPointers[0].position
-                                    val p1 = downPointers[1].position
-                                    val prevP0 = downPointers[0].previousPosition
-                                    val prevP1 = downPointers[1].previousPosition
-                                    val currentDist = (p0 - p1).getDistance()
-                                    val prevDist = (prevP0 - prevP1).getDistance()
-
-                                    val avgTouchX = (p0.x + p1.x) / 2f
-                                    val avgTouchY = (p0.y + p1.y) / 2f
-
-                                    if (!pinchStarted) {
-                                        pinchStarted = true
-                                        isPinching = true
-
-                                        val activePages = currentPages
-                                        val curPage = pagerState.currentPage
-                                        if (currentIsPagedReading && curPage in activePages.indices) {
-                                            val (cTitle, pageContent) = activePages[curPage]
-                                            val isChapterHeaderPage = pageContent.startsWith("CHAPTER_START:::") || pageContent.startsWith("TITLE:::")
-                                            val pageBody = if (isChapterHeaderPage) pageContent.substringAfterLast(":::") else pageContent
-                                            val cIdx = currentChapters.indexOfFirst { it.title == cTitle }.coerceAtLeast(0)
-                                            val chap = currentChapters.getOrNull(cIdx)
-
-                                            var targetSnippet = ""
-                                            var targetParaIdx = 0
-
-                                            val rawParas = pageBody.split(Regex("\n\n+|\n")).map { it.trim() }.filter { it.isNotEmpty() }
-                                            if (rawParas.isNotEmpty()) {
-                                                val headerOffsetPx = if (isChapterHeaderPage) currentHeaderOffsetPx else 0f
-                                                val effectiveTop = currentTopInsetPx + headerOffsetPx
-                                                val usableHeight = (screenHeightPx - effectiveTop - currentBottomInsetPx).coerceAtLeast(100f)
-                                                val touchFraction = ((avgTouchY - effectiveTop) / usableHeight).coerceIn(0f, 0.999f)
-
-                                                val weights = rawParas.map { it.length.toFloat().coerceAtLeast(20f) }
-                                                val totalWeight = weights.sum().coerceAtLeast(1f)
-                                                val targetThreshold = touchFraction * totalWeight
-
-                                                var accumWeight = 0f
-                                                var selectedPara = rawParas.first()
-                                                for (i in rawParas.indices) {
-                                                    accumWeight += weights[i]
-                                                    if (accumWeight >= targetThreshold || i == rawParas.size - 1) {
-                                                        selectedPara = rawParas[i]
-                                                        break
-                                                    }
-                                                }
-
-                                                val exactPara = selectedPara.trim()
-                                                if (exactPara.isNotBlank()) {
-                                                    targetSnippet = exactPara.take(80)
-                                                    val cleanExact = cleanAlpha(exactPara)
-                                                    val foundIdx = chap?.paragraphs?.indexOfFirst { fullPara ->
-                                                        val cleanFull = cleanAlpha(fullPara)
-                                                        cleanFull.contains(cleanExact.take(30)) || cleanExact.contains(cleanFull.take(30)) ||
-                                                        (cleanExact.length >= 15 && cleanFull.contains(cleanExact.take(15)))
-                                                    } ?: -1
-                                                    if (foundIdx >= 0) {
-                                                        targetParaIdx = foundIdx
-                                                    }
-                                                }
-                                            }
-
-                                            if (targetSnippet.isBlank() && pageBody.isNotBlank()) {
-                                                targetSnippet = pageBody.trim().take(80)
-                                            }
-
-                                            if (targetSnippet.isNotBlank()) {
-                                                anchorSnippet = targetSnippet
-                                                anchorChapterIdx = cIdx
-                                                anchorParaIdx = targetParaIdx
-                                                currentTopSnippet = targetSnippet
-                                            }
-                                        } else if (currentReadingMode == ReadingMode.SCROLL) {
-                                            val visibleItems = listState.layoutInfo.visibleItemsInfo
-                                            val touchedItem = visibleItems.find { avgTouchY >= it.offset && avgTouchY <= it.offset + it.size }
-                                                ?: visibleItems.firstOrNull()
-
-                                            if (touchedItem != null) {
-                                                val itemIdx = touchedItem.index
-                                                val binIdx = chapterCumulativeParaOffsets.binarySearch(itemIdx)
-                                                val cIdx = if (binIdx >= 0) binIdx else (-binIdx - 2).coerceIn(0, currentChapters.size - 1)
-                                                val pIdx = (itemIdx - chapterCumulativeParaOffsets.getOrElse(cIdx) { 0 } - 1).coerceAtLeast(0)
-                                                val paraText = currentChapters.getOrNull(cIdx)?.paragraphs?.getOrNull(pIdx) ?: ""
-                                                val snip = paraText.trim().take(80)
-
-                                                anchorSnippet = snip
-                                                anchorChapterIdx = cIdx
-                                                anchorParaIdx = pIdx
-                                                currentTopSnippet = snip
-
-                                                // Center the paragraph immediately at touch start
-                                                val viewportH = listState.layoutInfo.viewportSize.height
-                                                val centerOffset = (viewportH - touchedItem.size) / 2
-                                                coroutineScope.launch {
-                                                    listState.scrollToItem(itemIdx, scrollOffset = -centerOffset)
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    if (prevDist > 0f) {
-                                        val scale = currentDist / prevDist
-                                        cumulativeZoom *= scale
-                                        if (cumulativeZoom > 1.15f) {
-                                            val newSize = (currentTargetFontSize + 1).coerceAtMost(36)
-                                            if (newSize != currentTargetFontSize) {
-                                                currentTargetFontSize = newSize
-                                                currentOnFontSizeChange(newSize)
-                                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                                            }
-                                            cumulativeZoom = 1.0f
-                                        } else if (cumulativeZoom < 0.85f) {
-                                            val newSize = (currentTargetFontSize - 1).coerceAtLeast(12)
-                                            if (newSize != currentTargetFontSize) {
-                                                currentTargetFontSize = newSize
-                                                currentOnFontSizeChange(newSize)
-                                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                                            }
-                                            cumulativeZoom = 1.0f
-                                        }
-                                    }
-                                    downPointers.forEach { it.consume() }
+                .pointerInput(currentFontSize) {
+                    var cumulativeZoom = 1.0f
+                    detectTransformGestures(panZoomLock = false) { _, _, zoom, _ ->
+                        if (zoom != 1.0f) {
+                            cumulativeZoom *= zoom
+                            if (cumulativeZoom > 1.15f) {
+                                val newSize = (currentFontSize + 1).coerceAtMost(36)
+                                if (newSize != currentFontSize) {
+                                    currentOnFontSizeChange(newSize)
+                                    view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                                 }
-                            } while (event.changes.any { it.pressed })
-                        } finally {
-                            // Touch end / zoom pinch end: Bring to its screen!
-                            if (pinchStarted) {
-                                isPinching = false
-                                pendingTargetSync = true
-
-                                if (currentReadingMode == ReadingMode.SCROLL) {
-                                    val targetScroll = chapterCumulativeParaOffsets.getOrElse(anchorChapterIdx) { 0 } + anchorParaIdx + 1
-                                    val viewportH = listState.layoutInfo.viewportSize.height
-                                    val centerOffset = (viewportH * 0.35f).roundToInt()
-                                    coroutineScope.launch {
-                                        listState.scrollToItem(targetScroll.coerceIn(0, maxOf(0, totalScrollItems - 1)), scrollOffset = -centerOffset)
-                                    }
+                                cumulativeZoom = 1.0f
+                            } else if (cumulativeZoom < 0.85f) {
+                                val newSize = (currentFontSize - 1).coerceAtLeast(12)
+                                if (newSize != currentFontSize) {
+                                    currentOnFontSizeChange(newSize)
+                                    view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                                 }
+                                cumulativeZoom = 1.0f
                             }
                         }
                     }
@@ -1560,70 +1481,376 @@ fun ReaderScreen(
             )
         }
 
-        // Optional Surface Texture Overlay (Grain, Parchment, Linen Canvas)
+        // Dynamic Rolling Texture Computation across SCROLL, PAGED, and PAGED_SCROLL
+        val textureScrollOffsetX by remember(dynamicRollingTexture, readingMode) {
+            derivedStateOf {
+                if (!dynamicRollingTexture) 0
+                else if (readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL) {
+                    ((pagerState.currentPage * 240) + (pagerState.currentPageOffsetFraction * 240)).toInt()
+                } else {
+                    0
+                }
+            }
+        }
+        val textureScrollOffsetY by remember(dynamicRollingTexture, readingMode) {
+            derivedStateOf {
+                if (!dynamicRollingTexture) 0
+                else if (readingMode == ReadingMode.SCROLL) {
+                    listState.firstVisibleItemIndex * 400 + listState.firstVisibleItemScrollOffset
+                } else if (readingMode == ReadingMode.PAGED_SCROLL) {
+                    ((pagerState.currentPage * 160) + (pagerState.currentPageOffsetFraction * 160)).toInt()
+                } else {
+                    ((pagerState.currentPage * 120) + (pagerState.currentPageOffsetFraction * 120)).toInt()
+                }
+            }
+        }
+
+        // Optional Surface Texture Overlay (Grain, Parchment, Linen Weave, Artist Canvas, Kraft Fiber)
         when (backgroundTexture) {
             BackgroundTexture.GRAIN -> {
-                val grainShader = remember {
-                    val tile = android.graphics.Bitmap.createBitmap(48, 48, android.graphics.Bitmap.Config.ARGB_8888)
+                val isDark = currentThemeVariant == ThemeVariant.DARK
+                val grainShader = remember(isDark) {
+                    val tile = android.graphics.Bitmap.createBitmap(128, 128, android.graphics.Bitmap.Config.ARGB_8888)
                     val canvas = android.graphics.Canvas(tile)
                     val paint = android.graphics.Paint().apply {
-                        color = android.graphics.Color.DKGRAY
                         isAntiAlias = false
                     }
-                    var x = 2
-                    while (x < 48) {
-                        var y = 2
-                        while (y < 48) {
-                            val dotAlpha = (((x * 31 + y * 17) % 100) / 100f) * 0.035f * 255f
-                            paint.alpha = dotAlpha.toInt().coerceIn(0, 255)
-                            canvas.drawCircle(x.toFloat(), y.toFloat(), 0.8f, paint)
-                            y += 8
+                    val dotColor = if (isDark) android.graphics.Color.WHITE else android.graphics.Color.BLACK
+                    paint.color = dotColor
+                    val maxAlpha = if (isDark) 30 else 42
+                    for (x in 0 until 128 step 2) {
+                        for (y in 0 until 128 step 2) {
+                            val hash = ((x * 374761393 + y * 668265263) xor (x * 1274126177)) and 0x7FFFFFFF
+                            if (hash % 5 <= 1) {
+                                val alpha = (hash % maxAlpha) + 8
+                                paint.alpha = alpha.coerceIn(0, 255)
+                                val r = if (hash % 7 == 0) 1.25f else 0.75f
+                                canvas.drawCircle(x.toFloat(), y.toFloat(), r, paint)
+                            }
                         }
-                        x += 8
                     }
                     android.graphics.BitmapShader(tile, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
                 }
                 Canvas(modifier = Modifier.fillMaxSize()) {
-                    drawIntoCanvas { canvas ->
-                        val paint = androidx.compose.ui.graphics.Paint()
-                        paint.asFrameworkPaint().shader = grainShader
-                        canvas.drawRect(0f, 0f, size.width, size.height, paint)
+                    val rollX = if (dynamicRollingTexture) (((textureScrollOffsetX % 128) + 128) % 128).toFloat() else 0f
+                    val rollY = if (dynamicRollingTexture) (((textureScrollOffsetY % 128) + 128) % 128).toFloat() else 0f
+                    withTransform({
+                        translate(left = -rollX, top = -rollY)
+                    }) {
+                        drawIntoCanvas { canvas ->
+                            val paint = androidx.compose.ui.graphics.Paint()
+                            paint.asFrameworkPaint().shader = grainShader
+                            canvas.drawRect(0f, 0f, size.width + 128f, size.height + 128f, paint)
+                        }
                     }
                 }
             }
             BackgroundTexture.PARCHMENT -> {
+                val isDark = currentThemeVariant == ThemeVariant.DARK
+                val parchmentShader = remember(isDark) {
+                    val tile = android.graphics.Bitmap.createBitmap(128, 128, android.graphics.Bitmap.Config.ARGB_8888)
+                    val canvas = android.graphics.Canvas(tile)
+                    val paint = android.graphics.Paint().apply {
+                        isAntiAlias = true
+                    }
+                    val fiberColor = if (isDark) android.graphics.Color.rgb(190, 160, 120) else android.graphics.Color.rgb(110, 75, 35)
+                    paint.color = fiberColor
+                    val baseAlpha = if (isDark) 35 else 55
+                    for (i in 0..45) {
+                        val fx = ((i * 37 + 11) % 128).toFloat()
+                        val fy = ((i * 53 + 23) % 128).toFloat()
+                        val len = 8f + ((i * 13) % 22)
+                        val angle = ((i * 41) % 60 - 30) * (Math.PI / 180f)
+                        paint.alpha = (baseAlpha + (i * 7) % 35).coerceIn(0, 255)
+                        paint.strokeWidth = if (i % 3 == 0) 1.2f else 0.7f
+                        val endX = fx + (len * Math.cos(angle)).toFloat()
+                        val endY = fy + (len * Math.sin(angle)).toFloat()
+                        canvas.drawLine(fx, fy, endX, endY, paint)
+                    }
+                    android.graphics.BitmapShader(tile, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
+                }
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(
                             Brush.verticalGradient(
                                 listOf(
-                                    Color(0xFFE8DCC4).copy(alpha = 0.12f),
+                                    (if (isDark) Color(0xFF2E2419) else Color(0xFFE8D5B5)).copy(alpha = 0.20f),
                                     Color.Transparent,
-                                    Color(0xFFDECBB0).copy(alpha = 0.16f)
+                                    (if (isDark) Color(0xFF281E15) else Color(0xFFDEC39B)).copy(alpha = 0.25f)
                                 )
                             )
                         )
-                )
+                ) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val rollX = if (dynamicRollingTexture) (((textureScrollOffsetX % 128) + 128) % 128).toFloat() else 0f
+                        val rollY = if (dynamicRollingTexture) (((textureScrollOffsetY % 128) + 128) % 128).toFloat() else 0f
+                        withTransform({
+                            translate(left = -rollX, top = -rollY)
+                        }) {
+                            drawIntoCanvas { canvas ->
+                                val paint = androidx.compose.ui.graphics.Paint()
+                                paint.asFrameworkPaint().shader = parchmentShader
+                                canvas.drawRect(0f, 0f, size.width + 128f, size.height + 128f, paint)
+                            }
+                        }
+                    }
+                }
             }
             BackgroundTexture.LINEN -> {
-                val linenShader = remember {
-                    val tile = android.graphics.Bitmap.createBitmap(32, 32, android.graphics.Bitmap.Config.ARGB_8888)
+                val isDark = currentThemeVariant == ThemeVariant.DARK
+                val linenShader = remember(isDark) {
+                    val tile = android.graphics.Bitmap.createBitmap(48, 48, android.graphics.Bitmap.Config.ARGB_8888)
                     val canvas = android.graphics.Canvas(tile)
                     val paint = android.graphics.Paint().apply {
-                        color = android.graphics.Color.GRAY
-                        alpha = (0.035f * 255f).toInt()
-                        strokeWidth = 0.75f
+                        isAntiAlias = true
                     }
-                    canvas.drawLine(0f, 0f, 0f, 32f, paint)
-                    canvas.drawLine(0f, 0f, 32f, 0f, paint)
+                    val threadColor = if (isDark) android.graphics.Color.WHITE else android.graphics.Color.BLACK
+                    paint.color = threadColor
+                    val alphaMain = if (isDark) 35 else 48
+                    val alphaSub = if (isDark) 20 else 28
+
+                    for (pos in 0 until 48 step 8) {
+                        paint.alpha = alphaMain
+                        paint.strokeWidth = 1.0f
+                        canvas.drawLine(pos.toFloat(), 0f, pos.toFloat(), 48f, paint)
+                        canvas.drawLine(0f, pos.toFloat(), 48f, pos.toFloat(), paint)
+
+                        paint.alpha = alphaSub
+                        paint.strokeWidth = 0.6f
+                        canvas.drawLine((pos + 4).toFloat(), 0f, (pos + 4).toFloat(), 48f, paint)
+                        canvas.drawLine(0f, (pos + 4).toFloat(), 48f, (pos + 4).toFloat(), paint)
+                    }
                     android.graphics.BitmapShader(tile, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
                 }
                 Canvas(modifier = Modifier.fillMaxSize()) {
-                    drawIntoCanvas { canvas ->
-                        val paint = androidx.compose.ui.graphics.Paint()
-                        paint.asFrameworkPaint().shader = linenShader
-                        canvas.drawRect(0f, 0f, size.width, size.height, paint)
+                    val rollX = if (dynamicRollingTexture) (((textureScrollOffsetX % 48) + 48) % 48).toFloat() else 0f
+                    val rollY = if (dynamicRollingTexture) (((textureScrollOffsetY % 48) + 48) % 48).toFloat() else 0f
+                    withTransform({
+                        translate(left = -rollX, top = -rollY)
+                    }) {
+                        drawIntoCanvas { canvas ->
+                            val paint = androidx.compose.ui.graphics.Paint()
+                            paint.asFrameworkPaint().shader = linenShader
+                            canvas.drawRect(0f, 0f, size.width + 48f, size.height + 48f, paint)
+                        }
+                    }
+                }
+            }
+            BackgroundTexture.CANVAS -> {
+                val isDark = currentThemeVariant == ThemeVariant.DARK
+                val canvasShader = remember(isDark) {
+                    val tile = android.graphics.Bitmap.createBitmap(36, 36, android.graphics.Bitmap.Config.ARGB_8888)
+                    val canvas = android.graphics.Canvas(tile)
+                    val paint = android.graphics.Paint().apply {
+                        isAntiAlias = true
+                    }
+                    val color = if (isDark) android.graphics.Color.WHITE else android.graphics.Color.BLACK
+                    paint.color = color
+                    val alpha1 = if (isDark) 38 else 50
+                    val alpha2 = if (isDark) 22 else 32
+
+                    paint.strokeWidth = 1.1f
+                    paint.alpha = alpha1
+                    canvas.drawLine(0f, 0f, 36f, 36f, paint)
+                    canvas.drawLine(0f, 36f, 36f, 0f, paint)
+
+                    paint.strokeWidth = 0.7f
+                    paint.alpha = alpha2
+                    canvas.drawLine(18f, 0f, 36f, 18f, paint)
+                    canvas.drawLine(0f, 18f, 18f, 36f, paint)
+                    canvas.drawLine(18f, 0f, 0f, 18f, paint)
+                    canvas.drawLine(36f, 18f, 18f, 36f, paint)
+
+                    android.graphics.BitmapShader(tile, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
+                }
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val rollX = if (dynamicRollingTexture) (((textureScrollOffsetX % 36) + 36) % 36).toFloat() else 0f
+                    val rollY = if (dynamicRollingTexture) (((textureScrollOffsetY % 36) + 36) % 36).toFloat() else 0f
+                    withTransform({
+                        translate(left = -rollX, top = -rollY)
+                    }) {
+                        drawIntoCanvas { canvas ->
+                            val paint = androidx.compose.ui.graphics.Paint()
+                            paint.asFrameworkPaint().shader = canvasShader
+                            canvas.drawRect(0f, 0f, size.width + 36f, size.height + 36f, paint)
+                        }
+                    }
+                }
+            }
+            BackgroundTexture.KRAFT -> {
+                val isDark = currentThemeVariant == ThemeVariant.DARK
+                val kraftShader = remember(isDark) {
+                    val tile = android.graphics.Bitmap.createBitmap(128, 128, android.graphics.Bitmap.Config.ARGB_8888)
+                    val canvas = android.graphics.Canvas(tile)
+                    val paint = android.graphics.Paint().apply {
+                        isAntiAlias = true
+                    }
+                    val darkFleck = if (isDark) android.graphics.Color.rgb(210, 175, 125) else android.graphics.Color.rgb(80, 50, 20)
+                    val lightFleck = if (isDark) android.graphics.Color.rgb(140, 110, 75) else android.graphics.Color.rgb(160, 120, 70)
+
+                    for (i in 0..60) {
+                        val px = ((i * 47 + 7) % 128).toFloat()
+                        val py = ((i * 71 + 19) % 128).toFloat()
+                        paint.color = if (i % 2 == 0) darkFleck else lightFleck
+                        paint.alpha = (30 + (i * 9) % 45).coerceIn(0, 255)
+                        val w = 1.2f + ((i * 3) % 4) * 0.7f
+                        val h = 0.8f + ((i * 5) % 3) * 0.6f
+                        canvas.drawRect(px, py, px + w, py + h, paint)
+                    }
+                    android.graphics.BitmapShader(tile, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background((if (isDark) Color(0xFF382A1C) else Color(0xFFB88C56)).copy(alpha = 0.10f))
+                ) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val rollX = if (dynamicRollingTexture) (((textureScrollOffsetX % 128) + 128) % 128).toFloat() else 0f
+                        val rollY = if (dynamicRollingTexture) (((textureScrollOffsetY % 128) + 128) % 128).toFloat() else 0f
+                        withTransform({
+                            translate(left = -rollX, top = -rollY)
+                        }) {
+                            drawIntoCanvas { canvas ->
+                                val paint = androidx.compose.ui.graphics.Paint()
+                                paint.asFrameworkPaint().shader = kraftShader
+                                canvas.drawRect(0f, 0f, size.width + 128f, size.height + 128f, paint)
+                            }
+                        }
+                    }
+                }
+            }
+            BackgroundTexture.RULED_FINE -> {
+                val isDark = currentThemeVariant == ThemeVariant.DARK
+                val ruledFineShader = remember(isDark) {
+                    val tileHeight = 72
+                    val tileWidth = 32
+                    val tile = android.graphics.Bitmap.createBitmap(tileWidth, tileHeight, android.graphics.Bitmap.Config.ARGB_8888)
+                    val canvas = android.graphics.Canvas(tile)
+                    val paint = android.graphics.Paint().apply {
+                        isAntiAlias = true
+                        strokeWidth = 1.0f
+                        color = if (isDark) android.graphics.Color.argb(35, 160, 185, 210) else android.graphics.Color.argb(45, 70, 110, 160)
+                    }
+                    canvas.drawLine(0f, (tileHeight - 1).toFloat(), tileWidth.toFloat(), (tileHeight - 1).toFloat(), paint)
+                    android.graphics.BitmapShader(tile, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
+                }
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val rollY = if (dynamicRollingTexture) (((textureScrollOffsetY % 72) + 72) % 72).toFloat() else 0f
+                    withTransform({
+                        translate(left = 0f, top = -rollY)
+                    }) {
+                        drawIntoCanvas { canvas ->
+                            val paint = androidx.compose.ui.graphics.Paint()
+                            paint.asFrameworkPaint().shader = ruledFineShader
+                            canvas.drawRect(0f, 0f, size.width, size.height + 72f, paint)
+                        }
+                    }
+                }
+            }
+            BackgroundTexture.RULED_WIDE -> {
+                val isDark = currentThemeVariant == ThemeVariant.DARK
+                val ruledWideShader = remember(isDark) {
+                    val tileHeight = 112
+                    val tileWidth = 32
+                    val tile = android.graphics.Bitmap.createBitmap(tileWidth, tileHeight, android.graphics.Bitmap.Config.ARGB_8888)
+                    val canvas = android.graphics.Canvas(tile)
+                    val paint = android.graphics.Paint().apply {
+                        isAntiAlias = true
+                        strokeWidth = 1.2f
+                        color = if (isDark) android.graphics.Color.argb(38, 170, 190, 215) else android.graphics.Color.argb(48, 80, 100, 140)
+                    }
+                    canvas.drawLine(0f, (tileHeight - 1).toFloat(), tileWidth.toFloat(), (tileHeight - 1).toFloat(), paint)
+                    android.graphics.BitmapShader(tile, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
+                }
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val rollY = if (dynamicRollingTexture) (((textureScrollOffsetY % 112) + 112) % 112).toFloat() else 0f
+                    withTransform({
+                        translate(left = 0f, top = -rollY)
+                    }) {
+                        drawIntoCanvas { canvas ->
+                            val paint = androidx.compose.ui.graphics.Paint()
+                            paint.asFrameworkPaint().shader = ruledWideShader
+                            canvas.drawRect(0f, 0f, size.width, size.height + 112f, paint)
+                        }
+                    }
+                }
+            }
+            BackgroundTexture.RULED_GRID -> {
+                val isDark = currentThemeVariant == ThemeVariant.DARK
+                val gridShader = remember(isDark) {
+                    val tileSize = 64
+                    val tile = android.graphics.Bitmap.createBitmap(tileSize, tileSize, android.graphics.Bitmap.Config.ARGB_8888)
+                    val canvas = android.graphics.Canvas(tile)
+                    val paint = android.graphics.Paint().apply {
+                        isAntiAlias = true
+                        strokeWidth = 0.9f
+                        color = if (isDark) android.graphics.Color.argb(30, 160, 185, 210) else android.graphics.Color.argb(40, 75, 105, 150)
+                    }
+                    canvas.drawLine(0f, (tileSize - 1).toFloat(), tileSize.toFloat(), (tileSize - 1).toFloat(), paint)
+                    canvas.drawLine((tileSize - 1).toFloat(), 0f, (tileSize - 1).toFloat(), tileSize.toFloat(), paint)
+                    android.graphics.BitmapShader(tile, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
+                }
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val rollX = if (dynamicRollingTexture) (((textureScrollOffsetX % 64) + 64) % 64).toFloat() else 0f
+                    val rollY = if (dynamicRollingTexture) (((textureScrollOffsetY % 64) + 64) % 64).toFloat() else 0f
+                    withTransform({
+                        translate(left = -rollX, top = -rollY)
+                    }) {
+                        drawIntoCanvas { canvas ->
+                            val paint = androidx.compose.ui.graphics.Paint()
+                            paint.asFrameworkPaint().shader = gridShader
+                            canvas.drawRect(0f, 0f, size.width + 64f, size.height + 64f, paint)
+                        }
+                    }
+                }
+            }
+            BackgroundTexture.CUSTOM -> {
+                val activeTexture = remember(customTextures, selectedCustomTextureId) {
+                    customTextures.find { it.id == selectedCustomTextureId } ?: customTextures.firstOrNull()
+                }
+                if (activeTexture != null) {
+                    val customBitmap = remember(activeTexture.id, activeTexture.imagePath) {
+                        try {
+                            val f = java.io.File(activeTexture.imagePath)
+                            if (f.exists()) {
+                                android.graphics.BitmapFactory.decodeFile(f.absolutePath)
+                            } else null
+                        } catch (_: Exception) { null }
+                    }
+                    if (customBitmap != null) {
+                        if (activeTexture.isTiled) {
+                            val shader = remember(customBitmap) {
+                                android.graphics.BitmapShader(customBitmap, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
+                            }
+                            Canvas(modifier = Modifier.fillMaxSize()) {
+                                val tileW = customBitmap.width.coerceAtLeast(1)
+                                val tileH = customBitmap.height.coerceAtLeast(1)
+                                val rollX = if (dynamicRollingTexture) (((textureScrollOffsetX % tileW) + tileW) % tileW).toFloat() else 0f
+                                val rollY = if (dynamicRollingTexture) (((textureScrollOffsetY % tileH) + tileH) % tileH).toFloat() else 0f
+                                withTransform({
+                                    translate(left = -rollX, top = -rollY)
+                                }) {
+                                    drawIntoCanvas { canvas ->
+                                        val paint = androidx.compose.ui.graphics.Paint()
+                                        paint.alpha = activeTexture.opacity.coerceIn(0.05f, 1.0f)
+                                        paint.asFrameworkPaint().shader = shader
+                                        canvas.drawRect(0f, 0f, size.width + tileW.toFloat(), size.height + tileH.toFloat(), paint)
+                                    }
+                                }
+                            }
+                        } else {
+                            val imgBitmap = remember(customBitmap) {
+                                customBitmap.asImageBitmap()
+                            }
+                            Canvas(modifier = Modifier.fillMaxSize()) {
+                                drawImage(
+                                    image = imgBitmap,
+                                    dstSize = androidx.compose.ui.unit.IntSize(size.width.toInt(), size.height.toInt()),
+                                    alpha = activeTexture.opacity.coerceIn(0.05f, 1.0f)
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -1639,8 +1866,20 @@ fun ReaderScreen(
                                 val currentChap = if (binIdx >= 0) binIdx else (-binIdx - 2).coerceIn(0, book.chapters.size - 1)
                                 val paraIdx = (firstIndex - chapterCumulativeParaOffsets.getOrElse(currentChap) { 0 } - 1).coerceAtLeast(0)
 
-                                currentVisibleChapterIdx = currentChap
+                                if (currentVisibleChapterIdx != currentChap) {
+                                    currentVisibleChapterIdx = currentChap
+                                    val newTitle = book.chapters.getOrNull(currentChap)?.title ?: "Chapter ${currentChap + 1}"
+                                    if (activeChapterTitle != newTitle) activeChapterTitle = newTitle
+                                    if (speakingChapterIdx != currentChap) speakingChapterIdx = currentChap
+                                }
                                 currentVisibleParaIdx = paraIdx
+
+                                val overallProgress = ((firstIndex.toFloat() / totalParas) * 100).toInt().coerceIn(0, 100)
+                                if (currentProgressPct != overallProgress) {
+                                    currentProgressPct = overallProgress
+                                }
+
+                                delay(300)
                                 val paraText = book.chapters.getOrNull(currentChap)?.paragraphs?.getOrNull(paraIdx) ?: ""
                                 val snip = paraText.trim().take(50)
                                 currentTopSnippet = snip
@@ -1650,59 +1889,37 @@ fun ReaderScreen(
                                     anchorParaIdx = paraIdx
                                 }
 
-                                val newTitle = book.chapters.getOrNull(currentChap)?.title ?: "Chapter 1"
-                                if (activeChapterTitle != newTitle) {
-                                    activeChapterTitle = newTitle
-                                }
-                                if (speakingChapterIdx != currentChap) {
-                                    speakingChapterIdx = currentChap
-                                }
-                                val overallProgress = ((firstIndex.toFloat() / totalParas) * 100).toInt().coerceIn(0, 100)
-                                if (currentProgressPct != overallProgress) {
-                                    currentProgressPct = overallProgress
-                                }
-
-                                // Debounce database write: only persist after scrolling pauses for 800ms
-                                delay(800)
+                                delay(500)
                                 onPositionChange(currentChap, 0, firstIndex, overallProgress)
+                                val finalTitle = book.chapters.getOrNull(currentChap)?.title ?: "Chapter 1"
+                                repository?.updateLastReadBookmark(
+                                    bookId = book.id,
+                                    chapterTitle = finalTitle,
+                                    pageNumber = 1,
+                                    paragraphSnippet = paraText.take(150).ifBlank { "Chapter ${currentChap + 1}, paragraph ${paraIdx + 1}" }
+                                )
                             }
                     }
 
                     val scrollHorizontalPaddingStart = if (isLandscape) landscapeSidePaddingStart else horizontalPadding.dp
                     val scrollHorizontalPaddingEnd = if (isLandscape) landscapeSidePaddingEnd else horizontalPadding.dp
 
-                    LazyColumn(
-                        state = listState,
-                        contentPadding = PaddingValues(
-                            top = (76 + verticalPadding).dp,
-                            bottom = 100.dp + progressBottomInset + verticalPadding.dp,
-                            start = scrollHorizontalPaddingStart,
-                            end = scrollHorizontalPaddingEnd
-                        ),
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .pointerInput(gestureDoubleTap, gestureSingleTap) {
-                                detectTapGestures(
-                                    onDoubleTap = {
-                                        executeGestureAction(gestureDoubleTap)
-                                    },
-                                    onTap = {
-                                        if (isAutoScrolling) {
-                                            isAutoScrolling = false
-                                        } else if (showSelectionMenu) {
-                                            showSelectionMenu = false
-                                            selectedText = ""
-                                        } else {
-                                            executeGestureAction(gestureSingleTap)
-                                        }
-                                    }
-                                )
-                            }
-                    ) {
-                    book.chapters.forEachIndexed { chapIdx, chapter ->
-                        val chapterBookmarks = bookmarksByChapter[chapter.title.trim().lowercase()] ?: emptyList()
-                        item(key = "chap-header-$chapIdx", contentType = "chap_header") {
-                            Column(
+                    SelectionContainer(modifier = Modifier.fillMaxSize()) {
+                        LazyColumn(
+                            state = listState,
+                            contentPadding = PaddingValues(
+                                top = (76 + verticalPadding).dp,
+                                bottom = 100.dp + progressBottomInset + verticalPadding.dp,
+                                start = scrollHorizontalPaddingStart,
+                                end = scrollHorizontalPaddingEnd
+                            ),
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                        book.chapters.forEachIndexed { chapIdx, chapter ->
+                            val chapterBookmarks = bookmarksByChapter[chapter.title.trim().lowercase()] ?: emptyList()
+                            item(key = "chap-header-$chapIdx", contentType = "chap_header") {
+                                DisableSelection {
+                                    Column(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .padding(top = if (chapIdx == 0) 16.dp else 48.dp, bottom = 28.dp),
@@ -1749,6 +1966,7 @@ fun ReaderScreen(
                                             )
                                         }
                                     }
+                                }
                             }
 
                             itemsIndexed(
@@ -1862,79 +2080,80 @@ fun ReaderScreen(
                                                 } else Modifier
                                             )
                                     ) {
-                                        SelectionContainer(modifier = Modifier.fillMaxWidth()) {
-                                            if (hasFormatting) {
-                                                val annotatedText = remember(
-                                                    para, matchingBookmarks, isDropCap, fontSize, fontFamily, onBgColor,
-                                                    activeSearchQ, isActiveMatch
-                                                ) {
-                                                    buildHighlightedAnnotatedString(
-                                                        text = para,
-                                                        matchingBookmarks = matchingBookmarks,
-                                                        onBookmarkClick = { bm ->
-                                                            selectedBookmarkForModal = bm
-                                                            showBookmarkDetailModal = true
-                                                        },
-                                                        isDropCap = isDropCap,
-                                                        dropCapFontFamily = FontFamily.Serif,
-                                                        dropCapFontSize = (fontSize * 2.2f).sp,
-                                                        dropCapColor = secColor,
-                                                        baseFontFamily = fontFamily,
-                                                        baseFontSize = fontSize.sp,
-                                                        baseTextColor = onBgColor,
-                                                        searchQuery = activeSearchQ,
-                                                        isActiveSearchMatch = isActiveMatch
-                                                    )
-                                                }
-                                                Text(
-                                                    text = annotatedText,
-                                                    lineHeight = (fontSize * lineHeightMultiplier).sp,
-                                                    letterSpacing = letterSpacing.sp,
-                                                    textAlign = contentTextAlign,
-                                                    modifier = Modifier.fillMaxWidth()
-                                                )
-                                            } else {
-                                                Text(
+                                        if (hasFormatting) {
+                                            val annotatedText = remember(
+                                                para, matchingBookmarks, isDropCap, fontSize, fontFamily, onBgColor,
+                                                activeSearchQ, isActiveMatch
+                                            ) {
+                                                buildHighlightedAnnotatedString(
                                                     text = para,
-                                                    fontFamily = fontFamily,
-                                                    fontSize = fontSize.sp,
-                                                    color = onBgColor,
-                                                    lineHeight = (fontSize * lineHeightMultiplier).sp,
-                                                    letterSpacing = letterSpacing.sp,
-                                                    textAlign = contentTextAlign,
-                                                    modifier = Modifier.fillMaxWidth()
+                                                    matchingBookmarks = matchingBookmarks,
+                                                    onBookmarkClick = { bm ->
+                                                        selectedBookmarkForModal = bm
+                                                        showBookmarkDetailModal = true
+                                                    },
+                                                    isDropCap = isDropCap,
+                                                    dropCapFontFamily = FontFamily.Serif,
+                                                    dropCapFontSize = (fontSize * 2.2f).sp,
+                                                    dropCapColor = secColor,
+                                                    baseFontFamily = fontFamily,
+                                                    baseFontSize = fontSize.sp,
+                                                    baseTextColor = onBgColor,
+                                                    searchQuery = activeSearchQ,
+                                                    isActiveSearchMatch = isActiveMatch
                                                 )
                                             }
+                                            Text(
+                                                text = annotatedText,
+                                                lineHeight = (fontSize * lineHeightMultiplier).sp,
+                                                letterSpacing = letterSpacing.sp,
+                                                textAlign = contentTextAlign,
+                                                modifier = Modifier.fillMaxWidth()
+                                            )
+                                        } else {
+                                            Text(
+                                                text = para,
+                                                fontFamily = fontFamily,
+                                                fontSize = fontSize.sp,
+                                                color = onBgColor,
+                                                lineHeight = (fontSize * lineHeightMultiplier).sp,
+                                                letterSpacing = letterSpacing.sp,
+                                                textAlign = contentTextAlign,
+                                                modifier = Modifier.fillMaxWidth()
+                                            )
                                         }
                                     }
                                 }
                             }
                         }
                         item(key = "bottom-empty-space", contentType = "bottom_space") {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(280.dp)
-                                    .pointerInput(gestureDoubleTap, gestureSingleTap) {
-                                        detectTapGestures(
-                                            onDoubleTap = {
-                                                executeGestureAction(gestureDoubleTap)
-                                            },
-                                            onTap = {
-                                                if (isAutoScrolling) {
-                                                    isAutoScrolling = false
-                                                } else if (showSelectionMenu) {
-                                                    showSelectionMenu = false
-                                                    selectedText = ""
-                                                } else {
-                                                    executeGestureAction(gestureSingleTap)
+                            DisableSelection {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(280.dp)
+                                        .pointerInput(gestureDoubleTap, gestureSingleTap) {
+                                            detectTapGestures(
+                                                onDoubleTap = {
+                                                    executeGestureAction(gestureDoubleTap)
+                                                },
+                                                onTap = {
+                                                    if (isAutoScrolling) {
+                                                        isAutoScrolling = false
+                                                    } else if (showSelectionMenu) {
+                                                        showSelectionMenu = false
+                                                        selectedText = ""
+                                                    } else {
+                                                        executeGestureAction(gestureSingleTap)
+                                                    }
                                                 }
-                                            }
-                                        )
-                                    }
-                            )
+                                            )
+                                        }
+                                )
+                            }
                         }
                     }
+                }
             } else {
                 // ═════════════════════════════════════════════════════════════════════
                 // PAGED / PAGED_SCROLL MODE: Swipe horizontal pager
@@ -1995,6 +2214,12 @@ fun ReaderScreen(
 
                             delay(800)
                             onPositionChange(chapIdx, currentPage, 0, progress)
+                            repository?.updateLastReadBookmark(
+                                bookId = book.id,
+                                chapterTitle = book.chapters.getOrNull(chapIdx)?.title ?: "Chapter ${chapIdx + 1}",
+                                pageNumber = currentPage + 1,
+                                paragraphSnippet = cleanSnippet.take(150).ifBlank { "Page ${currentPage + 1}" }
+                            )
                         }
                     }
 
@@ -2017,17 +2242,16 @@ fun ReaderScreen(
                                 .fillMaxSize()
                                 .padding(
                                     top = if (isLandscape) {
-                                        if (isUiVisible) statusBarTopInset + 48.dp + (verticalPadding * 0.25f).dp
-                                        else statusBarTopInset + 16.dp + (verticalPadding * 0.25f).dp
+                                        statusBarTopInset + 36.dp + (verticalPadding * 0.25f).dp
                                     } else {
-                                        if (isUiVisible || readingMode == ReadingMode.PAGED) statusBarTopInset + 54.dp + (verticalPadding * 0.35f).dp
-                                        else statusBarTopInset + 24.dp + (verticalPadding * 0.35f).dp
+                                        if (readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL) statusBarTopInset + 66.dp + (verticalPadding * 0.5f).dp
+                                        else if (isUiVisible) statusBarTopInset + 66.dp + (verticalPadding * 0.5f).dp
+                                        else (verticalPadding * 0.5f).dp
                                     },
                                     bottom = if (isLandscape) {
-                                        if (isUiVisible) progressBottomInset + 54.dp + (verticalPadding * 0.25f).dp
-                                        else progressBottomInset + 12.dp + (verticalPadding * 0.25f).dp
+                                        progressBottomInset + 36.dp + (verticalPadding * 0.25f).dp
                                     } else {
-                                        if (readingMode == ReadingMode.PAGED) progressBottomInset + 52.dp + (verticalPadding * 0.35f).dp
+                                        if (readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL) progressBottomInset + 52.dp + (verticalPadding * 0.35f).dp
                                         else if (isUiVisible) progressBottomInset + 50.dp + (verticalPadding * 0.35f).dp
                                         else progressBottomInset + 18.dp + (verticalPadding * 0.35f).dp
                                     },
@@ -2416,6 +2640,17 @@ fun ReaderScreen(
                     currentScrollPos,
                     currentProgressPct
                 )
+                val snippet = if (readingMode == ReadingMode.SCROLL) {
+                    book.chapters.getOrNull(currentChapIdx)?.paragraphs?.getOrNull(currentVisibleParaIdx) ?: "Progress: $currentProgressPct%"
+                } else {
+                    anchorSnippet.ifBlank { "Page ${currentPageIdx + 1}" }
+                }
+                repository?.updateLastReadBookmark(
+                    bookId = book.id,
+                    chapterTitle = activeChapterTitle,
+                    pageNumber = if (readingMode != ReadingMode.SCROLL) currentPageIdx + 1 else 1,
+                    paragraphSnippet = snippet
+                )
                 onPositionChange(currentChapIdx, currentPageIdx, currentScrollPos, currentProgressPct)
                 if (readingMode != ReadingMode.SCROLL) {
                     "Saved page ${currentPageIdx + 1} (${currentProgressPct}%)"
@@ -2447,7 +2682,6 @@ fun ReaderScreen(
                 },
                 isTtsPlaying = isTtsSpeaking,
                 onToggleTts = {
-                    showTtsDock = true
                     if (isTtsSpeaking) {
                         stopAllAudio()
                     } else {
@@ -2508,6 +2742,7 @@ fun ReaderScreen(
                 orbMenuSize = orbMenuSize,
                 orbEdgeSnap = orbEdgeSnap,
                 orbColor = orbColor,
+                customOrbColor = customOrbColor,
                 orbOpacity = orbOpacity,
                 savedX = if (isLandscape) orbLandscapeX else orbPortraitX,
                 savedY = if (isLandscape) orbLandscapeY else orbPortraitY,
@@ -2612,7 +2847,7 @@ fun ReaderScreen(
             bookTitle = book.title,
             activeBookmark = activeBookmark,
             bottomPadding = selectionMenuBottomPadding,
-            onAddBookmark = { text, color, page, note -> onAddBookmark(text, color, page, note) },
+            onAddBookmark = { text, color, page, note, isHl -> onAddBookmark(text, color, page, note, isHl) },
             onRemoveBookmark = { id -> onRemoveBookmark(id) },
             onOpenNoteModal = { mark ->
                 selectedBookmarkForModal = mark

@@ -1,5 +1,6 @@
 package io.github.tasmirz.lumina.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,8 +18,11 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.UploadFile
+import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import io.github.tasmirz.lumina.data.BookRepository
 import io.github.tasmirz.lumina.data.LuminaDownloadService
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -32,6 +36,7 @@ import androidx.compose.ui.unit.sp
 import io.github.tasmirz.lumina.data.OnlineBookItem
 import io.github.tasmirz.lumina.data.OnlineCatalogSource
 import io.github.tasmirz.lumina.data.OnlineEpubService
+import io.github.tasmirz.lumina.model.CustomCatalogEndpoint
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -39,10 +44,18 @@ import kotlinx.coroutines.launch
 fun AddBookSheet(
     onDismiss: () -> Unit,
     onBookDownloaded: (OnlineBookItem) -> Unit,
-    onBrowseFiles: () -> Unit
+    onBrowseFiles: () -> Unit,
+    repository: BookRepository? = null
 ) {
     val coroutineScope = rememberCoroutineScope()
+    val libraryBooksState = repository?.books?.collectAsState(initial = emptyList())
+    val libraryBooks = libraryBooksState?.value ?: emptyList()
+    val customEndpointsState = repository?.customEndpoints?.collectAsState(initial = emptyList())
+    val customEndpoints = customEndpointsState?.value ?: emptyList()
+    val enabledCustomEndpoints = customEndpoints.filter { it.isEnabled }
+
     var selectedSource by remember { mutableStateOf(OnlineCatalogSource.ALL) }
+    var selectedCustomEndpointId by remember { mutableStateOf<String?>(null) }
     var searchQuery by remember { mutableStateOf("") }
     var searchResults by remember { mutableStateOf<List<OnlineBookItem>>(OnlineEpubService.curatedClassics) }
     var isSearching by remember { mutableStateOf(false) }
@@ -51,9 +64,50 @@ fun AddBookSheet(
     var searchJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val searchCache = remember { mutableMapOf<String, List<OnlineBookItem>>() }
 
-    fun runSearch(query: String, source: OnlineCatalogSource) {
+    fun runSearch(query: String, source: OnlineCatalogSource, customEndpointId: String? = null) {
         searchJob?.cancel()
         val cleanQuery = query.trim()
+
+        if (customEndpointId != null) {
+            val endpoint = customEndpoints.find { it.id == customEndpointId }
+            if (endpoint == null) return
+
+            if (cleanQuery.isBlank()) {
+                if (endpoint.galleryUrl.isNotBlank()) {
+                    searchJob = coroutineScope.launch {
+                        isSearching = true
+                        val results = OnlineEpubService.fetchCustomEndpointGallery(endpoint)
+                        searchResults = results
+                        isSearching = false
+                    }
+                } else {
+                    searchResults = emptyList()
+                    isSearching = false
+                }
+                return
+            }
+
+            val cacheKey = "CUSTOM::${endpoint.id}::${cleanQuery.lowercase()}"
+            val cached = searchCache[cacheKey]
+            if (cached != null) {
+                searchResults = cached
+                isSearching = false
+                return
+            }
+
+            searchJob = coroutineScope.launch {
+                kotlinx.coroutines.delay(350)
+                isSearching = true
+                val results = OnlineEpubService.searchCustomEndpoint(endpoint, cleanQuery)
+                searchResults = results
+                if (results.isNotEmpty()) {
+                    searchCache[cacheKey] = results
+                }
+                isSearching = false
+            }
+            return
+        }
+
         if (cleanQuery.isBlank()) {
             searchResults = if (source == OnlineCatalogSource.ALL) OnlineEpubService.curatedClassics
                 else OnlineEpubService.curatedClassics.filter { it.source == source }
@@ -79,8 +133,8 @@ fun AddBookSheet(
         }
     }
 
-    LaunchedEffect(selectedSource) {
-        runSearch(searchQuery, selectedSource)
+    LaunchedEffect(selectedSource, selectedCustomEndpointId) {
+        runSearch(searchQuery, selectedSource, selectedCustomEndpointId)
     }
 
     ModalBottomSheet(
@@ -101,14 +155,14 @@ fun AddBookSheet(
                 value = searchQuery,
                 onValueChange = {
                     searchQuery = it
-                    runSearch(it, selectedSource)
+                    runSearch(it, selectedSource, selectedCustomEndpointId)
                 },
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(bottom = 12.dp),
                 placeholder = {
                     Text(
-                        "Search books or authors...",
+                        "Search books, authors, or paste direct URL...",
                         fontSize = 13.5.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -126,7 +180,7 @@ fun AddBookSheet(
                     if (searchQuery.isNotEmpty()) {
                         IconButton(onClick = {
                             searchQuery = ""
-                            runSearch("", selectedSource)
+                            runSearch("", selectedSource, selectedCustomEndpointId)
                         }) {
                             Icon(Icons.Default.Clear, contentDescription = "Clear")
                         }
@@ -142,6 +196,74 @@ fun AddBookSheet(
                 )
             )
 
+            // Direct URL Paste Banner
+            val isDirectUrl = searchQuery.trim().startsWith("http://", ignoreCase = true) || searchQuery.trim().startsWith("https://", ignoreCase = true)
+            if (isDirectUrl) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Outlined.Link,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    "Direct Download Link",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    searchQuery.trim(),
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                        Button(
+                            onClick = {
+                                val cleanUrl = searchQuery.trim()
+                                val filename = cleanUrl.substringAfterLast('/').substringBefore('?').ifBlank { "book.epub" }
+                                val directBook = OnlineBookItem(
+                                    id = "direct-${cleanUrl.hashCode()}",
+                                    title = filename.removeSuffix(".epub").replace('_', ' ').replace('-', ' '),
+                                    author = "Direct Link",
+                                    coverUrl = "",
+                                    epubDownloadUrl = cleanUrl,
+                                    source = OnlineCatalogSource.CUSTOM,
+                                    tag = "DIRECT"
+                                )
+                                onBookDownloaded(directBook)
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                        ) {
+                            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Download", fontSize = 11.5.sp)
+                        }
+                    }
+                }
+            }
+
             // Source Filter Chips (Horizontal Scroll)
             Row(
                 modifier = Modifier
@@ -150,14 +272,56 @@ fun AddBookSheet(
                     .padding(bottom = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                OnlineCatalogSource.entries.forEach { source ->
-                    val isSelected = selectedSource == source
+                // Standard sources (excluding CUSTOM which is handled via individual endpoint chips)
+                OnlineCatalogSource.entries.filter { it != OnlineCatalogSource.CUSTOM }.forEach { source ->
+                    val isSelected = selectedSource == source && selectedCustomEndpointId == null
                     FilterChip(
                         selected = isSelected,
-                        onClick = { selectedSource = source },
+                        onClick = {
+                            selectedCustomEndpointId = null
+                            selectedSource = source
+                        },
                         label = {
                             Text(
                                 text = source.displayName,
+                                fontFamily = FontFamily.SansSerif,
+                                fontSize = 12.sp,
+                                fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal
+                            )
+                        },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.22f),
+                            selectedLabelColor = MaterialTheme.colorScheme.secondary
+                        ),
+                        border = FilterChipDefaults.filterChipBorder(
+                            enabled = true,
+                            selected = isSelected,
+                            borderColor = if (isSelected) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                        ),
+                        shape = RoundedCornerShape(20.dp)
+                    )
+                }
+
+                // Custom Endpoints
+                enabledCustomEndpoints.forEach { endpoint ->
+                    val isSelected = selectedCustomEndpointId == endpoint.id
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = {
+                            selectedCustomEndpointId = endpoint.id
+                            selectedSource = OnlineCatalogSource.CUSTOM
+                        },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Outlined.Dns,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp),
+                                tint = if (isSelected) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        },
+                        label = {
+                            Text(
+                                text = endpoint.name,
                                 fontFamily = FontFamily.SansSerif,
                                 fontSize = 12.sp,
                                 fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal
@@ -298,7 +462,18 @@ fun AddBookSheet(
                                     // 1-Tap Download Button with Live State Feedback
                                     val dState = downloadStates[book.id]
                                     val isDownloading = (downloadingBookId == book.id) || (dState != null && !dState.isComplete && !dState.isFailed)
-                                    val isDownloaded = dState?.isComplete == true
+                                    val isAlreadyInLibrary = remember(libraryBooks, book) {
+                                        val normTitle = book.title.trim().lowercase().replace(Regex("[^a-z0-9]"), "")
+                                        val normAuthor = book.author.trim().lowercase().replace(Regex("[^a-z0-9]"), "")
+                                        libraryBooks.any { lb ->
+                                            lb.id == book.id || (
+                                                normTitle.isNotBlank() &&
+                                                lb.title.trim().lowercase().replace(Regex("[^a-z0-9]"), "") == normTitle &&
+                                                (normAuthor.isBlank() || lb.author.trim().lowercase().replace(Regex("[^a-z0-9]"), "") == normAuthor || normAuthor == "unknown" || lb.author.isBlank())
+                                            )
+                                        }
+                                    }
+                                    val isDownloaded = isAlreadyInLibrary || dState?.isComplete == true
                                     val isFailed = dState?.isFailed == true
 
                                     IconButton(

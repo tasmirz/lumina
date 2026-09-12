@@ -150,6 +150,62 @@ private val LinenDarkColorScheme = darkColorScheme(
     outline = Color(0x33DDD8CF)
 )
 
+private val HighContrastLightColorScheme = lightColorScheme(
+    primary = Color(0xFF000000),
+    onPrimary = Color(0xFFFFFFFF),
+    secondary = Color(0xFF003899),
+    onSecondary = Color(0xFFFFFFFF),
+    background = Color(0xFFFFFFFF),
+    onBackground = Color(0xFF000000),
+    surface = Color(0xFFF0F0F0),
+    onSurface = Color(0xFF000000),
+    surfaceVariant = Color(0xFFE2E2E2),
+    onSurfaceVariant = Color(0xFF1A1A1A),
+    outline = Color(0xFF000000)
+)
+
+private val HighContrastDarkColorScheme = darkColorScheme(
+    primary = Color(0xFFFFFFFF),
+    onPrimary = Color(0xFF000000),
+    secondary = Color(0xFFFFD600),
+    onSecondary = Color(0xFF000000),
+    background = Color(0xFF000000),
+    onBackground = Color(0xFFFFFFFF),
+    surface = Color(0xFF121212),
+    onSurface = Color(0xFFFFFFFF),
+    surfaceVariant = Color(0xFF1E1E1E),
+    onSurfaceVariant = Color(0xFFF0F0F0),
+    outline = Color(0xFFFFFFFF)
+)
+
+private val ColorblindLightColorScheme = lightColorScheme(
+    primary = Color(0xFF101828),
+    onPrimary = Color(0xFFF6F6F2),
+    secondary = Color(0xFFD55E00),
+    onSecondary = Color(0xFFFFFFFF),
+    background = Color(0xFFF6F6F2),
+    onBackground = Color(0xFF101828),
+    surface = Color(0xFFEBEBE4),
+    onSurface = Color(0xFF101828),
+    surfaceVariant = Color(0xFFDFDFD6),
+    onSurfaceVariant = Color(0xFF344054),
+    outline = Color(0x44101828)
+)
+
+private val ColorblindDarkColorScheme = darkColorScheme(
+    primary = Color(0xFFF0F4F8),
+    onPrimary = Color(0xFF12161F),
+    secondary = Color(0xFFE69F00),
+    onSecondary = Color(0xFF12161F),
+    background = Color(0xFF12161F),
+    onBackground = Color(0xFFF0F4F8),
+    surface = Color(0xFF1A212E),
+    onSurface = Color(0xFFF0F4F8),
+    surfaceVariant = Color(0xFF232D3F),
+    onSurfaceVariant = Color(0xFFCBD5E1),
+    outline = Color(0x44F0F4F8)
+)
+
 @Composable
 fun LuminaReaderTheme(
     themeFamily: ThemeFamily = ThemeFamily.PAPER,
@@ -181,6 +237,12 @@ fun LuminaReaderTheme(
         }
         ThemeFamily.LINEN -> {
             if (isDark) LinenDarkColorScheme else LinenLightColorScheme
+        }
+        ThemeFamily.HIGH_CONTRAST -> {
+            if (isDark) HighContrastDarkColorScheme else HighContrastLightColorScheme
+        }
+        ThemeFamily.COLORBLIND -> {
+            if (isDark) ColorblindDarkColorScheme else ColorblindLightColorScheme
         }
         ThemeFamily.CUSTOM -> {
             val bg = Color(customBgColor)

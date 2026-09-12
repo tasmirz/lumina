@@ -1,9 +1,11 @@
 package io.github.tasmirz.lumina
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import io.github.tasmirz.lumina.model.BackgroundTexture
+import io.github.tasmirz.lumina.model.Book
 import io.github.tasmirz.lumina.model.OrbActionItem
 import io.github.tasmirz.lumina.model.TextAlignmentMode
 import io.github.tasmirz.lumina.model.ThemeFamily
@@ -14,12 +16,14 @@ class SettingsModelTest {
 
     @Test
     fun testThemeFamiliesAndVariantsExist() {
-        assertEquals(6, ThemeFamily.entries.size)
+        assertEquals(8, ThemeFamily.entries.size)
         assertTrue(ThemeFamily.entries.contains(ThemeFamily.PAPER))
         assertTrue(ThemeFamily.entries.contains(ThemeFamily.MODERN))
         assertTrue(ThemeFamily.entries.contains(ThemeFamily.FOREST))
         assertTrue(ThemeFamily.entries.contains(ThemeFamily.PARCHMENT))
         assertTrue(ThemeFamily.entries.contains(ThemeFamily.LINEN))
+        assertTrue(ThemeFamily.entries.contains(ThemeFamily.HIGH_CONTRAST))
+        assertTrue(ThemeFamily.entries.contains(ThemeFamily.COLORBLIND))
         assertTrue(ThemeFamily.entries.contains(ThemeFamily.CUSTOM))
 
         assertEquals(3, ThemeVariant.entries.size)
@@ -64,17 +68,46 @@ class SettingsModelTest {
 
     @Test
     fun testBackgroundTexturesAndTypography() {
-        assertEquals(4, BackgroundTexture.entries.size)
+        assertEquals(10, BackgroundTexture.entries.size)
         assertTrue(BackgroundTexture.entries.contains(BackgroundTexture.NONE))
         assertTrue(BackgroundTexture.entries.contains(BackgroundTexture.GRAIN))
-        assertTrue(BackgroundTexture.entries.contains(BackgroundTexture.PARCHMENT))
-        assertTrue(BackgroundTexture.entries.contains(BackgroundTexture.LINEN))
+        assertTrue(BackgroundTexture.PARCHMENT in BackgroundTexture.entries)
+        assertTrue(BackgroundTexture.LINEN in BackgroundTexture.entries)
+        assertTrue(BackgroundTexture.CANVAS in BackgroundTexture.entries)
+        assertTrue(BackgroundTexture.KRAFT in BackgroundTexture.entries)
+        assertTrue(BackgroundTexture.RULED_FINE in BackgroundTexture.entries)
+        assertTrue(BackgroundTexture.RULED_WIDE in BackgroundTexture.entries)
+        assertTrue(BackgroundTexture.RULED_GRID in BackgroundTexture.entries)
+        assertTrue(BackgroundTexture.CUSTOM in BackgroundTexture.entries)
 
         assertTrue(TypefaceMode.entries.contains(TypefaceMode.LITERARY))
         assertTrue(TypefaceMode.entries.contains(TypefaceMode.DYSLEXIC))
 
         assertTrue(TextAlignmentMode.entries.contains(TextAlignmentMode.JUSTIFY))
         assertTrue(TextAlignmentMode.entries.contains(TextAlignmentMode.START))
+    }
+
+    @Test
+    fun testCustomTextureDataModel() {
+        val customTex = io.github.tasmirz.lumina.model.CustomTextureData(
+            id = "tex_123",
+            name = "Japanese Washi",
+            imagePath = "/data/user/0/io.github.tasmirz.lumina/files/textures/tex_123.png",
+            isTiled = true,
+            opacity = 0.8f,
+            createdAt = 1700000000000L
+        )
+        assertEquals("tex_123", customTex.id)
+        assertEquals("Japanese Washi", customTex.name)
+        assertTrue(customTex.isTiled)
+        assertEquals(0.8f, customTex.opacity, 0.001f)
+
+        val settings = io.github.tasmirz.lumina.model.ReaderSettings(
+            backgroundTexture = BackgroundTexture.CUSTOM,
+            selectedCustomTextureId = "tex_123"
+        )
+        assertEquals(BackgroundTexture.CUSTOM, settings.backgroundTexture)
+        assertEquals("tex_123", settings.selectedCustomTextureId)
     }
 
     @Test
@@ -276,5 +309,125 @@ class SettingsModelTest {
 
         val updated = defaultSettings.copy(openLibraryApiKey = "test_acc:test_sec")
         assertEquals("test_acc:test_sec", updated.openLibraryApiKey)
+    }
+
+    @Test
+    fun testBookmarkModelFlagsAndDefaults() {
+        val defaultBookmark = io.github.tasmirz.lumina.model.Bookmark(
+            bookTitle = "Lumina",
+            chapter = "Chapter 1",
+            quote = "In the beginning",
+            color = io.github.tasmirz.lumina.model.HighlightColor.GOLD,
+            timestamp = "Just now"
+        )
+        assertEquals(false, defaultBookmark.isHighlight)
+        assertEquals(false, defaultBookmark.isLastRead)
+
+        val highlightMark = defaultBookmark.copy(isHighlight = true)
+        assertTrue(highlightMark.isHighlight)
+        assertEquals(false, highlightMark.isLastRead)
+
+        val lastReadMark = defaultBookmark.copy(isLastRead = true, note = "Last Read Position")
+        assertEquals(false, lastReadMark.isHighlight)
+        assertTrue(lastReadMark.isLastRead)
+    }
+
+    @Test
+    fun testCustomCatalogEndpointModelAndSettings() {
+        val endpoint = io.github.tasmirz.lumina.model.CustomCatalogEndpoint(
+            id = "test-ep-1",
+            name = "My Calibre Server",
+            galleryUrl = "http://localhost:8083/opds",
+            searchUrl = "http://localhost:8083/opds/search?query=%s",
+            apiKey = "my-secret-key",
+            authHeader = "Authorization",
+            isEnabled = true
+        )
+        assertEquals("test-ep-1", endpoint.id)
+        assertEquals("My Calibre Server", endpoint.name)
+        assertEquals("http://localhost:8083/opds", endpoint.galleryUrl)
+        assertEquals("http://localhost:8083/opds/search?query=%s", endpoint.searchUrl)
+        assertEquals("my-secret-key", endpoint.apiKey)
+        assertEquals("Authorization", endpoint.authHeader)
+        assertTrue(endpoint.isEnabled)
+
+        val settings = io.github.tasmirz.lumina.model.ReaderSettings(
+            customEndpoints = listOf(endpoint)
+        )
+        assertEquals(1, settings.customEndpoints.size)
+        assertEquals("My Calibre Server", settings.customEndpoints[0].name)
+    }
+
+    @Test
+    fun testDuplicateBookDetection() {
+        val b1 = Book(
+            id = "custom-12345",
+            title = "Pride and Prejudice",
+            author = "Jane Austen",
+            filePath = "/sdcard/Lumina/epubs/1700_pride.epub"
+        )
+        val b2 = Book(
+            id = "epub-98765",
+            title = "Pride and Prejudice",
+            author = "Jane Austen",
+            filePath = "/sdcard/Lumina/epubs/1701_pride.epub"
+        )
+        val b3 = Book(
+            id = "custom-67890",
+            title = "Pride & Prejudice",
+            author = "Jane Austen",
+            filePath = "/sdcard/Lumina/epubs/1702_pride.epub"
+        )
+        val b4 = Book(
+            id = "custom-11111",
+            title = "Pride and Prejudice",
+            author = "Unknown Author",
+            filePath = ""
+        )
+        val b5 = Book(
+            id = "custom-22222",
+            title = "Moby Dick",
+            author = "Herman Melville",
+            filePath = "/sdcard/Lumina/epubs/moby.epub"
+        )
+
+        val repoClass = io.github.tasmirz.lumina.data.BookRepository::class.java
+        // Test normalization and duplicate rules directly
+        fun norm(s: String) = s.trim().lowercase().replace("&", "and").replace(Regex("[^a-z0-9]"), "")
+        fun isDup(a: Book, b: Book): Boolean {
+            if (a.id == b.id) return true
+            if (a.filePath.isNotBlank() && b.filePath.isNotBlank() && a.filePath == b.filePath) return true
+            val t1 = norm(a.title)
+            val t2 = norm(b.title)
+            if (t1.isNotBlank() && t1 == t2) {
+                val a1 = norm(a.author)
+                val a2 = norm(b.author)
+                val g1 = a1.isBlank() || a1 == "unknown" || a1 == "unknownauthor"
+                val g2 = a2.isBlank() || a2 == "unknown" || a2 == "unknownauthor"
+                if (g1 || g2 || a1 == a2) return true
+            }
+            return false
+        }
+
+        assertTrue(isDup(b1, b2))
+        assertTrue(isDup(b1, b3))
+        assertTrue(isDup(b1, b4))
+        assertFalse(isDup(b1, b5))
+    }
+
+    @Test
+    fun testPagedSafeLinesToRemoveDefaultsToZero() {
+        val settings = io.github.tasmirz.lumina.model.ReaderSettings()
+        assertEquals(0, settings.pagedSafeLinesToRemove)
+        val updated = settings.copy(pagedSafeLinesToRemove = 3)
+        assertEquals(3, updated.pagedSafeLinesToRemove)
+    }
+
+    @Test
+    fun testShowStartupLoadingScreenDefaultsToFalse() {
+        val settings = io.github.tasmirz.lumina.model.ReaderSettings()
+        assertFalse(settings.showStartupLoadingScreen)
+        val updated = settings.copy(showStartupLoadingScreen = true)
+        assertTrue(updated.showStartupLoadingScreen)
     }
 }

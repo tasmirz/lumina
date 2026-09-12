@@ -41,6 +41,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -54,11 +56,14 @@ import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.UnfoldMore
 import io.github.tasmirz.lumina.model.ReadingMode
 import io.github.tasmirz.lumina.model.Bookmark
+import io.github.tasmirz.lumina.model.BackgroundTexture
+import io.github.tasmirz.lumina.model.CustomTextureData
 import io.github.tasmirz.lumina.model.HighlightColor
 import io.github.tasmirz.lumina.model.ThemeFamily
 import io.github.tasmirz.lumina.model.ThemeMode
 import io.github.tasmirz.lumina.model.ThemeVariant
 import io.github.tasmirz.lumina.model.TypefaceMode
+import io.github.tasmirz.lumina.model.toFontFamily
 import io.github.tasmirz.lumina.model.OrbSize
 import io.github.tasmirz.lumina.model.OrbMenuSize
 import io.github.tasmirz.lumina.model.OrbColor
@@ -183,12 +188,18 @@ fun BookmarksSheet(
     onDismiss: () -> Unit
 ) {
     var searchQuery by remember { mutableStateOf("") }
+    var selectedFilter by remember { mutableStateOf("ALL") }
 
-    val filteredBookmarks = remember(bookmarks, searchQuery) {
-        if (searchQuery.isBlank()) bookmarks
+    val filteredBookmarks = remember(bookmarks, searchQuery, selectedFilter) {
+        val typeFiltered = when (selectedFilter) {
+            "BOOKMARKS" -> bookmarks.filter { !it.isHighlight }
+            "HIGHLIGHTS" -> bookmarks.filter { it.isHighlight }
+            else -> bookmarks
+        }
+        if (searchQuery.isBlank()) typeFiltered
         else {
             val q = searchQuery.trim().lowercase()
-            bookmarks.filter {
+            typeFiltered.filter {
                 it.quote.lowercase().contains(q) ||
                 it.note.lowercase().contains(q) ||
                 it.chapter.lowercase().contains(q) ||
@@ -216,7 +227,7 @@ fun BookmarksSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false),
         containerColor = MaterialTheme.colorScheme.surface,
         contentColor = MaterialTheme.colorScheme.onSurface
     ) {
@@ -232,7 +243,7 @@ fun BookmarksSheet(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Highlights & Bookmarks (${filteredBookmarks.size}${if (searchQuery.isNotBlank()) " of ${bookmarks.size}" else ""})",
+                    text = "Highlights & Bookmarks (${filteredBookmarks.size}${if (searchQuery.isNotBlank() || selectedFilter != "ALL") " of ${bookmarks.size}" else ""})",
                     fontFamily = FontFamily.SansSerif,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Medium
@@ -280,8 +291,33 @@ fun BookmarksSheet(
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 12.dp)
+                    .padding(bottom = 8.dp)
             )
+
+            // Category Filter Chips: All, Bookmarks, Highlights
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                FilterChip(
+                    selected = selectedFilter == "ALL",
+                    onClick = { selectedFilter = "ALL" },
+                    label = { Text("All", fontSize = 12.sp) }
+                )
+                FilterChip(
+                    selected = selectedFilter == "BOOKMARKS",
+                    onClick = { selectedFilter = "BOOKMARKS" },
+                    label = { Text("Bookmarks", fontSize = 12.sp) }
+                )
+                FilterChip(
+                    selected = selectedFilter == "HIGHLIGHTS",
+                    onClick = { selectedFilter = "HIGHLIGHTS" },
+                    label = { Text("Highlights", fontSize = 12.sp) }
+                )
+            }
 
             if (bookmarks.isEmpty()) {
                 Box(
@@ -304,7 +340,7 @@ fun BookmarksSheet(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "No highlights or notes match \"$searchQuery\".",
+                        text = if (searchQuery.isNotBlank()) "No highlights or notes match \"$searchQuery\"." else "No entries in this category.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -404,14 +440,46 @@ fun BookmarksSheet(
                                             horizontalArrangement = Arrangement.SpaceBetween,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            val locationText = if (mark.pageNumber > 0) "Page ${mark.pageNumber} • ${mark.chapter}" else mark.chapter
-                                            Text(
-                                                text = locationText,
-                                                fontFamily = FontFamily.SansSerif,
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Medium,
-                                                color = MaterialTheme.colorScheme.secondary
-                                            )
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                if (mark.isLastRead) {
+                                                    Surface(
+                                                        color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.7f),
+                                                        shape = RoundedCornerShape(6.dp)
+                                                    ) {
+                                                        Row(
+                                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            Icon(
+                                                                Icons.Default.Bookmark,
+                                                                contentDescription = null,
+                                                                tint = MaterialTheme.colorScheme.tertiary,
+                                                                modifier = Modifier.size(11.dp)
+                                                            )
+                                                            Spacer(modifier = Modifier.width(3.dp))
+                                                            Text(
+                                                                text = "Last Read",
+                                                                fontFamily = FontFamily.SansSerif,
+                                                                fontSize = 10.sp,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = MaterialTheme.colorScheme.onTertiaryContainer
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                                val locationText = if (mark.pageNumber > 0) "Page ${mark.pageNumber} • ${mark.chapter}" else mark.chapter
+                                                Text(
+                                                    text = locationText,
+                                                    fontFamily = FontFamily.SansSerif,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Medium,
+                                                    color = MaterialTheme.colorScheme.secondary
+                                                )
+                                            }
                                             IconButton(
                                                 onClick = { onDelete(mark.id) },
                                                 modifier = Modifier.size(24.dp)
@@ -505,6 +573,11 @@ fun AppearanceSheet(
     themeVariant: ThemeVariant = ThemeVariant.LIGHT,
     onThemeVariantChange: (ThemeVariant) -> Unit = {},
     quickThemes: Set<ThemeFamily> = setOf(ThemeFamily.PAPER, ThemeFamily.MODERN),
+    backgroundTexture: BackgroundTexture = BackgroundTexture.NONE,
+    customTextures: List<CustomTextureData> = emptyList(),
+    selectedCustomTextureId: String = "",
+    onBackgroundTextureChange: (BackgroundTexture) -> Unit = {},
+    onSelectCustomTexture: (CustomTextureData) -> Unit = {},
     themeMode: ThemeMode = ThemeMode.WARM_PAPER,
     onThemeChange: (ThemeMode) -> Unit = {},
     showAssistant: Boolean = true,
@@ -537,7 +610,7 @@ fun AppearanceSheet(
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp)
-                .padding(bottom = 36.dp)
+                .padding(bottom = 28.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -547,119 +620,141 @@ fun AppearanceSheet(
                 Text(
                     text = "Reading Settings",
                     fontFamily = FontFamily.SansSerif,
-                    fontSize = 16.sp,
+                    fontSize = 15.sp,
                     fontWeight = FontWeight.Medium
                 )
-                IconButton(onClick = onDismiss) {
-                    Icon(Icons.Default.Close, contentDescription = "Close")
+                IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Default.Close, contentDescription = "Close", modifier = Modifier.size(18.dp))
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // Reading Mode Selector
-            Text("Reading Mode", fontFamily = FontFamily.SansSerif, fontSize = 13.sp, fontWeight = FontWeight.Normal)
             Spacer(modifier = Modifier.height(8.dp))
+
+            val sectionLabelWidth = 104.dp
+
+            // 1. Reading Mode Selector — Right-aligned segmented switcher
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
-                    .padding(3.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                listOf(
-                    Triple(ReadingMode.SCROLL, "Continuous", Icons.Filled.SwapVert),
-                    Triple(ReadingMode.PAGED, "Full Paged", Icons.AutoMirrored.Filled.MenuBook),
-                    Triple(ReadingMode.PAGED_SCROLL, "Paged + Scroll", Icons.Filled.UnfoldMore)
-                ).forEach { (mode, label, icon) ->
-                    val isSelected = readingMode == mode
-                    Surface(
-                        shape = RoundedCornerShape(9.dp),
-                        color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(9.dp))
-                            .clickable { onReadingModeChange(mode) }
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(vertical = 8.dp, horizontal = 2.dp),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
+                Text(
+                    text = "Reading Mode",
+                    fontFamily = FontFamily.SansSerif,
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                        .padding(2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    listOf(
+                        Triple(ReadingMode.SCROLL, "Scroll", Icons.Filled.SwapVert),
+                        Triple(ReadingMode.PAGED, "Paged", Icons.AutoMirrored.Filled.MenuBook),
+                        Triple(ReadingMode.PAGED_SCROLL, "Paged+", Icons.Filled.UnfoldMore)
+                    ).forEach { (mode, label, icon) ->
+                        val isSelected = readingMode == mode
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(14.dp))
+                                .clickable { onReadingModeChange(mode) }
                         ) {
-                            Icon(
-                                imageVector = icon,
-                                contentDescription = label,
-                                modifier = Modifier.size(13.dp),
-                                tint = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.width(3.dp))
-                            Text(
-                                text = label,
-                                fontSize = 10.5.sp,
-                                maxLines = 1,
-                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                                color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = label,
+                                    modifier = Modifier.size(11.dp),
+                                    tint = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text(
+                                    text = label,
+                                    fontSize = 10.5.sp,
+                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                    color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
-            // Typeface - displays user-selected quickFonts (or fallback to Serif and Sans)
+            // 2. Typeface - Segmented switcher with actual font preview
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Typeface", fontFamily = FontFamily.SansSerif, fontSize = 13.sp, fontWeight = FontWeight.Normal)
                 Text(
-                    text = "${quickFonts.size} available",
+                    text = "Typeface",
                     fontFamily = FontFamily.SansSerif,
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.width(sectionLabelWidth)
                 )
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            val fontsToShow = if (quickFonts.isNotEmpty()) quickFonts.toList() else listOf(TypefaceMode.SERIF, TypefaceMode.SANS)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                fontsToShow.forEach { mode ->
-                    val isSelected = mode == typeface
-                    FilterChip(
-                        selected = isSelected,
-                        onClick = { onTypefaceChange(mode) },
-                        label = {
-                            Text(
-                                text = mode.displayName,
-                                fontFamily = FontFamily.SansSerif,
-                                fontSize = 12.sp,
-                                maxLines = 1,
-                                fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal
-                            )
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                        .horizontalScroll(rememberScrollState())
+                        .padding(2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TypefaceMode.entries.forEach { mode ->
+                        val isSelected = mode == typeface
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(14.dp))
+                                .clickable { onTypefaceChange(mode) }
+                        ) {
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = mode.displayName,
+                                    fontFamily = mode.toFontFamily(),
+                                    fontSize = 10.5.sp,
+                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                    color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
-                    )
+                    }
                 }
             }
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
-            // Color Themes & Variant - Fully unified with ThemeFamily & ThemeVariant
+            // 3. Color Themes & Variant - Right-aligned mode switcher + full-width theme family cards
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Color Theme", fontFamily = FontFamily.SansSerif, fontSize = 13.sp, fontWeight = FontWeight.Normal)
+                Text(
+                    text = "Color Theme",
+                    fontFamily = FontFamily.SansSerif,
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.Medium
+                )
                 Row(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(20.dp))
+                        .clip(RoundedCornerShape(16.dp))
                         .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
                         .padding(2.dp),
                     horizontalArrangement = Arrangement.spacedBy(2.dp),
@@ -672,10 +767,10 @@ fun AppearanceSheet(
                     ).forEach { (variant, label, icon) ->
                         val isSelected = themeVariant == variant
                         Surface(
-                            shape = RoundedCornerShape(16.dp),
+                            shape = RoundedCornerShape(14.dp),
                             color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
                             modifier = Modifier
-                                .clip(RoundedCornerShape(16.dp))
+                                .clip(RoundedCornerShape(14.dp))
                                 .clickable { onThemeVariantChange(variant) }
                         ) {
                             Row(
@@ -700,13 +795,13 @@ fun AppearanceSheet(
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(10.dp))
-            val familiesToShow = if (quickThemes.isNotEmpty()) quickThemes.toList() else ThemeFamily.entries.take(4)
+            Spacer(modifier = Modifier.height(8.dp))
+            val familiesToShow = ThemeFamily.entries
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 familiesToShow.forEach { family ->
                     val isSelected = family == themeFamily
@@ -717,6 +812,8 @@ fun AppearanceSheet(
                         ThemeFamily.FOREST -> if (!isDark) Color(0xFFEFF5F0) else Color(0xFF131A15)
                         ThemeFamily.PARCHMENT -> if (!isDark) Color(0xFFF5EEDB) else Color(0xFF211B14)
                         ThemeFamily.LINEN -> if (!isDark) Color(0xFFECE7DF) else Color(0xFF1B1B19)
+                        ThemeFamily.HIGH_CONTRAST -> if (!isDark) Color(0xFFFFFFFF) else Color(0xFF000000)
+                        ThemeFamily.COLORBLIND -> if (!isDark) Color(0xFFF6F6F2) else Color(0xFF12161F)
                         ThemeFamily.CUSTOM -> Color(0xFF1C1917)
                     }
                     val textPreview = when (family) {
@@ -725,19 +822,21 @@ fun AppearanceSheet(
                         ThemeFamily.FOREST -> if (!isDark) Color(0xFF1D2B20) else Color(0xFFD3E4D6)
                         ThemeFamily.PARCHMENT -> if (!isDark) Color(0xFF2A2118) else Color(0xFFE8DCBE)
                         ThemeFamily.LINEN -> if (!isDark) Color(0xFF242321) else Color(0xFFDDD8CF)
+                        ThemeFamily.HIGH_CONTRAST -> if (!isDark) Color(0xFF000000) else Color(0xFFFFFFFF)
+                        ThemeFamily.COLORBLIND -> if (!isDark) Color(0xFF101828) else Color(0xFFF0F4F8)
                         ThemeFamily.CUSTOM -> Color(0xFFE7E5E4)
                     }
                     Surface(
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(10.dp),
                         color = bgPreview,
                         border = BorderStroke(
-                            width = if (isSelected) 2.5.dp else 1.dp,
+                            width = if (isSelected) 2.dp else 0.8.dp,
                             color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
                         ),
                         modifier = Modifier
-                            .widthIn(min = 78.dp)
-                            .height(42.dp)
-                            .clip(RoundedCornerShape(12.dp))
+                            .widthIn(min = 72.dp)
+                            .height(36.dp)
+                            .clip(RoundedCornerShape(10.dp))
                             .clickable { onThemeFamilyChange(family) }
                     ) {
                         Box(
@@ -748,7 +847,7 @@ fun AppearanceSheet(
                         ) {
                             Text(
                                 text = family.displayName,
-                                fontSize = 12.sp,
+                                fontSize = 11.5.sp,
                                 maxLines = 1,
                                 fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                                 color = textPreview
@@ -758,38 +857,74 @@ fun AppearanceSheet(
                 }
             }
 
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // 4. Surface Texture Row — Immediately below Color Theme
+            val isDarkTheme = themeVariant == ThemeVariant.DARK
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf(
+                    BackgroundTexture.NONE to "Clean",
+                    BackgroundTexture.GRAIN to "Paper Grain",
+                    BackgroundTexture.PARCHMENT to "Parchment",
+                    BackgroundTexture.LINEN to "Linen",
+                    BackgroundTexture.CANVAS to "Canvas",
+                    BackgroundTexture.KRAFT to "Kraft",
+                    BackgroundTexture.RULED_FINE to "Fine Lined",
+                    BackgroundTexture.RULED_WIDE to "Wide Lined",
+                    BackgroundTexture.RULED_GRID to "Grid Lined"
+                ).forEach { (texture, label) ->
+                    val isSelected = backgroundTexture == texture
+                    TexturePreviewCard(
+                        label = label,
+                        isSelected = isSelected,
+                        texture = texture,
+                        isDark = isDarkTheme,
+                        onClick = { onBackgroundTextureChange(texture) }
+                    )
+                }
+
+                customTextures.forEach { customTex ->
+                    val isSelected = backgroundTexture == BackgroundTexture.CUSTOM && selectedCustomTextureId == customTex.id
+                    TexturePreviewCard(
+                        label = customTex.name,
+                        isSelected = isSelected,
+                        texture = BackgroundTexture.CUSTOM,
+                        isDark = isDarkTheme,
+                        onClick = { onSelectCustomTexture(customTex) }
+                    )
+                }
+            }
+
             Spacer(modifier = Modifier.height(14.dp))
             HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
-            // Floating AI Assistant Section
+            // Floating AI Assistant Section (Compact)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Floating AI Assistant Orb",
-                        fontFamily = FontFamily.SansSerif,
-                        fontSize = 13.5.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = "Movable voice & action orb with inward arc",
-                        fontFamily = FontFamily.SansSerif,
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                Text(
+                    text = "Floating AI Assistant Orb",
+                    fontFamily = FontFamily.SansSerif,
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
                 Switch(
                     checked = showAssistant,
-                    onCheckedChange = onToggleAssistant
+                    onCheckedChange = onToggleAssistant,
+                    modifier = Modifier.size(width = 48.dp, height = 28.dp)
                 )
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
             // Open Advanced Settings Button
             Surface(
@@ -805,7 +940,7 @@ fun AppearanceSheet(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 13.dp),
+                        .padding(horizontal = 16.dp, vertical = 11.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -815,7 +950,7 @@ fun AppearanceSheet(
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(36.dp)
+                                .size(32.dp)
                                 .clip(CircleShape)
                                 .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
                             contentAlignment = Alignment.Center
@@ -824,7 +959,7 @@ fun AppearanceSheet(
                                 imageVector = Icons.Default.Tune,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(16.dp)
                             )
                         }
                         Spacer(modifier = Modifier.width(12.dp))
@@ -832,7 +967,7 @@ fun AppearanceSheet(
                             text = "Open Advanced Settings",
                             fontFamily = FontFamily.SansSerif,
                             fontWeight = FontWeight.Medium,
-                            fontSize = 14.sp,
+                            fontSize = 13.5.sp,
                             maxLines = 1,
                             color = MaterialTheme.colorScheme.onSurface
                         )
@@ -840,11 +975,12 @@ fun AppearanceSheet(
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
                         contentDescription = "Open Advanced Settings",
-                        modifier = Modifier.size(14.dp),
+                        modifier = Modifier.size(13.dp),
                         tint = MaterialTheme.colorScheme.primary
                     )
                 }
             }
+            Spacer(modifier = Modifier.height(12.dp))
         }
     }
 }
@@ -860,7 +996,7 @@ fun TableOfContentsSheet(
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false),
         containerColor = MaterialTheme.colorScheme.surface,
         contentColor = MaterialTheme.colorScheme.onSurface
     ) {
@@ -1254,3 +1390,213 @@ fun BookContextMenuSheet(
         }
     }
 }
+
+@Composable
+fun TexturePreviewCard(
+    label: String,
+    isSelected: Boolean,
+    texture: BackgroundTexture,
+    isDark: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val baseBg = when (texture) {
+        BackgroundTexture.NONE -> if (isDark) Color(0xFF1E1E1E) else Color(0xFFF2F2F2)
+        BackgroundTexture.GRAIN -> if (isDark) Color(0xFF221F1C) else Color(0xFFFAF5ED)
+        BackgroundTexture.PARCHMENT -> if (isDark) Color(0xFF262017) else Color(0xFFF7EED9)
+        BackgroundTexture.LINEN -> if (isDark) Color(0xFF202022) else Color(0xFFEDE9E3)
+        BackgroundTexture.CANVAS -> if (isDark) Color(0xFF1F2220) else Color(0xFFECEAE2)
+        BackgroundTexture.KRAFT -> if (isDark) Color(0xFF281E15) else Color(0xFFE8D7BE)
+        BackgroundTexture.RULED_FINE,
+        BackgroundTexture.RULED_WIDE,
+        BackgroundTexture.RULED_GRID -> if (isDark) Color(0xFF1B2026) else Color(0xFFF7F9FC)
+        BackgroundTexture.CUSTOM -> if (isDark) Color(0xFF252528) else Color(0xFFEBEBEB)
+    }
+    val textColor = when (texture) {
+        BackgroundTexture.NONE -> if (isDark) Color(0xFFE0E0E0) else Color(0xFF222222)
+        BackgroundTexture.GRAIN -> if (isDark) Color(0xFFEADBC8) else Color(0xFF3B2E24)
+        BackgroundTexture.PARCHMENT -> if (isDark) Color(0xFFE8DCBE) else Color(0xFF38291B)
+        BackgroundTexture.LINEN -> if (isDark) Color(0xFFDDD8CF) else Color(0xFF2C2B29)
+        BackgroundTexture.CANVAS -> if (isDark) Color(0xFFD6DCD7) else Color(0xFF2B332C)
+        BackgroundTexture.KRAFT -> if (isDark) Color(0xFFDEC8AA) else Color(0xFF3D2C1B)
+        BackgroundTexture.RULED_FINE,
+        BackgroundTexture.RULED_WIDE,
+        BackgroundTexture.RULED_GRID -> if (isDark) Color(0xFFD0DFEE) else Color(0xFF203854)
+        BackgroundTexture.CUSTOM -> if (isDark) Color(0xFFE0E0E0) else Color(0xFF222222)
+    }
+
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = Color.Transparent,
+        border = BorderStroke(
+            width = if (isSelected) 2.dp else 0.8.dp,
+            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+        ),
+        modifier = modifier
+            .widthIn(min = 72.dp)
+            .height(36.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .fillMaxSize()
+                .background(baseBg)
+                .drawBehind {
+                    val strokeColor = if (isDark) Color.White else Color.Black
+                    when (texture) {
+                        BackgroundTexture.GRAIN -> {
+                            val dotAlpha = if (isDark) 0.32f else 0.22f
+                            for (i in 0 until 55) {
+                                val x = ((i * 37 + 13) % size.width.toInt().coerceAtLeast(1)).toFloat()
+                                val y = ((i * 59 + 29) % size.height.toInt().coerceAtLeast(1)).toFloat()
+                                drawCircle(
+                                    color = strokeColor.copy(alpha = dotAlpha),
+                                    radius = if (i % 3 == 0) 1.8f else 1.1f,
+                                    center = Offset(x, y)
+                                )
+                            }
+                        }
+                        BackgroundTexture.PARCHMENT -> {
+                            val fiberAlpha = if (isDark) 0.38f else 0.30f
+                            val fiberColor = if (isDark) Color(0xFFE0B888) else Color(0xFF6A4015)
+                            for (i in 0 until 24) {
+                                val sx = ((i * 47 + 7) % size.width.toInt().coerceAtLeast(1)).toFloat()
+                                val sy = ((i * 31 + 11) % size.height.toInt().coerceAtLeast(1)).toFloat()
+                                val len = 8f + (i % 5) * 4f
+                                drawLine(
+                                    color = fiberColor.copy(alpha = fiberAlpha),
+                                    start = Offset(sx, sy),
+                                    end = Offset(sx + len, sy + len * 0.45f),
+                                    strokeWidth = 1.4f
+                                )
+                            }
+                        }
+                        BackgroundTexture.LINEN -> {
+                            val lineAlpha = if (isDark) 0.26f else 0.18f
+                            val step = 5.dp.toPx()
+                            var x = 0f
+                            while (x < size.width) {
+                                drawLine(
+                                    color = strokeColor.copy(alpha = lineAlpha),
+                                    start = Offset(x, 0f),
+                                    end = Offset(x, size.height),
+                                    strokeWidth = 1.0f
+                                )
+                                x += step
+                            }
+                            var y = 0f
+                            while (y < size.height) {
+                                drawLine(
+                                    color = strokeColor.copy(alpha = lineAlpha),
+                                    start = Offset(0f, y),
+                                    end = Offset(size.width, y),
+                                    strokeWidth = 1.0f
+                                )
+                                y += step
+                            }
+                        }
+                        BackgroundTexture.CANVAS -> {
+                            val lineAlpha = if (isDark) 0.28f else 0.20f
+                            val step = 7.dp.toPx()
+                            var x = -size.height
+                            while (x < size.width + size.height) {
+                                drawLine(
+                                    color = strokeColor.copy(alpha = lineAlpha),
+                                    start = Offset(x, 0f),
+                                    end = Offset(x + size.height, size.height),
+                                    strokeWidth = 1.2f
+                                )
+                                drawLine(
+                                    color = strokeColor.copy(alpha = lineAlpha),
+                                    start = Offset(x + size.height, 0f),
+                                    end = Offset(x, size.height),
+                                    strokeWidth = 1.2f
+                                )
+                                x += step
+                            }
+                        }
+                        BackgroundTexture.KRAFT -> {
+                            val speckColor = if (isDark) Color(0xFFD4A56E) else Color(0xFF5A3612)
+                            for (i in 0 until 35) {
+                                val x = ((i * 53 + 17) % size.width.toInt().coerceAtLeast(1)).toFloat()
+                                val y = ((i * 41 + 19) % size.height.toInt().coerceAtLeast(1)).toFloat()
+                                drawCircle(
+                                    color = speckColor.copy(alpha = if (i % 2 == 0) 0.40f else 0.25f),
+                                    radius = if (i % 4 == 0) 2.4f else 1.4f,
+                                    center = Offset(x, y)
+                                )
+                            }
+                        }
+                        BackgroundTexture.RULED_FINE -> {
+                            val lineAlpha = if (isDark) 0.55f else 0.45f
+                            val lineColor = if (isDark) Color(0xFF8AB4F8) else Color(0xFF2A60A0)
+                            val step = 7.dp.toPx()
+                            var y = step
+                            while (y < size.height) {
+                                drawLine(
+                                    color = lineColor.copy(alpha = lineAlpha),
+                                    start = Offset(0f, y),
+                                    end = Offset(size.width, y),
+                                    strokeWidth = 1.3f
+                                )
+                                y += step
+                            }
+                        }
+                        BackgroundTexture.RULED_WIDE -> {
+                            val lineAlpha = if (isDark) 0.58f else 0.48f
+                            val lineColor = if (isDark) Color(0xFF8AB4F8) else Color(0xFF2A60A0)
+                            val step = 12.dp.toPx()
+                            var y = step
+                            while (y < size.height) {
+                                drawLine(
+                                    color = lineColor.copy(alpha = lineAlpha),
+                                    start = Offset(0f, y),
+                                    end = Offset(size.width, y),
+                                    strokeWidth = 1.5f
+                                )
+                                y += step
+                            }
+                        }
+                        BackgroundTexture.RULED_GRID -> {
+                            val lineAlpha = if (isDark) 0.42f else 0.35f
+                            val lineColor = if (isDark) Color(0xFF8AB4F8) else Color(0xFF2A60A0)
+                            val step = 7.dp.toPx()
+                            var x = 0f
+                            while (x < size.width) {
+                                drawLine(
+                                    color = lineColor.copy(alpha = lineAlpha),
+                                    start = Offset(x, 0f),
+                                    end = Offset(x, size.height),
+                                    strokeWidth = 1.1f
+                                )
+                                x += step
+                            }
+                            var y = 0f
+                            while (y < size.height) {
+                                drawLine(
+                                    color = lineColor.copy(alpha = lineAlpha),
+                                    start = Offset(0f, y),
+                                    end = Offset(size.width, y),
+                                    strokeWidth = 1.1f
+                                )
+                                y += step
+                            }
+                        }
+                        else -> {}
+                    }
+                }
+                .padding(horizontal = 12.dp)
+        ) {
+            Text(
+                text = label,
+                fontSize = 11.5.sp,
+                maxLines = 1,
+                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                color = textColor
+            )
+        }
+    }
+}
+

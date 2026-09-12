@@ -12,6 +12,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -43,7 +44,7 @@ fun ReaderTopBar(
     val context = LocalContext.current
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-    val isVisible = (if (isLandscape) isUiVisible else (isUiVisible || readingMode == ReadingMode.PAGED)) &&
+    val isVisible = (if (isLandscape) isUiVisible else (isUiVisible || readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL)) &&
             voiceState == AssistantVoiceState.IDLE &&
             !showInBookSearchDialog
 
@@ -55,11 +56,17 @@ fun ReaderTopBar(
     ) {
         val topCutout = WindowInsets.displayCutout.asPaddingValues().calculateTopPadding()
         val topStatusBar = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-        val topSafeInset = maxOf(topCutout, topStatusBar, 14.dp)
+        val topSafeInset = maxOf(topCutout, topStatusBar, 14.dp) + 9.dp
+
+        val surfaceColor = if (readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL) {
+            Color.Transparent
+        } else {
+            MaterialTheme.colorScheme.background.copy(alpha = 0.95f)
+        }
 
         Surface(
             modifier = Modifier.fillMaxWidth(),
-            color = MaterialTheme.colorScheme.background.copy(alpha = 0.95f)
+            color = surfaceColor
         ) {
             Column(
                 modifier = Modifier
@@ -69,15 +76,16 @@ fun ReaderTopBar(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(44.dp)
-                        .padding(horizontal = 16.dp),
+                        .heightIn(min = 48.dp)
+                        .padding(horizontal = 21.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column(
                         modifier = Modifier
                             .weight(1f)
-                            .clickable { onOpenToc() },
+                            .clickable { onOpenToc() }
+                            .padding(vertical = 3.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
@@ -91,7 +99,7 @@ fun ReaderTopBar(
                             textAlign = TextAlign.Center,
                             color = MaterialTheme.colorScheme.onBackground
                         )
-                        Spacer(modifier = Modifier.height(1.dp))
+                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = activeChapterTitle,
                             fontFamily = FontFamily.SansSerif,
@@ -102,6 +110,7 @@ fun ReaderTopBar(
                             textAlign = TextAlign.Center,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
                         )
+                        Spacer(modifier = Modifier.height(3.dp))
                     }
 
                     if (assistantOrbStyle == "TOP_BAR_BUTTON") {

@@ -9,6 +9,8 @@ import io.github.tasmirz.lumina.model.BookCharacter
 import io.github.tasmirz.lumina.model.BookLore
 import io.github.tasmirz.lumina.model.Bookmark
 import io.github.tasmirz.lumina.model.Chapter
+import io.github.tasmirz.lumina.model.CustomCatalogEndpoint
+import io.github.tasmirz.lumina.model.CustomTextureData
 import io.github.tasmirz.lumina.model.CustomThemeData
 import io.github.tasmirz.lumina.model.HighlightColor
 import io.github.tasmirz.lumina.model.SceneMatch
@@ -16,11 +18,30 @@ import io.github.tasmirz.lumina.model.WishlistBook
 import org.json.JSONArray
 import org.json.JSONObject
 
-class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null, DATABASE_VERSION) {
+class LuminaDatabaseHelper(private val context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null, DATABASE_VERSION) {
 
     companion object {
         const val DATABASE_NAME = "lumina_reader.db"
-        const val DATABASE_VERSION = 11
+        const val DATABASE_VERSION = 15
+
+        // Custom Textures table
+        const val TABLE_CUSTOM_TEXTURES = "custom_textures"
+        const val COL_TEX_ID = "id"
+        const val COL_TEX_NAME = "name"
+        const val COL_TEX_IMAGE_PATH = "image_path"
+        const val COL_TEX_IS_TILED = "is_tiled"
+        const val COL_TEX_OPACITY = "opacity"
+        const val COL_TEX_CREATED_AT = "created_at"
+
+        // Custom Catalog Endpoints table
+        const val TABLE_CUSTOM_ENDPOINTS = "custom_endpoints"
+        const val COL_EP_ID = "id"
+        const val COL_EP_NAME = "name"
+        const val COL_EP_GALLERY_URL = "gallery_url"
+        const val COL_EP_SEARCH_URL = "search_url"
+        const val COL_EP_API_KEY = "api_key"
+        const val COL_EP_AUTH_HEADER = "auth_header"
+        const val COL_EP_IS_ENABLED = "is_enabled"
 
         // Normalized Chapters table (stores chunked chapter content per book)
         const val TABLE_CHAPTERS = "book_chapters"
@@ -101,6 +122,8 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
         const val COL_BOOKMARK_NOTE = "note"
         const val COL_TIMESTAMP = "timestamp"
         const val COL_BOOKMARK_PAGE = "page_number"
+        const val COL_IS_HIGHLIGHT = "is_highlight"
+        const val COL_IS_LAST_READ = "is_last_read"
 
         // Wishlist table
         const val TABLE_WISHLIST = "wishlist"
@@ -231,7 +254,9 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
                 $COL_COLOR TEXT NOT NULL,
                 $COL_BOOKMARK_NOTE TEXT DEFAULT '',
                 $COL_TIMESTAMP TEXT NOT NULL,
-                $COL_BOOKMARK_PAGE INTEGER DEFAULT 0
+                $COL_BOOKMARK_PAGE INTEGER DEFAULT 0,
+                $COL_IS_HIGHLIGHT INTEGER DEFAULT 0,
+                $COL_IS_LAST_READ INTEGER DEFAULT 0
             )
         """.trimIndent())
 
@@ -283,6 +308,17 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
                 $COL_CT_TEXT INTEGER NOT NULL,
                 $COL_CT_ACCENT INTEGER NOT NULL,
                 $COL_CT_CREATED_AT TEXT NOT NULL
+            )
+        """.trimIndent())
+
+        db.execSQL("""
+            CREATE TABLE IF NOT EXISTS $TABLE_CUSTOM_TEXTURES (
+                $COL_TEX_ID TEXT PRIMARY KEY,
+                $COL_TEX_NAME TEXT NOT NULL,
+                $COL_TEX_IMAGE_PATH TEXT NOT NULL,
+                $COL_TEX_IS_TILED INTEGER NOT NULL DEFAULT 1,
+                $COL_TEX_OPACITY REAL NOT NULL DEFAULT 0.5,
+                $COL_TEX_CREATED_AT INTEGER NOT NULL
             )
         """.trimIndent())
 
@@ -357,6 +393,18 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
         try {
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_page_cache_book ON $TABLE_PAGE_CACHE ($COL_PC_BOOK_ID)")
         } catch (_: Exception) {}
+
+        db.execSQL("""
+            CREATE TABLE IF NOT EXISTS $TABLE_CUSTOM_ENDPOINTS (
+                $COL_EP_ID TEXT PRIMARY KEY,
+                $COL_EP_NAME TEXT NOT NULL,
+                $COL_EP_GALLERY_URL TEXT DEFAULT '',
+                $COL_EP_SEARCH_URL TEXT DEFAULT '',
+                $COL_EP_API_KEY TEXT DEFAULT '',
+                $COL_EP_AUTH_HEADER TEXT DEFAULT 'Authorization',
+                $COL_EP_IS_ENABLED INTEGER DEFAULT 1
+            )
+        """.trimIndent())
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -566,6 +614,49 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
                 db.execSQL("CREATE INDEX IF NOT EXISTS idx_page_cache_book ON $TABLE_PAGE_CACHE ($COL_PC_BOOK_ID)")
             } catch (_: Exception) {}
         }
+        if (oldVersion < 12) {
+            try {
+                db.execSQL("ALTER TABLE $TABLE_BOOKMARKS ADD COLUMN $COL_IS_HIGHLIGHT INTEGER DEFAULT 0")
+            } catch (_: Exception) {}
+            try {
+                db.execSQL("ALTER TABLE $TABLE_BOOKMARKS ADD COLUMN $COL_IS_LAST_READ INTEGER DEFAULT 0")
+            } catch (_: Exception) {}
+        }
+        if (oldVersion < 13) {
+            try {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS $TABLE_CUSTOM_ENDPOINTS (
+                        $COL_EP_ID TEXT PRIMARY KEY,
+                        $COL_EP_NAME TEXT NOT NULL,
+                        $COL_EP_GALLERY_URL TEXT DEFAULT '',
+                        $COL_EP_SEARCH_URL TEXT DEFAULT '',
+                        $COL_EP_API_KEY TEXT DEFAULT '',
+                        $COL_EP_AUTH_HEADER TEXT DEFAULT 'Authorization',
+                        $COL_EP_IS_ENABLED INTEGER DEFAULT 1
+                    )
+                """.trimIndent())
+            } catch (_: Exception) {}
+        }
+        if (oldVersion < 14) {
+            try {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS $TABLE_CUSTOM_TEXTURES (
+                        $COL_TEX_ID TEXT PRIMARY KEY,
+                        $COL_TEX_NAME TEXT NOT NULL,
+                        $COL_TEX_IMAGE_PATH TEXT NOT NULL,
+                        $COL_TEX_IS_TILED INTEGER NOT NULL DEFAULT 1,
+                        $COL_TEX_OPACITY REAL NOT NULL DEFAULT 0.5,
+                        $COL_TEX_CREATED_AT INTEGER NOT NULL
+                    )
+                """.trimIndent())
+            } catch (_: Exception) {}
+        }
+        if (oldVersion < 15) {
+            try {
+                // Purge stale accumulated page cache entries to reclaim tens of megabytes of storage
+                db.execSQL("DELETE FROM $TABLE_PAGE_CACHE")
+            } catch (_: Exception) {}
+        }
     }
 
     // --- Bookmarks CRUD ---
@@ -581,6 +672,8 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
             put(COL_BOOKMARK_NOTE, bookmark.note)
             put(COL_TIMESTAMP, bookmark.timestamp)
             put(COL_BOOKMARK_PAGE, bookmark.pageNumber)
+            put(COL_IS_HIGHLIGHT, if (bookmark.isHighlight) 1 else 0)
+            put(COL_IS_LAST_READ, if (bookmark.isLastRead) 1 else 0)
         }
         db.insertWithOnConflict(TABLE_BOOKMARKS, null, values, SQLiteDatabase.CONFLICT_REPLACE)
     }
@@ -603,12 +696,16 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
             val noteCol = it.getColumnIndex(COL_BOOKMARK_NOTE)
             val timeCol = it.getColumnIndexOrThrow(COL_TIMESTAMP)
             val pageCol = it.getColumnIndex(COL_BOOKMARK_PAGE)
+            val isHighlightCol = it.getColumnIndex(COL_IS_HIGHLIGHT)
+            val isLastReadCol = it.getColumnIndex(COL_IS_LAST_READ)
 
             while (it.moveToNext()) {
                 val colorStr = it.getString(colorCol)
                 val color = try { HighlightColor.valueOf(colorStr) } catch (_: Exception) { HighlightColor.GOLD }
                 val note = if (noteCol >= 0) it.getString(noteCol) ?: "" else ""
                 val pageNumber = if (pageCol >= 0) it.getInt(pageCol) else 0
+                val isHighlight = if (isHighlightCol >= 0) it.getInt(isHighlightCol) == 1 else false
+                val isLastRead = if (isLastReadCol >= 0) it.getInt(isLastReadCol) == 1 else false
                 list.add(
                     Bookmark(
                         id = it.getLong(idCol),
@@ -618,7 +715,9 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
                         color = color,
                         note = note,
                         timestamp = it.getString(timeCol),
-                        pageNumber = pageNumber
+                        pageNumber = pageNumber,
+                        isHighlight = isHighlight,
+                        isLastRead = isLastRead
                     )
                 )
             }
@@ -1094,7 +1193,156 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
         db.delete(TABLE_CUSTOM_THEMES, "$COL_CT_ID = ?", arrayOf(themeId))
     }
 
+    // --- Custom Textures CRUD ---
+
+    fun saveCustomTexture(texture: CustomTextureData) {
+        val db = writableDatabase
+        val values = ContentValues().apply {
+            put(COL_TEX_ID, texture.id)
+            put(COL_TEX_NAME, texture.name)
+            put(COL_TEX_IMAGE_PATH, texture.imagePath)
+            put(COL_TEX_IS_TILED, if (texture.isTiled) 1 else 0)
+            put(COL_TEX_OPACITY, texture.opacity)
+            put(COL_TEX_CREATED_AT, texture.createdAt)
+        }
+        db.insertWithOnConflict(TABLE_CUSTOM_TEXTURES, null, values, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    fun getAllCustomTextures(): List<CustomTextureData> {
+        val list = mutableListOf<CustomTextureData>()
+        val db = readableDatabase
+        try {
+            val cursor = db.query(TABLE_CUSTOM_TEXTURES, null, null, null, null, null, "$COL_TEX_CREATED_AT DESC")
+            cursor.use {
+                val idCol = it.getColumnIndexOrThrow(COL_TEX_ID)
+                val nameCol = it.getColumnIndexOrThrow(COL_TEX_NAME)
+                val pathCol = it.getColumnIndexOrThrow(COL_TEX_IMAGE_PATH)
+                val tiledCol = it.getColumnIndexOrThrow(COL_TEX_IS_TILED)
+                val opacityCol = it.getColumnIndexOrThrow(COL_TEX_OPACITY)
+                val createdCol = it.getColumnIndexOrThrow(COL_TEX_CREATED_AT)
+                while (it.moveToNext()) {
+                    list.add(
+                        CustomTextureData(
+                            id = it.getString(idCol),
+                            name = it.getString(nameCol),
+                            imagePath = it.getString(pathCol),
+                            isTiled = it.getInt(tiledCol) == 1,
+                            opacity = it.getFloat(opacityCol),
+                            createdAt = it.getLong(createdCol)
+                        )
+                    )
+                }
+            }
+        } catch (_: Exception) {}
+        return list
+    }
+
+    fun deleteCustomTexture(textureId: String) {
+        val db = writableDatabase
+        db.delete(TABLE_CUSTOM_TEXTURES, "$COL_TEX_ID = ?", arrayOf(textureId))
+    }
+
+    fun updateCustomTextureName(textureId: String, newName: String) {
+        val db = writableDatabase
+        val values = ContentValues().apply {
+            put(COL_TEX_NAME, newName)
+        }
+        db.update(TABLE_CUSTOM_TEXTURES, values, "$COL_TEX_ID = ?", arrayOf(textureId))
+    }
+
+    // --- Custom Catalog Endpoints CRUD ---
+
+    fun insertCustomEndpoint(endpoint: CustomCatalogEndpoint) {
+        val db = writableDatabase
+        val values = ContentValues().apply {
+            put(COL_EP_ID, endpoint.id)
+            put(COL_EP_NAME, endpoint.name)
+            put(COL_EP_GALLERY_URL, endpoint.galleryUrl)
+            put(COL_EP_SEARCH_URL, endpoint.searchUrl)
+            put(COL_EP_API_KEY, endpoint.apiKey)
+            put(COL_EP_AUTH_HEADER, endpoint.authHeader)
+            put(COL_EP_IS_ENABLED, if (endpoint.isEnabled) 1 else 0)
+        }
+        db.insertWithOnConflict(TABLE_CUSTOM_ENDPOINTS, null, values, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    fun getAllCustomEndpoints(): List<CustomCatalogEndpoint> {
+        val list = mutableListOf<CustomCatalogEndpoint>()
+        val db = readableDatabase
+        try {
+            val cursor = db.query(TABLE_CUSTOM_ENDPOINTS, null, null, null, null, null, "$COL_EP_NAME ASC")
+            cursor.use {
+                val idCol = it.getColumnIndexOrThrow(COL_EP_ID)
+                val nameCol = it.getColumnIndexOrThrow(COL_EP_NAME)
+                val galCol = it.getColumnIndexOrThrow(COL_EP_GALLERY_URL)
+                val searchCol = it.getColumnIndexOrThrow(COL_EP_SEARCH_URL)
+                val keyCol = it.getColumnIndexOrThrow(COL_EP_API_KEY)
+                val authCol = it.getColumnIndexOrThrow(COL_EP_AUTH_HEADER)
+                val enabledCol = it.getColumnIndexOrThrow(COL_EP_IS_ENABLED)
+                while (it.moveToNext()) {
+                    list.add(
+                        CustomCatalogEndpoint(
+                            id = it.getString(idCol),
+                            name = it.getString(nameCol),
+                            galleryUrl = it.getString(galCol) ?: "",
+                            searchUrl = it.getString(searchCol) ?: "",
+                            apiKey = it.getString(keyCol) ?: "",
+                            authHeader = it.getString(authCol) ?: "Authorization",
+                            isEnabled = it.getInt(enabledCol) == 1
+                        )
+                    )
+                }
+            }
+        } catch (_: Exception) {}
+        return list
+    }
+
+    fun deleteCustomEndpoint(endpointId: String) {
+        val db = writableDatabase
+        db.delete(TABLE_CUSTOM_ENDPOINTS, "$COL_EP_ID = ?", arrayOf(endpointId))
+    }
+
     // --- Books Table CRUD (Permanent SQLite Storage for Local & Downloaded Books) ---
+
+    fun deleteDuplicateBooks(title: String, author: String, filePath: String) {
+        val db = writableDatabase
+        try {
+            val duplicateIds = mutableListOf<String>()
+            val cursor = db.query(
+                TABLE_BOOKS,
+                arrayOf(COL_BOOK_ID, COL_BOOK_TITLE_MAIN, COL_BOOK_AUTHOR, COL_BOOK_FILE_PATH),
+                null, null, null, null, null
+            )
+            cursor.use {
+                val idIdx = it.getColumnIndexOrThrow(COL_BOOK_ID)
+                val titleIdx = it.getColumnIndexOrThrow(COL_BOOK_TITLE_MAIN)
+                val authorIdx = it.getColumnIndexOrThrow(COL_BOOK_AUTHOR)
+                val fileIdx = it.getColumnIndexOrThrow(COL_BOOK_FILE_PATH)
+                val targetNormTitle = title.trim().lowercase().replace(Regex("[^a-z0-9]"), "")
+                val targetNormAuthor = author.trim().lowercase().replace(Regex("[^a-z0-9]"), "")
+
+                while (it.moveToNext()) {
+                    val rowId = it.getString(idIdx)
+                    val rowTitle = it.getString(titleIdx) ?: ""
+                    val rowAuthor = it.getString(authorIdx) ?: ""
+                    val rowPath = it.getString(fileIdx) ?: ""
+                    val rowNormTitle = rowTitle.trim().lowercase().replace(Regex("[^a-z0-9]"), "")
+                    val rowNormAuthor = rowAuthor.trim().lowercase().replace(Regex("[^a-z0-9]"), "")
+
+                    val matchPath = filePath.isNotBlank() && rowPath == filePath
+                    val matchTitle = targetNormTitle.isNotBlank() && rowNormTitle == targetNormTitle &&
+                        (targetNormAuthor.isBlank() || rowNormAuthor.isBlank() || targetNormAuthor == rowNormAuthor || targetNormAuthor == "unknown" || rowNormAuthor == "unknown")
+
+                    if (matchPath || matchTitle) {
+                        duplicateIds.add(rowId)
+                    }
+                }
+            }
+            for (dupId in duplicateIds) {
+                deleteBook(dupId)
+            }
+        } catch (_: Exception) {}
+    }
 
     fun insertOrUpdateBook(
         book: Book,
@@ -1104,6 +1352,45 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
         fileSize: Long = book.fileSize
     ) {
         val db = writableDatabase
+        // Deduplicate against existing books with same title+author or same filePath but different ID
+        try {
+            val cursor = db.query(
+                TABLE_BOOKS,
+                arrayOf(COL_BOOK_ID, COL_BOOK_TITLE_MAIN, COL_BOOK_AUTHOR, COL_BOOK_FILE_PATH),
+                null, null, null, null, null
+            )
+            val conflictIds = mutableListOf<String>()
+            cursor.use {
+                val idIdx = it.getColumnIndexOrThrow(COL_BOOK_ID)
+                val titleIdx = it.getColumnIndexOrThrow(COL_BOOK_TITLE_MAIN)
+                val authorIdx = it.getColumnIndexOrThrow(COL_BOOK_AUTHOR)
+                val fileIdx = it.getColumnIndexOrThrow(COL_BOOK_FILE_PATH)
+                val targetNormTitle = book.title.trim().lowercase().replace(Regex("[^a-z0-9]"), "")
+                val targetNormAuthor = book.author.trim().lowercase().replace(Regex("[^a-z0-9]"), "")
+
+                while (it.moveToNext()) {
+                    val rowId = it.getString(idIdx)
+                    if (rowId == book.id) continue
+                    val rowTitle = it.getString(titleIdx) ?: ""
+                    val rowAuthor = it.getString(authorIdx) ?: ""
+                    val rowPath = it.getString(fileIdx) ?: ""
+                    val rowNormTitle = rowTitle.trim().lowercase().replace(Regex("[^a-z0-9]"), "")
+                    val rowNormAuthor = rowAuthor.trim().lowercase().replace(Regex("[^a-z0-9]"), "")
+
+                    val matchPath = filePath.isNotBlank() && rowPath.isNotBlank() && rowPath == filePath
+                    val matchTitle = targetNormTitle.isNotBlank() && rowNormTitle == targetNormTitle &&
+                        (targetNormAuthor.isBlank() || rowNormAuthor.isBlank() || targetNormAuthor == rowNormAuthor || targetNormAuthor == "unknown" || rowNormAuthor == "unknown")
+
+                    if (matchPath || matchTitle) {
+                        conflictIds.add(rowId)
+                    }
+                }
+            }
+            for (conflictId in conflictIds) {
+                deleteBook(conflictId)
+            }
+        } catch (_: Exception) {}
+
         // Normalized chapters are saved in TABLE_CHAPTERS via saveChaptersForBook.
         // We do not bloat TABLE_BOOKS with monolithic multi-megabyte JSON blobs.
         val chaptersJson = ""
@@ -1525,7 +1812,8 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
             val chunks = pages.chunked(25)
             db.beginTransaction()
             try {
-                db.delete(TABLE_PAGE_CACHE, "$COL_PC_KEY = ?", arrayOf(cacheKey))
+                // Prune any existing cache for this book to keep SQLite lean and prevent multi-megabyte bloat
+                db.delete(TABLE_PAGE_CACHE, "$COL_PC_BOOK_ID = ?", arrayOf(bookId))
                 for ((idx, chunk) in chunks.withIndex()) {
                     val values = ContentValues().apply {
                         put(COL_PC_KEY, cacheKey)
@@ -1541,6 +1829,31 @@ class LuminaDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABAS
                 db.endTransaction()
             }
         } catch (_: Exception) {}
+    }
+
+    /**
+     * Compacts SQLite database if file size has grown excessively due to transient cache churn.
+     * Must be invoked on a background IO dispatcher.
+     */
+    fun compactDatabaseIfNeeded() {
+        try {
+            val dbFile = context.getDatabasePath(DATABASE_NAME)
+            val walFile = java.io.File(dbFile.parentFile, "$DATABASE_NAME-wal")
+            if ((dbFile.exists() && dbFile.length() > 6 * 1024 * 1024L) || (walFile.exists() && walFile.length() > 4 * 1024 * 1024L)) {
+                val db = writableDatabase
+                try {
+                    val c1 = db.rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null)
+                    c1?.moveToFirst()
+                    c1?.close()
+                } catch (_: Throwable) {}
+                db.execSQL("VACUUM")
+                try {
+                    val c2 = db.rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null)
+                    c2?.moveToFirst()
+                    c2?.close()
+                } catch (_: Throwable) {}
+            }
+        } catch (_: Throwable) {}
     }
 
     fun backupStateToPersistentFile(file: java.io.File): Boolean {
