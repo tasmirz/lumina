@@ -45,8 +45,8 @@ object PageCache {
         } catch (_: Exception) { null }
     }
 
-    // Bumped to v30_ to accurately budget multiple paragraphs and paragraph spacing gaps
-    private const val CACHE_VERSION = "v30_"
+    // Bumped to v32_ to support customizable pagedSafeLinesToRemove
+    private const val CACHE_VERSION = "v32_"
 
     data class DeviceMetrics(
         val charsPerLine: Int,
@@ -63,7 +63,8 @@ object PageCache {
         horizontalPaddingDp: Int = 20,
         verticalPaddingDp: Int = 16,
         lineHeightMultiplier: Float = 1.45f,
-        paragraphSpacingMultiplier: Float = 1.2f
+        paragraphSpacingMultiplier: Float = 1.2f,
+        safeLinesToRemove: Int = 0
     ): DeviceMetrics {
         val screenW = if (screenWidthDp > 0) screenWidthDp else if (isLandscape) 820 else 392
         val screenH = if (screenHeightDp > 0) screenHeightDp else if (isLandscape) 392 else 820
@@ -95,7 +96,8 @@ object PageCache {
         val avgCharWidthDp = (fontSize * 0.44f).coerceAtLeast(4.5f)
 
         val charsPerLine = (usableW / avgCharWidthDp).toInt().coerceIn(18, 180)
-        val maxLines = (usableH / lineHeightDp).toInt().coerceIn(4, 80)
+        val rawMaxLines = (usableH / lineHeightDp).toInt().coerceIn(4, 80)
+        val maxLines = (rawMaxLines - safeLinesToRemove.coerceIn(0, 10)).coerceAtLeast(2)
 
         val headerHeightDp = if (isLandscape) 64f else 96f
         val headerLinesCost = kotlin.math.ceil(headerHeightDp / lineHeightDp).toInt().coerceIn(2, 6)
@@ -121,11 +123,12 @@ object PageCache {
         screenHeightDp: Int = 0,
         horizontalPaddingDp: Int = 20,
         verticalPaddingDp: Int = 16,
-        paragraphSpacingMultiplier: Float = 1.2f
+        paragraphSpacingMultiplier: Float = 1.2f,
+        safeLinesToRemove: Int = 0
     ): String {
         val orientation = if (isLandscape) "land" else "port"
         val mode = if (isStrictPaged) "strict" else "scroll"
-        val dims = if (screenWidthDp > 0 && screenHeightDp > 0) "_${screenWidthDp}x${screenHeightDp}_p${horizontalPaddingDp}_${verticalPaddingDp}_ps${(paragraphSpacingMultiplier * 10).toInt()}" else ""
+        val dims = if (screenWidthDp > 0 && screenHeightDp > 0) "_${screenWidthDp}x${screenHeightDp}_p${horizontalPaddingDp}_${verticalPaddingDp}_ps${(paragraphSpacingMultiplier * 10).toInt()}_sl${safeLinesToRemove}" else ""
         return "${CACHE_VERSION}${bookId}_${chaptersCount}_${fontSize}_${orientation}_${mode}${dims}"
     }
 
@@ -139,9 +142,10 @@ object PageCache {
         screenHeightDp: Int = 0,
         horizontalPaddingDp: Int = 20,
         verticalPaddingDp: Int = 16,
-        paragraphSpacingMultiplier: Float = 1.2f
+        paragraphSpacingMultiplier: Float = 1.2f,
+        safeLinesToRemove: Int = 0
     ): List<Pair<String, String>>? {
-        val key = getCacheKey(bookId, chaptersCount, fontSize, isLandscape, isStrictPaged, screenWidthDp, screenHeightDp, horizontalPaddingDp, verticalPaddingDp, paragraphSpacingMultiplier)
+        val key = getCacheKey(bookId, chaptersCount, fontSize, isLandscape, isStrictPaged, screenWidthDp, screenHeightDp, horizontalPaddingDp, verticalPaddingDp, paragraphSpacingMultiplier, safeLinesToRemove)
         return cache.get(key)
     }
 
@@ -157,10 +161,11 @@ object PageCache {
         verticalPaddingDp: Int = 16,
         lineHeightMultiplier: Float = 1.45f,
         paragraphSpacingMultiplier: Float = 1.2f,
+        safeLinesToRemove: Int = 0,
         dbHelper: LuminaDatabaseHelper? = null,
         context: android.content.Context? = null
     ): List<Pair<String, String>> {
-        val key = getCacheKey(bookId, chapters.size, fontSize, isLandscape, isStrictPaged, screenWidthDp, screenHeightDp, horizontalPaddingDp, verticalPaddingDp, paragraphSpacingMultiplier)
+        val key = getCacheKey(bookId, chapters.size, fontSize, isLandscape, isStrictPaged, screenWidthDp, screenHeightDp, horizontalPaddingDp, verticalPaddingDp, paragraphSpacingMultiplier, safeLinesToRemove)
         val cached = cache.get(key)
         if (cached != null) return cached
 
@@ -195,7 +200,8 @@ object PageCache {
             horizontalPaddingDp = horizontalPaddingDp,
             verticalPaddingDp = verticalPaddingDp,
             lineHeightMultiplier = lineHeightMultiplier,
-            paragraphSpacingMultiplier = paragraphSpacingMultiplier
+            paragraphSpacingMultiplier = paragraphSpacingMultiplier,
+            safeLinesToRemove = safeLinesToRemove
         )
         cache.put(key, list)
         if (dbHelper != null && list.isNotEmpty()) {
@@ -217,7 +223,8 @@ object PageCache {
         horizontalPaddingDp: Int = 20,
         verticalPaddingDp: Int = 16,
         lineHeightMultiplier: Float = 1.45f,
-        paragraphSpacingMultiplier: Float = 1.2f
+        paragraphSpacingMultiplier: Float = 1.2f,
+        safeLinesToRemove: Int = 0
     ): List<Pair<String, String>> {
         return computePages(
             chapters = listOf(chapter),
@@ -229,7 +236,8 @@ object PageCache {
             horizontalPaddingDp = horizontalPaddingDp,
             verticalPaddingDp = verticalPaddingDp,
             lineHeightMultiplier = lineHeightMultiplier,
-            paragraphSpacingMultiplier = paragraphSpacingMultiplier
+            paragraphSpacingMultiplier = paragraphSpacingMultiplier,
+            safeLinesToRemove = safeLinesToRemove
         )
     }
 
@@ -245,12 +253,13 @@ object PageCache {
         verticalPaddingDp: Int = 16,
         lineHeightMultiplier: Float = 1.45f,
         paragraphSpacingMultiplier: Float = 1.2f,
+        safeLinesToRemove: Int = 0,
         dbHelper: LuminaDatabaseHelper? = null,
         context: android.content.Context? = null,
         activeChapterIndex: Int = 0,
         onActiveChapterReady: ((List<Pair<String, String>>) -> Unit)? = null
     ): List<Pair<String, String>> = withContext(Dispatchers.Default) {
-        val key = getCacheKey(bookId, chapters.size, fontSize, isLandscape, isStrictPaged, screenWidthDp, screenHeightDp, horizontalPaddingDp, verticalPaddingDp, paragraphSpacingMultiplier)
+        val key = getCacheKey(bookId, chapters.size, fontSize, isLandscape, isStrictPaged, screenWidthDp, screenHeightDp, horizontalPaddingDp, verticalPaddingDp, paragraphSpacingMultiplier, safeLinesToRemove)
         val cached = cache.get(key)
         if (cached != null) {
             onActiveChapterReady?.invoke(cached)
@@ -293,7 +302,9 @@ object PageCache {
                 screenHeightDp = screenHeightDp,
                 horizontalPaddingDp = horizontalPaddingDp,
                 verticalPaddingDp = verticalPaddingDp,
-                lineHeightMultiplier = lineHeightMultiplier
+                lineHeightMultiplier = lineHeightMultiplier,
+                paragraphSpacingMultiplier = paragraphSpacingMultiplier,
+                safeLinesToRemove = safeLinesToRemove
             )
             if (activePages.isNotEmpty()) {
                 onActiveChapterReady(activePages)
@@ -309,7 +320,9 @@ object PageCache {
             screenHeightDp = screenHeightDp,
             horizontalPaddingDp = horizontalPaddingDp,
             verticalPaddingDp = verticalPaddingDp,
-            lineHeightMultiplier = lineHeightMultiplier
+            lineHeightMultiplier = lineHeightMultiplier,
+            paragraphSpacingMultiplier = paragraphSpacingMultiplier,
+            safeLinesToRemove = safeLinesToRemove
         )
         cache.put(key, list)
         if (dbHelper != null && list.isNotEmpty()) {
@@ -331,7 +344,8 @@ object PageCache {
         horizontalPaddingDp: Int = 20,
         verticalPaddingDp: Int = 16,
         lineHeightMultiplier: Float = 1.45f,
-        paragraphSpacingMultiplier: Float = 1.2f
+        paragraphSpacingMultiplier: Float = 1.2f,
+        safeLinesToRemove: Int = 0
     ): List<Pair<String, String>> {
         val list = mutableListOf<Pair<String, String>>()
         val metrics = calculateDeviceMetrics(
@@ -342,7 +356,8 @@ object PageCache {
             horizontalPaddingDp = horizontalPaddingDp,
             verticalPaddingDp = verticalPaddingDp,
             lineHeightMultiplier = lineHeightMultiplier,
-            paragraphSpacingMultiplier = paragraphSpacingMultiplier
+            paragraphSpacingMultiplier = paragraphSpacingMultiplier,
+            safeLinesToRemove = safeLinesToRemove
         )
 
         if (isStrictPaged) {

@@ -158,4 +158,150 @@ class OnlineEpubServiceTest {
         assertEquals("LOW already_has_low:key", OnlineEpubService.formatArchiveAuthorizationHeader("LOW already_has_low:key"))
         assertEquals("Bearer custom_token", OnlineEpubService.formatArchiveAuthorizationHeader("Bearer custom_token"))
     }
+
+    @Test
+    fun testParseOpdsFeed() {
+        val opdsXml = """
+            <?xml version="1.0" encoding="utf-8"?>
+            <feed xmlns="http://www.w3.org/2005/Atom">
+              <title>Standard Ebooks Catalog</title>
+              <entry>
+                <id>urn:uuid:12345</id>
+                <title>The Time Machine</title>
+                <author>
+                  <name>H. G. Wells</name>
+                </author>
+                <link rel="http://opds-spec.org/image/thumbnail" href="https://example.com/cover.jpg" type="image/jpeg" />
+                <link rel="http://opds-spec.org/acquisition" href="https://example.com/timemachine.epub" type="application/epub+zip" />
+              </entry>
+              <entry>
+                <id>urn:uuid:67890</id>
+                <title>The Invisible Man</title>
+                <author>
+                  <name>H. G. Wells</name>
+                </author>
+                <link rel="http://opds-spec.org/acquisition" href="/ebooks/invisible-man.epub" type="application/epub+zip" />
+              </entry>
+            </feed>
+        """.trimIndent()
+
+        val endpoint = io.github.tasmirz.lumina.model.CustomCatalogEndpoint(
+            id = "test-endpoint-1",
+            name = "My OPDS",
+            galleryUrl = "https://example.com/opds/feed",
+            searchUrl = "https://example.com/opds/search?q=%s"
+        )
+        val books = OnlineEpubService.parseOpdsFeed(
+            xml = opdsXml,
+            baseUrl = "https://example.com/opds/feed",
+            endpoint = endpoint
+        )
+
+        assertEquals(2, books.size)
+        assertEquals("The Time Machine", books[0].title)
+        assertEquals("H. G. Wells", books[0].author)
+        assertEquals("https://example.com/cover.jpg", books[0].coverUrl)
+        assertEquals("https://example.com/timemachine.epub", books[0].epubDownloadUrl)
+        assertEquals(OnlineCatalogSource.CUSTOM, books[0].source)
+        assertEquals("My OPDS", books[0].customSourceName)
+
+        assertEquals("The Invisible Man", books[1].title)
+        assertEquals("https://example.com/ebooks/invisible-man.epub", books[1].epubDownloadUrl)
+    }
+
+    @Test
+    fun testParseJsonFeedArray() {
+        val jsonArray = """
+            [
+              {
+                "id": "book-1",
+                "title": "Foundation",
+                "author": "Isaac Asimov",
+                "cover": "https://example.com/foundation.jpg",
+                "download_url": "https://example.com/foundation.epub"
+              },
+              {
+                "id": "book-2",
+                "name": "Dune",
+                "creator": "Frank Herbert",
+                "epub": "https://example.com/dune.epub"
+              }
+            ]
+        """.trimIndent()
+
+        val endpoint = io.github.tasmirz.lumina.model.CustomCatalogEndpoint(
+            id = "test-json-1",
+            name = "Sci-Fi Feed",
+            galleryUrl = "https://example.com/books.json",
+            searchUrl = "https://example.com/search?q=%s"
+        )
+        val books = OnlineEpubService.parseJsonFeed(
+            jsonStr = jsonArray,
+            baseUrl = "https://example.com",
+            endpoint = endpoint
+        )
+
+        assertEquals(2, books.size)
+        assertEquals("Foundation", books[0].title)
+        assertEquals("Isaac Asimov", books[0].author)
+        assertEquals("https://example.com/foundation.epub", books[0].epubDownloadUrl)
+        assertEquals("Sci-Fi Feed", books[0].customSourceName)
+
+        assertEquals("Dune", books[1].title)
+        assertEquals("Frank Herbert", books[1].author)
+        assertEquals("https://example.com/dune.epub", books[1].epubDownloadUrl)
+    }
+
+    @Test
+    fun testParseJsonFeedObjectWithBooksList() {
+        val jsonObject = """
+            {
+              "total": 1,
+              "books": [
+                {
+                  "title": "Neuromancer",
+                  "author": "William Gibson",
+                  "downloadUrl": "https://example.com/neuromancer.epub"
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val endpoint = io.github.tasmirz.lumina.model.CustomCatalogEndpoint(
+            id = "test-json-2",
+            name = "Cyberpunk Feed",
+            galleryUrl = "https://example.com/feed.json",
+            searchUrl = "https://example.com/search?q=%s"
+        )
+        val books = OnlineEpubService.parseJsonFeed(
+            jsonStr = jsonObject,
+            baseUrl = "https://example.com",
+            endpoint = endpoint
+        )
+
+        assertEquals(1, books.size)
+        assertEquals("Neuromancer", books[0].title)
+        assertEquals("William Gibson", books[0].author)
+        assertEquals("https://example.com/neuromancer.epub", books[0].epubDownloadUrl)
+    }
+
+    @Test
+    fun testCustomEndpointUrlMatching() {
+        val ep1 = io.github.tasmirz.lumina.model.CustomCatalogEndpoint(
+            id = "calibre-1",
+            name = "Home Calibre",
+            galleryUrl = "http://192.168.1.50:8083/opds",
+            searchUrl = "http://192.168.1.50:8083/opds/search?query=%s",
+            apiKey = "admin:secret",
+            authHeader = "Authorization"
+        )
+        OnlineEpubService.customEndpoints = listOf(ep1)
+
+        val matched = OnlineEpubService.getCustomEndpointForUrl("http://192.168.1.50:8083/opds/download/123.epub")
+        assertEquals(ep1.id, matched?.id)
+        assertEquals("admin:secret", matched?.apiKey)
+
+        val nonMatched = OnlineEpubService.getCustomEndpointForUrl("https://standardebooks.org/ebooks/123.epub")
+        assertEquals(null, nonMatched)
+    }
 }

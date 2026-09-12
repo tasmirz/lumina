@@ -266,4 +266,114 @@ object EdgeTtsService {
             } catch (_: Exception) {}
         }
     }
+
+    private var previewMediaPlayer: android.media.MediaPlayer? = null
+    private var currentPlayingVoiceId: String? = null
+
+    fun getVoiceDemoText(voiceId: String): String {
+        return when (voiceId) {
+            "en-US-JennyNeural" -> "Hello! I am Jenny, a warm natural voice for Lumina."
+            "en-US-GuyNeural" -> "Hello! I am Guy, a calm and natural voice for long reading sessions."
+            "en-US-AriaNeural" -> "Hello! I am Aria, clear and engaging for narrative literature."
+            "en-GB-SoniaNeural" -> "Hello! I am Sonia, featuring a refined British accent."
+            "en-US-ChristopherNeural" -> "Hello! I am Christopher, with an authoritative tone."
+            else -> "Hello! This is a preview of the Lumina neural reading voice."
+        }
+    }
+
+    suspend fun playVoiceDemo(
+        context: android.content.Context,
+        voiceId: String,
+        onPlayingChanged: ((Boolean) -> Unit)? = null
+    ) = withContext(Dispatchers.IO) {
+        // If clicking the same playing voice, stop it (toggle behavior)
+        if (currentPlayingVoiceId == voiceId && previewMediaPlayer?.isPlaying == true) {
+            stopVoiceDemo()
+            withContext(Dispatchers.Main) {
+                onPlayingChanged?.invoke(false)
+            }
+            return@withContext
+        }
+
+        stopVoiceDemo()
+
+        val cacheDir = File(context.cacheDir, "tts_previews").apply { mkdirs() }
+        val audioFile = File(cacheDir, "${voiceId}_preview.mp3")
+
+        val audioBytes: ByteArray? = if (audioFile.exists() && audioFile.length() > 0L) {
+            audioFile.readBytes()
+        } else {
+            val demoText = getVoiceDemoText(voiceId)
+            val bytes = synthesizeToBytes(demoText, voice = voiceId)
+            if (bytes != null && bytes.isNotEmpty()) {
+                try {
+                    audioFile.writeBytes(bytes)
+                } catch (_: Exception) {}
+            }
+            bytes
+        }
+
+        if (audioBytes == null || audioBytes.isEmpty()) {
+            withContext(Dispatchers.Main) {
+                onPlayingChanged?.invoke(false)
+            }
+            return@withContext
+        }
+
+        withContext(Dispatchers.Main) {
+            try {
+                val mp = android.media.MediaPlayer()
+                val tempFile = File.createTempFile("tts_temp_", ".mp3", context.cacheDir)
+                tempFile.deleteOnExit()
+                tempFile.writeBytes(audioBytes)
+
+                mp.setDataSource(tempFile.absolutePath)
+                mp.prepare()
+                mp.setOnCompletionListener { player ->
+                    player.release()
+                    if (previewMediaPlayer == player) {
+                        previewMediaPlayer = null
+                        currentPlayingVoiceId = null
+                        onPlayingChanged?.invoke(false)
+                    }
+                    try { tempFile.delete() } catch (_: Exception) {}
+                }
+                mp.setOnErrorListener { player, _, _ ->
+                    player.release()
+                    if (previewMediaPlayer == player) {
+                        previewMediaPlayer = null
+                        currentPlayingVoiceId = null
+                        onPlayingChanged?.invoke(false)
+                    }
+                    try { tempFile.delete() } catch (_: Exception) {}
+                    true
+                }
+                previewMediaPlayer = mp
+                currentPlayingVoiceId = voiceId
+                onPlayingChanged?.invoke(true)
+                mp.start()
+            } catch (e: Exception) {
+                currentPlayingVoiceId = null
+                previewMediaPlayer = null
+                onPlayingChanged?.invoke(false)
+            }
+        }
+    }
+
+    fun stopVoiceDemo() {
+        try {
+            previewMediaPlayer?.let {
+                if (it.isPlaying) {
+                    it.stop()
+                }
+                it.release()
+            }
+        } catch (_: Exception) {}
+        previewMediaPlayer = null
+        currentPlayingVoiceId = null
+    }
+
+    fun isVoiceDemoPlaying(voiceId: String): Boolean {
+        return currentPlayingVoiceId == voiceId && previewMediaPlayer?.isPlaying == true
+    }
 }

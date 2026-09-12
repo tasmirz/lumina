@@ -67,7 +67,7 @@ fun ReaderBottomDock(
 
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-    val isVisible = (if (isLandscape) isUiVisible else (isUiVisible || readingMode == ReadingMode.PAGED)) && voiceState == AssistantVoiceState.IDLE
+    val isVisible = (if (isLandscape) isUiVisible else (isUiVisible || readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL)) && voiceState == AssistantVoiceState.IDLE
 
     LaunchedEffect(showReadTillFeedback) {
         if (showReadTillFeedback) {
@@ -140,10 +140,7 @@ fun ReaderBottomDock(
                                 isLongPressingProgress = false
 
                                 if (up != null && !completed) {
-                                    val elapsed = System.currentTimeMillis() - startTime
-                                    if (elapsed < 300) {
-                                        currentOnToggleNavBar()
-                                    }
+                                    currentOnToggleNavBar()
                                 }
                                 coroutineScope.launch {
                                     progressHoldAnim.animateTo(0f, tween(150))

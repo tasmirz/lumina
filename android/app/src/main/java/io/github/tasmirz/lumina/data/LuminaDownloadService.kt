@@ -324,6 +324,15 @@ class LuminaDownloadService : Service() {
                         setRequestProperty("Authorization", auth)
                     }
                 }
+                val customEndpoint = OnlineEpubService.getCustomEndpointForUrl(currentUrl)
+                if (customEndpoint != null && customEndpoint.apiKey.isNotBlank()) {
+                    val auth = if (customEndpoint.apiKey.startsWith("Bearer ", ignoreCase = true) || customEndpoint.apiKey.startsWith("Basic ", ignoreCase = true) || customEndpoint.apiKey.startsWith("LOW ", ignoreCase = true)) {
+                        customEndpoint.apiKey
+                    } else {
+                        "Bearer ${customEndpoint.apiKey}"
+                    }
+                    setRequestProperty(customEndpoint.authHeader.ifBlank { "Authorization" }, auth)
+                }
             }
 
             val code = conn.responseCode

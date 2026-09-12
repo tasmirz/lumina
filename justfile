@@ -21,10 +21,12 @@ test:
 # Install debug APK on the connected device
 install:
     adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+    sleep 2
 
 # Install release APK on the connected device
 install-release:
     adb install -r android/app/build/outputs/apk/release/app-release.apk
+    sleep 2
 
 # Launch Lumina on the connected phone
 run:
@@ -79,6 +81,7 @@ hot-reload: reload
 reload:
     cd android && ./gradlew assembleDebug --build-cache --parallel
     adb install -r -d android/app/build/outputs/apk/debug/app-debug.apk
+    sleep 2
     adb shell am start -n io.github.tasmirz.lumina/.MainActivity -S
 
 # Stream Logcat output for the Lumina app process

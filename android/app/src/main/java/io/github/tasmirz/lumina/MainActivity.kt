@@ -60,6 +60,7 @@ import io.github.tasmirz.lumina.ui.components.AddBookSheet
 import io.github.tasmirz.lumina.ui.components.AppearanceSheet
 import io.github.tasmirz.lumina.ui.components.BookmarksSheet
 import io.github.tasmirz.lumina.ui.components.DictionarySheet
+import io.github.tasmirz.lumina.ui.components.StartupLoadingScreen
 import io.github.tasmirz.lumina.ui.library.LibraryScreen
 import io.github.tasmirz.lumina.ui.reader.ReaderScreen
 import io.github.tasmirz.lumina.ui.settings.AdvancedSettingsScreen
@@ -176,6 +177,9 @@ class MainActivity : ComponentActivity() {
             val themeFamily = readerSettings.themeFamily
             val themeVariant = readerSettings.themeVariant
             val backgroundTexture = readerSettings.backgroundTexture
+            val customTextures by bookRepository.customTextures.collectAsStateWithLifecycle()
+            val selectedCustomTextureId by bookRepository.selectedCustomTextureId.collectAsStateWithLifecycle()
+            val dynamicRollingTexture = readerSettings.dynamicRollingTexture
             val customBgUri = readerSettings.customBgUri
             val orbActionItems = readerSettings.orbActionItems
             val textAlignment = readerSettings.textAlignmentMode
@@ -197,6 +201,11 @@ class MainActivity : ComponentActivity() {
             val aiBaseUrl = readerSettings.aiBaseUrl
             val aiModel = readerSettings.aiModel
             val preferredLanguage = readerSettings.preferredLanguage
+            val showStartupLoadingScreen = readerSettings.showStartupLoadingScreen
+
+            val isStartupInitialized by bookRepository.isStartupInitialized.collectAsStateWithLifecycle()
+            val startupStatusMessage by bookRepository.startupStatusMessage.collectAsStateWithLifecycle()
+            var isStartupSkipped by rememberSaveable { mutableStateOf(false) }
 
             var currentTab by rememberSaveable {
                 mutableStateOf(
@@ -281,9 +290,15 @@ class MainActivity : ComponentActivity() {
 
                 val showBottomNav = !isFullscreen && (currentTab == ScreenTab.LIBRARY)
 
-                Box(
-                    modifier = Modifier.fillMaxSize()
-                ) {
+                if (showStartupLoadingScreen && !isStartupInitialized && !isStartupSkipped) {
+                    StartupLoadingScreen(
+                        statusMessage = startupStatusMessage,
+                        onSkip = { isStartupSkipped = true }
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier.fillMaxSize()
+                    ) {
                         when (currentTab) {
                             ScreenTab.LIBRARY -> {
                                 LibraryScreen(
@@ -370,14 +385,16 @@ class MainActivity : ComponentActivity() {
                                         onToggleFullscreen = { isFullscreen = !isFullscreen },
                                         showNavBarInReader = showNavBarInReader,
                                         onToggleNavBar = { showNavBarInReader = !showNavBarInReader },
-                                        onControlsVisibilityChange = {},
+                                        onControlsVisibilityChange = { visible ->
+                                            if (!visible) showNavBarInReader = false
+                                        },
                                         onModeChange = { bookRepository.setReadingMode(it) },
                                         onBackToLibrary = { currentTab = ScreenTab.LIBRARY },
                                         onPositionChange = { chap, page, scroll, pct ->
                                             bookRepository.updateReadingPosition(readerBook.id, chap, page, scroll, pct)
                                         },
-                                        onAddBookmark = { quote, color, page ->
-                                            bookRepository.addBookmark(quote, color, pageNumber = page)
+                                        onAddBookmark = { quote, color, page, note, isHighlight ->
+                                            bookRepository.addBookmark(quote, color, note = note, pageNumber = page, isHighlight = isHighlight)
                                         },
                                         onRemoveBookmark = { bookmarkId ->
                                             bookRepository.removeBookmark(bookmarkId)
@@ -396,6 +413,9 @@ class MainActivity : ComponentActivity() {
                                         onToggleFloatingAssistant = { bookRepository.setShowFloatingAssistant(it) },
                                         activeOrbActions = orbActionItems,
                                         backgroundTexture = backgroundTexture,
+                                        customTextures = customTextures,
+                                        selectedCustomTextureId = selectedCustomTextureId,
+                                        dynamicRollingTexture = dynamicRollingTexture,
                                         customBgUri = customBgUri,
                                         textAlignment = textAlignment,
                                         letterSpacing = letterSpacing,
@@ -606,6 +626,11 @@ class MainActivity : ComponentActivity() {
                                 themeVariant = themeVariant,
                                 onThemeVariantChange = { bookRepository.setThemeVariant(it) },
                                 quickThemes = quickThemes,
+                                backgroundTexture = backgroundTexture,
+                                customTextures = customTextures,
+                                selectedCustomTextureId = selectedCustomTextureId,
+                                onBackgroundTextureChange = { bookRepository.setBackgroundTexture(it) },
+                                onSelectCustomTexture = { bookRepository.selectCustomTexture(it.id) },
                                 themeMode = themeMode,
                                 onThemeChange = { bookRepository.setThemeMode(it) },
                                 showAssistant = showFloatingAssistant,
@@ -631,6 +656,10 @@ class MainActivity : ComponentActivity() {
                         if (showAdvancedSettingsScreen) {
                             AdvancedSettingsScreen(
                                 repository = bookRepository,
+                                fontSize = fontSize,
+                                onFontSizeChange = { bookRepository.setFontSize(it) },
+                                readingMode = readingMode,
+                                onReadingModeChange = { bookRepository.setReadingMode(it) },
                                 showFloatingOrb = showFloatingAssistant,
                                 onToggleFloatingOrb = { bookRepository.setShowFloatingAssistant(it) },
                                 activeOrbActions = orbActionItems,
@@ -645,6 +674,8 @@ class MainActivity : ComponentActivity() {
                                 onToggleQuickTheme = { bookRepository.toggleQuickTheme(it) },
                                 backgroundTexture = backgroundTexture,
                                 onBackgroundTextureChange = { bookRepository.setBackgroundTexture(it) },
+                                dynamicRollingTexture = dynamicRollingTexture,
+                                onDynamicRollingTextureChange = { bookRepository.setDynamicRollingTexture(it) },
                                 customBgUri = customBgUri,
                                 onCustomBgUriChange = { bookRepository.setCustomBgUri(it) },
                                 typeface = typeface,
@@ -679,6 +710,7 @@ class MainActivity : ComponentActivity() {
                                     showAddBookSheet = false
                                     epubPickerLauncher.launch("*/*")
                                 },
+                                repository = bookRepository,
                                 onBookDownloaded = { onlineBook ->
                                     LuminaDownloadService.downloadBook(
                                         context = this@MainActivity,
@@ -700,5 +732,6 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
 
 

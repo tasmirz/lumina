@@ -108,6 +108,7 @@ fun FloatingAssistantOrb(
     orbMenuSize: OrbMenuSize = OrbMenuSize.MEDIUM,
     orbEdgeSnap: Boolean = true,
     orbColor: OrbColor = OrbColor.THEME,
+    customOrbColor: Long = 0xFF4F46E5L,
     orbOpacity: Float = 0.85f,
     savedX: Float = -1f,
     savedY: Float = -1f,
@@ -638,6 +639,8 @@ fun FloatingAssistantOrb(
                     if (isDocked) {
                         if (orbColor == OrbColor.THEME) {
                             MaterialTheme.colorScheme.surfaceVariant.copy(alpha = (orbOpacity * 0.95f).coerceIn(0.5f, 0.95f))
+                        } else if (orbColor == OrbColor.CUSTOM) {
+                            Color(customOrbColor).copy(alpha = orbOpacity)
                         } else {
                             Color(orbColor.colorValue).copy(alpha = orbOpacity)
                         }
