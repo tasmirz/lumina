@@ -246,6 +246,12 @@ fun AdvancedSettingsScreen(
     val pagedSafeLinesToRemoveState = repository?.pagedSafeLinesToRemove?.collectAsState(initial = 0)
     val pagedSafeLinesToRemove = pagedSafeLinesToRemoveState?.value ?: 0
 
+    val verticallyCenterPagesState = repository?.verticallyCenterPages?.collectAsState(initial = true)
+    val verticallyCenterPages = verticallyCenterPagesState?.value ?: true
+
+    val pagedSwipeThresholdState = repository?.pagedSwipeThreshold?.collectAsState(initial = 0.18f)
+    val pagedSwipeThreshold = pagedSwipeThresholdState?.value ?: 0.18f
+
     val showStartupLoadingScreenState = repository?.showStartupLoadingScreen?.collectAsState(initial = false)
     val showStartupLoadingScreen = showStartupLoadingScreenState?.value ?: false
 
@@ -1082,6 +1088,59 @@ fun AdvancedSettingsScreen(
                             onValueChange = { repository?.setPagedSafeLinesToRemove(it.toInt()) },
                             valueRange = 0f..5f,
                             steps = 4,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Vertically Center Page Text
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Vertically Center Page Text", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("Distributes unused vertical space evenly in Paged Mode", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                            }
+                            Switch(
+                                checked = verticallyCenterPages,
+                                onCheckedChange = { repository?.setVerticallyCenterPages(it) },
+                                modifier = Modifier.size(width = 48.dp, height = 28.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Page Turn Swipe Effort
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Page Turn Swipe Effort", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("Distance required to turn page (lower = easier flick)", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                            }
+                            val effortLabel = when {
+                                pagedSwipeThreshold <= 0.14f -> "Minimal"
+                                pagedSwipeThreshold <= 0.22f -> "Light"
+                                pagedSwipeThreshold <= 0.34f -> "Medium"
+                                else -> "Firm"
+                            }
+                            Text(
+                                text = "${(pagedSwipeThreshold * 100).toInt()}% ($effortLabel)",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Slider(
+                            value = pagedSwipeThreshold,
+                            onValueChange = { repository?.setPagedSwipeThreshold(it) },
+                            valueRange = 0.08f..0.50f,
+                            steps = 6,
                             modifier = Modifier.fillMaxWidth()
                         )
 

@@ -271,6 +271,8 @@ data class ReaderSettings(
     val horizontalPadding: Int = 20,
     val verticalPadding: Int = 16,
     val pagedSafeLinesToRemove: Int = 0,
+    val verticallyCenterPages: Boolean = true,
+    val pagedSwipeThreshold: Float = 0.18f,
     val showStartupLoadingScreen: Boolean = false,
     val assistantOrbStyle: String = "EDGE_DOT",
     val spoilerShield: Boolean = true,

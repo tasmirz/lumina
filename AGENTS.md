@@ -6,6 +6,23 @@ Agents modifying this codebase MUST strictly adhere to the guidelines outlined b
 
 ---
 
+## 🚨 Critical Operational Mandates (STRICT)
+
+> [!IMPORTANT]
+> **1. DEVICE SCREENSHOT PRIVACY MANDATE**:
+> **Any MCP tool, subagent, or automated process MUST ask for explicit user permission before taking screenshots.**
+> Never take any screenshot (`screencap`, ARTEMIS tools, Playwright, agent-device, or any automated mechanism) of the phone, screen, or connected Android device without explicit, prior user confirmation.
+> **Foreground Verification Mandate**: Before taking any screenshot or screen capture, the tool/process MUST verify that the target app is currently on top and in the active foreground view (e.g. checking focused window via `mCurrentFocus`). NEVER take a screenshot if the target app is not in the current foreground view.
+
+> [!IMPORTANT]
+> **2. LOCKER & STORAGE SEPARATION OF CONCERNS (LUMINA DB SIZE & SYNC)**:
+> **Only keep private user things in the locker / sync streams.**
+> - **In the Locker / Sync Stream**: Only lightweight user-private state belongs here (reading progress, current chapter/CFI position, bookmarks, highlights, personal notes/annotations, reading streaks, and credentials).
+> - **Excluded from Locker / Sync**: Heavy derived artifacts and local caches MUST NEVER be placed into the locker or synced cross-app/cross-device. This includes full text extracts (`paragraphs_json` in `book_chapters`), precomputed page layout caches (`page_cache`), full-text search indexes (`book_fts`), and vector embeddings.
+> - **Rationale**: Lumina's full SQLite database (`lumina_reader.db`) is far too large to sync or place inside a secure enclave/locker due to storing entire text extracts and vector embeddings. Derived text extracts and embeddings can always be recomputed locally from the on-device EPUB. Keep concerns strictly separated!
+
+---
+
 ## 🏛️ Core Principles
 
 ### 1. Aesthetic & Craftsmanship Sovereignty

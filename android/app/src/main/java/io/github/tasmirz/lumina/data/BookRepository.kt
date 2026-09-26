@@ -113,6 +113,12 @@ class BookRepository private constructor(private val context: Context) {
     private val _pagedSafeLinesToRemove = MutableStateFlow(prefs.getInt("paged_safe_lines_to_remove", 0))
     val pagedSafeLinesToRemove: StateFlow<Int> = _pagedSafeLinesToRemove.asStateFlow()
 
+    private val _verticallyCenterPages = MutableStateFlow(prefs.getBoolean("vertically_center_pages", true))
+    val verticallyCenterPages: StateFlow<Boolean> = _verticallyCenterPages.asStateFlow()
+
+    private val _pagedSwipeThreshold = MutableStateFlow(prefs.getFloat("paged_swipe_threshold", 0.18f))
+    val pagedSwipeThreshold: StateFlow<Float> = _pagedSwipeThreshold.asStateFlow()
+
     private val _showStartupLoadingScreen = MutableStateFlow(prefs.getBoolean("show_startup_loading_screen", false))
     val showStartupLoadingScreen: StateFlow<Boolean> = _showStartupLoadingScreen.asStateFlow()
 
@@ -383,6 +389,8 @@ class BookRepository private constructor(private val context: Context) {
             horizontalPadding = prefs.getInt("horizontal_padding", 20),
             verticalPadding = prefs.getInt("vertical_padding", 16),
             pagedSafeLinesToRemove = prefs.getInt("paged_safe_lines_to_remove", 0),
+            verticallyCenterPages = prefs.getBoolean("vertically_center_pages", true),
+            pagedSwipeThreshold = prefs.getFloat("paged_swipe_threshold", 0.18f),
             showStartupLoadingScreen = prefs.getBoolean("show_startup_loading_screen", false),
             showFloatingAssistant = prefs.getBoolean("show_floating_assistant", true),
             orbSize = try { OrbSize.valueOf(prefs.getString("orb_size", OrbSize.NANO.name) ?: OrbSize.NANO.name) } catch (_: Exception) { OrbSize.NANO },
@@ -712,6 +720,21 @@ class BookRepository private constructor(private val context: Context) {
 
     fun setPagedSafeLinesToRemove(lines: Int) = updatePagedSafeLinesToRemove(lines)
 
+    fun setVerticallyCenterPages(enabled: Boolean) {
+        _verticallyCenterPages.value = enabled
+        updateReaderSettings { it.copy(verticallyCenterPages = enabled) }
+        prefs.edit().putBoolean("vertically_center_pages", enabled).apply()
+        persistSettingToDb("vertically_center_pages", enabled.toString())
+    }
+
+    fun setPagedSwipeThreshold(threshold: Float) {
+        val clamped = threshold.coerceIn(0.05f, 0.60f)
+        _pagedSwipeThreshold.value = clamped
+        updateReaderSettings { it.copy(pagedSwipeThreshold = clamped) }
+        prefs.edit().putFloat("paged_swipe_threshold", clamped).apply()
+        persistSettingToDb("paged_swipe_threshold", clamped.toString())
+    }
+
     fun setShowStartupLoadingScreen(enabled: Boolean) {
         _showStartupLoadingScreen.value = enabled
         updateReaderSettings { it.copy(showStartupLoadingScreen = enabled) }
@@ -841,6 +864,8 @@ class BookRepository private constructor(private val context: Context) {
         settings.put("horizontal_padding", _horizontalPadding.value)
         settings.put("vertical_padding", _verticalPadding.value)
         settings.put("paged_safe_lines_to_remove", _pagedSafeLinesToRemove.value)
+        settings.put("vertically_center_pages", _verticallyCenterPages.value)
+        settings.put("paged_swipe_threshold", _pagedSwipeThreshold.value.toDouble())
         settings.put("show_startup_loading_screen", _showStartupLoadingScreen.value)
         settings.put("assistant_orb_style", _assistantOrbStyle.value)
         settings.put("spoiler_shield", _spoilerShield.value)
@@ -966,6 +991,8 @@ class BookRepository private constructor(private val context: Context) {
                 if (s.has("horizontal_padding")) setHorizontalPadding(s.getInt("horizontal_padding"))
                 if (s.has("vertical_padding")) setVerticalPadding(s.getInt("vertical_padding"))
                 if (s.has("paged_safe_lines_to_remove")) setPagedSafeLinesToRemove(s.getInt("paged_safe_lines_to_remove"))
+                if (s.has("vertically_center_pages")) setVerticallyCenterPages(s.getBoolean("vertically_center_pages"))
+                if (s.has("paged_swipe_threshold")) setPagedSwipeThreshold(s.getDouble("paged_swipe_threshold").toFloat())
                 if (s.has("show_startup_loading_screen")) setShowStartupLoadingScreen(s.getBoolean("show_startup_loading_screen"))
                 if (s.has("assistant_orb_style")) setAssistantOrbStyle(s.getString("assistant_orb_style"))
                 if (s.has("spoiler_shield")) setSpoilerShield(s.getBoolean("spoiler_shield"))

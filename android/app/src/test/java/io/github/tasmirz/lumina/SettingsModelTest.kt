@@ -430,4 +430,20 @@ class SettingsModelTest {
         val updated = settings.copy(showStartupLoadingScreen = true)
         assertTrue(updated.showStartupLoadingScreen)
     }
+
+    @Test
+    fun testVerticallyCenterPagesDefaultsToTrue() {
+        val settings = io.github.tasmirz.lumina.model.ReaderSettings()
+        assertTrue(settings.verticallyCenterPages)
+        val updated = settings.copy(verticallyCenterPages = false)
+        assertFalse(updated.verticallyCenterPages)
+    }
+
+    @Test
+    fun testPagedSwipeThresholdDefaultsToEighteenPercent() {
+        val settings = io.github.tasmirz.lumina.model.ReaderSettings()
+        assertEquals(0.18f, settings.pagedSwipeThreshold, 0.001f)
+        val updated = settings.copy(pagedSwipeThreshold = 0.25f)
+        assertEquals(0.25f, updated.pagedSwipeThreshold, 0.001f)
+    }
 }

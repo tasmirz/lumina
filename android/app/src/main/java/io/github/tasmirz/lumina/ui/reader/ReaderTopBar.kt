@@ -134,11 +134,13 @@ fun ReaderTopBar(
                     }
                 }
 
-                // Delicate hairline divider underneath the header bar
-                HorizontalDivider(
-                    thickness = 0.5.dp,
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
-                )
+                // Hairline divider underneath the header bar in continuous scroll mode only
+                if (readingMode != ReadingMode.PAGED && readingMode != ReadingMode.PAGED_SCROLL) {
+                    HorizontalDivider(
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
+                    )
+                }
             }
         }
     }

@@ -202,6 +202,8 @@ class MainActivity : ComponentActivity() {
             val aiModel = readerSettings.aiModel
             val preferredLanguage = readerSettings.preferredLanguage
             val showStartupLoadingScreen = readerSettings.showStartupLoadingScreen
+            val verticallyCenterPages = readerSettings.verticallyCenterPages
+            val pagedSwipeThreshold = readerSettings.pagedSwipeThreshold
 
             val isStartupInitialized by bookRepository.isStartupInitialized.collectAsStateWithLifecycle()
             val startupStatusMessage by bookRepository.startupStatusMessage.collectAsStateWithLifecycle()
@@ -643,6 +645,10 @@ class MainActivity : ComponentActivity() {
                                 onOrbColorChange = { bookRepository.setOrbColor(it) },
                                 readingMode = readingMode,
                                 onReadingModeChange = { bookRepository.setReadingMode(it) },
+                                verticallyCenterPages = verticallyCenterPages,
+                                onToggleVerticallyCenterPages = { bookRepository.setVerticallyCenterPages(it) },
+                                pagedSwipeThreshold = pagedSwipeThreshold,
+                                onPagedSwipeThresholdChange = { bookRepository.setPagedSwipeThreshold(it) },
                                 paragraphSpacing = paragraphSpacing,
                                 onParagraphSpacingChange = { bookRepository.setParagraphSpacing(it) },
                                 currentLanguage = preferredLanguage,
