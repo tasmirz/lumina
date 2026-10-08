@@ -113,8 +113,23 @@ class BookRepository private constructor(private val context: Context) {
     private val _pagedSafeLinesToRemove = MutableStateFlow(prefs.getInt("paged_safe_lines_to_remove", 0))
     val pagedSafeLinesToRemove: StateFlow<Int> = _pagedSafeLinesToRemove.asStateFlow()
 
+    private val _verticallyCenterPages = MutableStateFlow(prefs.getBoolean("vertically_center_pages", true))
+    val verticallyCenterPages: StateFlow<Boolean> = _verticallyCenterPages.asStateFlow()
+
+    private val _pagedSwipeThreshold = MutableStateFlow(prefs.getFloat("paged_swipe_threshold", 0.18f))
+    val pagedSwipeThreshold: StateFlow<Float> = _pagedSwipeThreshold.asStateFlow()
+
     private val _showStartupLoadingScreen = MutableStateFlow(prefs.getBoolean("show_startup_loading_screen", false))
     val showStartupLoadingScreen: StateFlow<Boolean> = _showStartupLoadingScreen.asStateFlow()
+
+    private val _uncachedBookOpenMode = MutableStateFlow(
+        try {
+            UncachedBookOpenMode.valueOf(prefs.getString("uncached_book_open_mode", UncachedBookOpenMode.INSTANT_ACTIVE_FIRST.name) ?: UncachedBookOpenMode.INSTANT_ACTIVE_FIRST.name)
+        } catch (_: Exception) {
+            UncachedBookOpenMode.INSTANT_ACTIVE_FIRST
+        }
+    )
+    val uncachedBookOpenMode: StateFlow<UncachedBookOpenMode> = _uncachedBookOpenMode.asStateFlow()
 
     private val _isStartupInitialized = MutableStateFlow(false)
     val isStartupInitialized: StateFlow<Boolean> = _isStartupInitialized.asStateFlow()
@@ -383,7 +398,10 @@ class BookRepository private constructor(private val context: Context) {
             horizontalPadding = prefs.getInt("horizontal_padding", 20),
             verticalPadding = prefs.getInt("vertical_padding", 16),
             pagedSafeLinesToRemove = prefs.getInt("paged_safe_lines_to_remove", 0),
+            verticallyCenterPages = prefs.getBoolean("vertically_center_pages", true),
+            pagedSwipeThreshold = prefs.getFloat("paged_swipe_threshold", 0.18f),
             showStartupLoadingScreen = prefs.getBoolean("show_startup_loading_screen", false),
+            uncachedBookOpenMode = try { UncachedBookOpenMode.valueOf(prefs.getString("uncached_book_open_mode", UncachedBookOpenMode.INSTANT_ACTIVE_FIRST.name) ?: UncachedBookOpenMode.INSTANT_ACTIVE_FIRST.name) } catch (_: Exception) { UncachedBookOpenMode.INSTANT_ACTIVE_FIRST },
             showFloatingAssistant = prefs.getBoolean("show_floating_assistant", true),
             orbSize = try { OrbSize.valueOf(prefs.getString("orb_size", OrbSize.NANO.name) ?: OrbSize.NANO.name) } catch (_: Exception) { OrbSize.NANO },
             orbMenuSize = try { OrbMenuSize.valueOf(prefs.getString("orb_menu_size", OrbMenuSize.MEDIUM.name) ?: OrbMenuSize.MEDIUM.name) } catch (_: Exception) { OrbMenuSize.MEDIUM },
@@ -535,6 +553,7 @@ class BookRepository private constructor(private val context: Context) {
     }
 
     init {
+        PageCache.init(context)
         repoScope.launch(Dispatchers.IO) {
             val startMs = System.currentTimeMillis()
             _startupStatusMessage.value = "Reading library database…"
@@ -569,67 +588,47 @@ class BookRepository private constructor(private val context: Context) {
             OnlineEpubService.customEndpoints = loadedEndpoints
             io.github.tasmirz.lumina.util.LuminaLog.perf("BookRepository.init", System.currentTimeMillis() - startMs, "Loaded ${loadedBooks.size} books, ${loadedBookmarks.size} bookmarks, ${loadedTextures.size} custom textures, ${loadedEndpoints.size} custom endpoints")
 
-            // Pre-warm active book chapters in memory cache so Reader opens instantly without disk stall
+            // Pre-warm active book chapters & page cache in memory so Reader opens instantly without disk stall
             val activeId = prefs.getString("active_book_id", "") ?: ""
             val active = loadedBooks.find { it.id == activeId } ?: loadedBooks.firstOrNull()
             if (active != null) {
                 _startupStatusMessage.value = "Warming up chapters for \"${active.title}\"…"
-                val chapters = getChaptersForBook(active.id)
-                val currentSettings = _readerSettings.value
-                // For Paged mode, precompute asynchronously in background without blocking startup initialization.
-                // For Scroll mode, page cache is not used by ContinuousReaderLayout, so zero computation is needed.
-                if (chapters.isNotEmpty() && currentSettings.readingMode != ReadingMode.SCROLL) {
+                val chaps = dbHelper.getChapterMetadataForBook(active.id).ifEmpty { getChaptersForBook(active.id) }
+                if (chaps.isNotEmpty() && _readingMode.value == ReadingMode.PAGED) {
                     val config = context.resources?.configuration
-                    val sw = config?.screenWidthDp ?: 392
-                    val sh = config?.screenHeightDp ?: 820
+                    val sw = config?.screenWidthDp ?: 0
+                    val sh = config?.screenHeightDp ?: 0
                     val isLand = config?.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-                    launch(Dispatchers.Default) {
-                        PageCache.getOrComputeAsync(
-                            bookId = active.id,
-                            chapters = chapters,
-                            fontSize = currentSettings.fontSize,
-                            isLandscape = isLand,
-                            isStrictPaged = currentSettings.readingMode == ReadingMode.PAGED,
-                            screenWidthDp = sw,
-                            screenHeightDp = sh,
-                            horizontalPaddingDp = currentSettings.horizontalPadding,
-                            verticalPaddingDp = currentSettings.verticalPadding,
-                            lineHeightMultiplier = currentSettings.lineHeightMultiplier,
-                            paragraphSpacingMultiplier = currentSettings.paragraphSpacingMultiplier,
-                            safeLinesToRemove = currentSettings.pagedSafeLinesToRemove,
-                            dbHelper = dbHelper,
-                            context = context
-                        )
-                    }
+                    PageCache.getOrComputeAsync(
+                        bookId = active.id,
+                        chapters = chaps,
+                        fontSize = _fontSize.value,
+                        isLandscape = isLand,
+                        isStrictPaged = true,
+                        screenWidthDp = sw,
+                        screenHeightDp = sh,
+                        horizontalPaddingDp = _horizontalPadding.value,
+                        verticalPaddingDp = _verticalPadding.value,
+                        lineHeightMultiplier = _lineHeightMultiplier.value,
+                        paragraphSpacingMultiplier = _paragraphSpacingMultiplier.value,
+                        safeLinesToRemove = _pagedSafeLinesToRemove.value,
+                        dbHelper = dbHelper,
+                        context = context
+                    )
                 }
             }
-
-            _startupStatusMessage.value = "Ready"
-            _isStartupInitialized.value = true
 
             try {
                 syncSettings()
             } catch (_: Exception) {}
 
-            // Background database maintenance: compact database if oversized due to previous cache churn
+            _startupStatusMessage.value = "Ready"
+            _isStartupInitialized.value = true
+
+            // Background database maintenance: checkpoint WAL passively if oversized without blocking UI
             launch(Dispatchers.IO) {
                 delay(3000)
                 dbHelper.compactDatabaseIfNeeded()
-            }
-
-            // Defer background cover compression pass by 4 seconds so startup stays instantaneous
-            launch(Dispatchers.IO) {
-                delay(4000)
-                try {
-                    val coversDir = File(context.filesDir, "covers")
-                    if (coversDir.exists() && coversDir.isDirectory) {
-                        coversDir.listFiles()?.forEach { file ->
-                            if (file.isFile && file.length() > 120 * 1024L) {
-                                EpubParser.compressExistingCoverFile(file, maxDimension = 640, quality = 82)
-                            }
-                        }
-                    }
-                } catch (_: Exception) {}
             }
 
             // Only if library is completely empty (e.g. fresh install with no backup),
@@ -712,11 +711,33 @@ class BookRepository private constructor(private val context: Context) {
 
     fun setPagedSafeLinesToRemove(lines: Int) = updatePagedSafeLinesToRemove(lines)
 
+    fun setVerticallyCenterPages(enabled: Boolean) {
+        _verticallyCenterPages.value = enabled
+        updateReaderSettings { it.copy(verticallyCenterPages = enabled) }
+        prefs.edit().putBoolean("vertically_center_pages", enabled).apply()
+        persistSettingToDb("vertically_center_pages", enabled.toString())
+    }
+
+    fun setPagedSwipeThreshold(threshold: Float) {
+        val clamped = threshold.coerceIn(0.05f, 0.60f)
+        _pagedSwipeThreshold.value = clamped
+        updateReaderSettings { it.copy(pagedSwipeThreshold = clamped) }
+        prefs.edit().putFloat("paged_swipe_threshold", clamped).apply()
+        persistSettingToDb("paged_swipe_threshold", clamped.toString())
+    }
+
     fun setShowStartupLoadingScreen(enabled: Boolean) {
         _showStartupLoadingScreen.value = enabled
         updateReaderSettings { it.copy(showStartupLoadingScreen = enabled) }
         prefs.edit().putBoolean("show_startup_loading_screen", enabled).apply()
         persistSettingToDb("show_startup_loading_screen", enabled.toString())
+    }
+
+    fun setUncachedBookOpenMode(mode: UncachedBookOpenMode) {
+        _uncachedBookOpenMode.value = mode
+        updateReaderSettings { it.copy(uncachedBookOpenMode = mode) }
+        prefs.edit().putString("uncached_book_open_mode", mode.name).apply()
+        persistSettingToDb("uncached_book_open_mode", mode.name)
     }
 
     fun setAssistantOrbStyle(style: String) {
@@ -841,7 +862,10 @@ class BookRepository private constructor(private val context: Context) {
         settings.put("horizontal_padding", _horizontalPadding.value)
         settings.put("vertical_padding", _verticalPadding.value)
         settings.put("paged_safe_lines_to_remove", _pagedSafeLinesToRemove.value)
+        settings.put("vertically_center_pages", _verticallyCenterPages.value)
+        settings.put("paged_swipe_threshold", _pagedSwipeThreshold.value.toDouble())
         settings.put("show_startup_loading_screen", _showStartupLoadingScreen.value)
+        settings.put("uncached_book_open_mode", _uncachedBookOpenMode.value.name)
         settings.put("assistant_orb_style", _assistantOrbStyle.value)
         settings.put("spoiler_shield", _spoilerShield.value)
         settings.put("auto_scroll_speed", _autoScrollSpeed.value.toDouble())
@@ -966,7 +990,12 @@ class BookRepository private constructor(private val context: Context) {
                 if (s.has("horizontal_padding")) setHorizontalPadding(s.getInt("horizontal_padding"))
                 if (s.has("vertical_padding")) setVerticalPadding(s.getInt("vertical_padding"))
                 if (s.has("paged_safe_lines_to_remove")) setPagedSafeLinesToRemove(s.getInt("paged_safe_lines_to_remove"))
+                if (s.has("vertically_center_pages")) setVerticallyCenterPages(s.getBoolean("vertically_center_pages"))
+                if (s.has("paged_swipe_threshold")) setPagedSwipeThreshold(s.getDouble("paged_swipe_threshold").toFloat())
                 if (s.has("show_startup_loading_screen")) setShowStartupLoadingScreen(s.getBoolean("show_startup_loading_screen"))
+                if (s.has("uncached_book_open_mode")) {
+                    try { setUncachedBookOpenMode(UncachedBookOpenMode.valueOf(s.getString("uncached_book_open_mode"))) } catch (_: Exception) {}
+                }
                 if (s.has("assistant_orb_style")) setAssistantOrbStyle(s.getString("assistant_orb_style"))
                 if (s.has("spoiler_shield")) setSpoilerShield(s.getBoolean("spoiler_shield"))
                 if (s.has("auto_scroll_speed")) setAutoScrollSpeed(s.getDouble("auto_scroll_speed").toFloat())
@@ -2406,6 +2435,37 @@ class BookRepository private constructor(private val context: Context) {
         }
     }
 
+    private fun reconcileMissingBookPaths(books: List<Book>) {
+        try {
+            val searchDirs = LuminaStorageManager.getAllSearchDirectories(context)
+            for (b in books) {
+                if (b.filePath.isBlank() || !File(b.filePath).exists()) {
+                    val originalFileName = b.filePath.substringAfterLast('/')
+                    var recoveredFile: File? = null
+                    for (dir in searchDirs) {
+                        if (originalFileName.isNotBlank()) {
+                            val candidate = File(dir, originalFileName)
+                            if (candidate.exists() && candidate.length() > 0L) {
+                                recoveredFile = candidate
+                                break
+                            }
+                        }
+                        val idCandidate = File(dir, "${b.id}.epub")
+                        if (idCandidate.exists() && idCandidate.length() > 0L) {
+                            recoveredFile = idCandidate
+                            break
+                        }
+                    }
+                    if (recoveredFile != null) {
+                        try {
+                            dbHelper.updateBookFilePath(b.id, recoveredFile.absolutePath, recoveredFile.length())
+                        } catch (_: Exception) {}
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
     private fun loadAllBooks(): List<Book> {
         try {
             dbHelper.purgeDemoBooks()
@@ -2435,7 +2495,6 @@ class BookRepository private constructor(private val context: Context) {
         }
 
         val fromDb = try { dbHelper.getAllBooks() } catch (_: Exception) { emptyList() }
-        val searchDirs = LuminaStorageManager.getAllSearchDirectories(context)
 
         // Filter out deleted books from DB and purge them from DB
         val activeFromDb = fromDb.filterNot { b ->
@@ -2450,43 +2509,18 @@ class BookRepository private constructor(private val context: Context) {
             isDeleted
         }
 
+        // Fast cold-boot path: strip remote unsplash placeholders without blocking disk searches
         val resolvedBooks = activeFromDb.map { raw ->
-            val b = if (raw.coverUrl.contains("images.unsplash.com")) raw.copy(coverUrl = "") else raw
-            if (!b.filePath.isNullOrBlank() && File(b.filePath).exists()) {
-                b
-            } else {
-                // Attempt recovery: check if a file with matching name or ID exists in persistent storage
-                val originalFileName = b.filePath.substringAfterLast('/')
-                var recoveredFile: File? = null
-                for (dir in searchDirs) {
-                    if (originalFileName.isNotBlank()) {
-                        val candidate = File(dir, originalFileName)
-                        if (candidate.exists() && candidate.length() > 0L) {
-                            recoveredFile = candidate
-                            break
-                        }
-                    }
-                    val idCandidate = File(dir, "${b.id}.epub")
-                    if (idCandidate.exists() && idCandidate.length() > 0L) {
-                        recoveredFile = idCandidate
-                        break
-                    }
-                }
-                if (recoveredFile != null) {
-                    val updated = b.copy(filePath = recoveredFile.absolutePath, fileSize = recoveredFile.length())
-                    try {
-                        dbHelper.updateBookFilePath(updated.id, recoveredFile.absolutePath, recoveredFile.length())
-                    } catch (_: Exception) {}
-                    updated
-                } else {
-                    b
-                }
-            }
+            if (raw.coverUrl.contains("images.unsplash.com")) raw.copy(coverUrl = "") else raw
         }
 
         val validBooks = resolvedBooks.filterNot { b ->
-            b.id in setOf("book-kafka", "book-alice", "book-artofwar", "1", "2", "3", "demo-kafka", "demo-alice", "demo-artofwar") ||
-            ((b.filePath.isNullOrBlank() || !File(b.filePath).exists()) && !b.isDownloaded)
+            b.id in setOf("book-kafka", "book-alice", "book-artofwar", "1", "2", "3", "demo-kafka", "demo-alice", "demo-artofwar")
+        }
+
+        // Defer filesystem search and recovery to background so cold boot is instant (~2ms)
+        repoScope.launch(Dispatchers.IO) {
+            reconcileMissingBookPaths(validBooks)
         }
 
         // Deduplicate loaded books: if multiple books have same title+author or same path, keep the best one and purge duplicate DB rows

@@ -246,8 +246,17 @@ fun AdvancedSettingsScreen(
     val pagedSafeLinesToRemoveState = repository?.pagedSafeLinesToRemove?.collectAsState(initial = 0)
     val pagedSafeLinesToRemove = pagedSafeLinesToRemoveState?.value ?: 0
 
+    val verticallyCenterPagesState = repository?.verticallyCenterPages?.collectAsState(initial = true)
+    val verticallyCenterPages = verticallyCenterPagesState?.value ?: true
+
+    val pagedSwipeThresholdState = repository?.pagedSwipeThreshold?.collectAsState(initial = 0.18f)
+    val pagedSwipeThreshold = pagedSwipeThresholdState?.value ?: 0.18f
+
     val showStartupLoadingScreenState = repository?.showStartupLoadingScreen?.collectAsState(initial = false)
     val showStartupLoadingScreen = showStartupLoadingScreenState?.value ?: false
+
+    val uncachedBookOpenModeState = repository?.uncachedBookOpenMode?.collectAsState(initial = io.github.tasmirz.lumina.model.UncachedBookOpenMode.INSTANT_ACTIVE_FIRST)
+    val uncachedBookOpenMode = uncachedBookOpenModeState?.value ?: io.github.tasmirz.lumina.model.UncachedBookOpenMode.INSTANT_ACTIVE_FIRST
 
     val fontSizeState = repository?.fontSize?.collectAsState(initial = fontSize)
     val currentFontSize = fontSizeState?.value ?: fontSize
@@ -1019,7 +1028,7 @@ fun AdvancedSettingsScreen(
                         // Page Margins & Spacing
                         Text(
                             text = "Page Margins & Padding",
-                            fontWeight = FontWeight.SemiBold,
+                            fontWeight = FontWeight.Normal,
                             fontSize = 13.sp
                         )
                         Spacer(modifier = Modifier.height(8.dp))
@@ -1031,7 +1040,7 @@ fun AdvancedSettingsScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text("Side Margin (Horizontal)", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text("${horizontalPadding} dp", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
+                            Text("${horizontalPadding} dp", fontSize = 12.sp, fontWeight = FontWeight.Normal, color = MaterialTheme.colorScheme.secondary)
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Slider(
@@ -1051,7 +1060,7 @@ fun AdvancedSettingsScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text("Top / Bottom Margin (Vertical)", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text("${verticalPadding} dp", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
+                            Text("${verticalPadding} dp", fontSize = 12.sp, fontWeight = FontWeight.Normal, color = MaterialTheme.colorScheme.secondary)
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Slider(
@@ -1074,7 +1083,7 @@ fun AdvancedSettingsScreen(
                                 Text("Paged Safe Lines to Remove", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text("Subtracts lines per page in Paged Mode to prevent bottom clipping", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
                             }
-                            Text(if (pagedSafeLinesToRemove == 0) "0 (Default)" else "$pagedSafeLinesToRemove lines", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
+                            Text(if (pagedSafeLinesToRemove == 0) "0 (Default)" else "$pagedSafeLinesToRemove lines", fontSize = 12.sp, fontWeight = FontWeight.Normal, color = MaterialTheme.colorScheme.secondary)
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Slider(
@@ -1082,6 +1091,59 @@ fun AdvancedSettingsScreen(
                             onValueChange = { repository?.setPagedSafeLinesToRemove(it.toInt()) },
                             valueRange = 0f..5f,
                             steps = 4,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Vertically Center Page Text
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Vertically Center Page Text", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("Distributes unused vertical space evenly in Paged Mode", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                            }
+                            Switch(
+                                checked = verticallyCenterPages,
+                                onCheckedChange = { repository?.setVerticallyCenterPages(it) },
+                                modifier = Modifier.size(width = 48.dp, height = 28.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Page Turn Swipe Effort
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Page Turn Swipe Effort", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("Distance required to turn page (lower = easier flick)", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                            }
+                            val effortLabel = when {
+                                pagedSwipeThreshold <= 0.14f -> "Minimal"
+                                pagedSwipeThreshold <= 0.22f -> "Light"
+                                pagedSwipeThreshold <= 0.34f -> "Medium"
+                                else -> "Firm"
+                            }
+                            Text(
+                                text = "${(pagedSwipeThreshold * 100).toInt()}% ($effortLabel)",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Normal,
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Slider(
+                            value = pagedSwipeThreshold,
+                            onValueChange = { repository?.setPagedSwipeThreshold(it) },
+                            valueRange = 0.08f..0.50f,
+                            steps = 6,
                             modifier = Modifier.fillMaxWidth()
                         )
 
@@ -1093,7 +1155,7 @@ fun AdvancedSettingsScreen(
                         // Typography Engine Controls
                         Text(
                             text = "Typography Engine",
-                            fontWeight = FontWeight.SemiBold,
+                            fontWeight = FontWeight.Normal,
                             fontSize = 13.sp
                         )
                         Spacer(modifier = Modifier.height(8.dp))
@@ -2535,6 +2597,40 @@ fun AdvancedSettingsScreen(
                             GestureGuideItem("Drag Down", "Drop dot into bottom bin to dismiss")
                         }
 
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Page Turn Swipe Effort
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Page Turn Swipe Effort", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("Distance required to turn page (lower = easier flick)", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                            }
+                            val effortLabel = when {
+                                pagedSwipeThreshold <= 0.14f -> "Minimal"
+                                pagedSwipeThreshold <= 0.22f -> "Light"
+                                pagedSwipeThreshold <= 0.34f -> "Medium"
+                                else -> "Firm"
+                            }
+                            Text(
+                                text = "${(pagedSwipeThreshold * 100).toInt()}% ($effortLabel)",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Normal,
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Slider(
+                            value = pagedSwipeThreshold,
+                            onValueChange = { repository?.setPagedSwipeThreshold(it) },
+                            valueRange = 0.08f..0.50f,
+                            steps = 6,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
                         HorizontalDivider(
                             modifier = Modifier.padding(vertical = 12.dp),
                             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
@@ -3239,12 +3335,12 @@ fun AdvancedSettingsScreen(
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
                                         text = "Startup Initialization Screen",
-                                        fontWeight = FontWeight.SemiBold,
+                                        fontWeight = FontWeight.Normal,
                                         fontSize = 12.5.sp
                                     )
                                     Spacer(modifier = Modifier.height(2.dp))
                                     Text(
-                                        text = if (showStartupLoadingScreen) "Active. Displays a smooth loading screen until chapter caching and database warm-ups finish (with instant skip option)." else "Disabled. Launches directly into library or reader.",
+                                        text = if (showStartupLoadingScreen) "Active. Displays a serene visual emblem while library and database warm-ups finish." else "Disabled. Launches directly into library or reader.",
                                         fontSize = 10.5.sp,
                                         lineHeight = 14.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -3254,6 +3350,54 @@ fun AdvancedSettingsScreen(
                                     checked = showStartupLoadingScreen,
                                     onCheckedChange = { repository?.setShowStartupLoadingScreen(it) }
                                 )
+                            }
+
+                            Spacer(modifier = Modifier.height(14.dp))
+
+                            // Uncached Book Loading Mode
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                Text(
+                                    text = "Uncached Book Opening Mode",
+                                    fontWeight = FontWeight.Normal,
+                                    fontSize = 12.5.sp
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = when (uncachedBookOpenMode) {
+                                        io.github.tasmirz.lumina.model.UncachedBookOpenMode.INSTANT_ACTIVE_FIRST -> "Instant: renders first chapter immediately while remaining layout computes silently."
+                                        io.github.tasmirz.lumina.model.UncachedBookOpenMode.SERENE_EMBLEM -> "Serene: displays minimalist breathing emblem until entire book layout is ready."
+                                        io.github.tasmirz.lumina.model.UncachedBookOpenMode.ADAPTIVE -> "Adaptive: displays breathing emblem only if pagination computation exceeds 300ms."
+                                    },
+                                    fontSize = 10.5.sp,
+                                    lineHeight = 14.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    val modes = listOf(
+                                        io.github.tasmirz.lumina.model.UncachedBookOpenMode.INSTANT_ACTIVE_FIRST to "Instant",
+                                        io.github.tasmirz.lumina.model.UncachedBookOpenMode.SERENE_EMBLEM to "Serene",
+                                        io.github.tasmirz.lumina.model.UncachedBookOpenMode.ADAPTIVE to "Adaptive"
+                                    )
+                                    modes.forEach { (mode, label) ->
+                                        val isSelected = uncachedBookOpenMode == mode
+                                        FilterChip(
+                                            selected = isSelected,
+                                            onClick = { repository?.setUncachedBookOpenMode(mode) },
+                                            label = {
+                                                Text(
+                                                    text = label,
+                                                    fontSize = 11.5.sp,
+                                                    fontWeight = FontWeight.Normal
+                                                )
+                                            },
+                                            shape = RoundedCornerShape(8.dp)
+                                        )
+                                    }
+                                }
                             }
 
                             HorizontalDivider(

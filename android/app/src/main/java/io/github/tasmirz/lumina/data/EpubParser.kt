@@ -267,18 +267,35 @@ object EpubParser {
      * Parses an EPUB InputStream into a Book domain model.
      * Robustly extracts OPF metadata, Table of Contents (EPUB 2 NCX & EPUB 3 Nav), covers, and inline images.
      */
+    fun parseEpub(file: File, context: Context? = null): Book {
+        return file.inputStream().use { stream ->
+            parseEpub(stream, file.name, context)
+        }
+    }
+
     fun parseEpub(inputStream: InputStream, filename: String, context: Context? = null): Book {
         val bookId = "custom-${System.currentTimeMillis()}"
         val entries = mutableMapOf<String, ByteArray>()
 
-        // 1. Read all zip entries into memory with normalized forward slashes
+        // 1. Memory-efficient entry streaming: selectively buffer text/structure & cover candidate entries
+        // Skips heavy binary assets (fonts, audio, video, non-cover media) to prevent memory allocation spikes
         try {
             val zip = ZipInputStream(inputStream)
             var entry = zip.nextEntry
             while (entry != null) {
                 if (!entry.isDirectory) {
                     val normalizedName = entry.name.replace('\\', '/').removePrefix("/")
-                    entries[normalizedName] = zip.readBytes()
+                    val lower = normalizedName.lowercase()
+                    val isTextOrStructure = lower.endsWith(".xml") || lower.endsWith(".opf") || lower.endsWith(".ncx") ||
+                            lower.endsWith(".xhtml") || lower.endsWith(".html") || lower.endsWith(".htm")
+                    val isCandidateCover = (lower.contains("cover") || lower.contains("title") || lower.contains("front") || lower.contains("jacket")) &&
+                            (lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") || lower.endsWith(".webp"))
+                    val isImageFallback = (lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") || lower.endsWith(".webp")) &&
+                            entries.none { it.key.endsWith(".jpg") || it.key.endsWith(".jpeg") || it.key.endsWith(".png") || it.key.endsWith(".webp") }
+
+                    if (isTextOrStructure || isCandidateCover || isImageFallback) {
+                        entries[normalizedName] = zip.readBytes()
+                    }
                 }
                 zip.closeEntry()
                 entry = zip.nextEntry

@@ -592,6 +592,10 @@ fun AppearanceSheet(
     onHorizontalPaddingChange: (Int) -> Unit = {},
     verticalPadding: Int = 16,
     onVerticalPaddingChange: (Int) -> Unit = {},
+    verticallyCenterPages: Boolean = true,
+    onToggleVerticallyCenterPages: (Boolean) -> Unit = {},
+    pagedSwipeThreshold: Float = 0.18f,
+    onPagedSwipeThresholdChange: (Float) -> Unit = {},
     paragraphSpacing: Float = 1.2f,
     onParagraphSpacingChange: (Float) -> Unit = {},
     currentLanguage: String = "auto",
@@ -924,7 +928,7 @@ fun AppearanceSheet(
                 )
             }
 
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             // Open Advanced Settings Button
             Surface(

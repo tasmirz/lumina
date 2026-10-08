@@ -38,10 +38,49 @@ object PageCache {
     // Cache up to 16 book pagination sets in memory
     private val cache = SimpleLruCache<String, List<Pair<String, String>>>(16)
 
+    @Volatile
+    private var appContext: android.content.Context? = null
+
+    fun init(context: android.content.Context) {
+        if (appContext == null) {
+            appContext = context.applicationContext
+        }
+    }
+
+    fun deserializePages(json: String?): List<Pair<String, String>> {
+        if (json.isNullOrBlank()) return emptyList()
+        val list = ArrayList<Pair<String, String>>()
+        try {
+            val array = org.json.JSONArray(json)
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                list.add(Pair(obj.optString("title", ""), obj.optString("text", "")))
+            }
+        } catch (_: Exception) {}
+        return list
+    }
+
+    fun serializePages(pages: List<Pair<String, String>>): String {
+        val array = org.json.JSONArray()
+        for ((title, text) in pages) {
+            val obj = org.json.JSONObject()
+            obj.put("title", title)
+            obj.put("text", text)
+            array.put(obj)
+        }
+        return array.toString()
+    }
+
     private fun getPersistentCacheFile(context: android.content.Context?, key: String): java.io.File? {
+        val ctx = context ?: appContext
         return try {
-            val dir = io.github.tasmirz.lumina.data.LuminaStorageManager.getPersistentPagesCacheDirectory(context)
-            java.io.File(dir, "$key.json")
+            val dir = io.github.tasmirz.lumina.data.LuminaStorageManager.getPersistentPagesCacheDirectory(ctx)
+            val exact = java.io.File(dir, "$key.json")
+            if (exact.exists() && exact.length() > 0L) return exact
+
+            val prefix = if (key.contains("_strict")) key.substringBefore("_strict") + "_strict" else key.substringBefore("_scroll") + "_scroll"
+            val matching = dir.listFiles { _, name -> name.startsWith(prefix) && name.endsWith(".json") }
+            matching?.maxByOrNull { it.lastModified() } ?: exact
         } catch (_: Exception) { null }
     }
 
@@ -143,10 +182,21 @@ object PageCache {
         horizontalPaddingDp: Int = 20,
         verticalPaddingDp: Int = 16,
         paragraphSpacingMultiplier: Float = 1.2f,
-        safeLinesToRemove: Int = 0
+        safeLinesToRemove: Int = 0,
+        context: android.content.Context? = null
     ): List<Pair<String, String>>? {
         val key = getCacheKey(bookId, chaptersCount, fontSize, isLandscape, isStrictPaged, screenWidthDp, screenHeightDp, horizontalPaddingDp, verticalPaddingDp, paragraphSpacingMultiplier, safeLinesToRemove)
-        return cache.get(key)
+        val inMem = cache.get(key)
+        if (inMem != null) return inMem
+
+        val prefix = if (key.contains("_strict")) key.substringBefore("_strict") + "_strict" else key.substringBefore("_scroll") + "_scroll"
+        for ((k, v) in cache.snapshot()) {
+            if (k.startsWith(prefix) && v.isNotEmpty()) {
+                cache.put(key, v)
+                return v
+            }
+        }
+        return null
     }
 
     fun getOrCompute(
@@ -178,20 +228,28 @@ object PageCache {
         }
 
         val pFile = getPersistentCacheFile(context, key)
-        if (pFile != null && pFile.exists() && pFile.length() > 0L && dbHelper != null) {
+        if (pFile != null && pFile.exists() && pFile.length() > 0L) {
             try {
                 val json = pFile.readText()
-                val fromFile = dbHelper.deserializePages(json)
+                val fromFile = dbHelper?.deserializePages(json) ?: deserializePages(json)
                 if (fromFile.isNotEmpty()) {
                     cache.put(key, fromFile)
-                    dbHelper.savePageCache(key, bookId, -1, fromFile)
+                    if (dbHelper != null) {
+                        try { dbHelper.savePageCache(key, bookId, -1, fromFile) } catch (_: Exception) {}
+                    }
                     return fromFile
                 }
             } catch (_: Exception) {}
         }
 
+        val fullChapters = if (chapters.any { it.paragraphs.isNotEmpty() }) {
+            chapters
+        } else {
+            dbHelper?.getAllChaptersForBook(bookId) ?: chapters
+        }
+
         val list = computePages(
-            chapters = chapters,
+            chapters = fullChapters,
             fontSize = fontSize,
             isLandscape = isLandscape,
             isStrictPaged = isStrictPaged,
@@ -203,11 +261,13 @@ object PageCache {
             paragraphSpacingMultiplier = paragraphSpacingMultiplier,
             safeLinesToRemove = safeLinesToRemove
         )
-        cache.put(key, list)
-        if (dbHelper != null && list.isNotEmpty()) {
-            dbHelper.savePageCache(key, bookId, -1, list)
+        if (list.isNotEmpty()) {
+            cache.put(key, list)
+            if (dbHelper != null) {
+                try { dbHelper.savePageCache(key, bookId, -1, list) } catch (_: Exception) {}
+            }
             if (pFile != null) {
-                try { pFile.writeText(dbHelper.serializePages(list)) } catch (_: Exception) {}
+                try { pFile.writeText(serializePages(list)) } catch (_: Exception) {}
             }
         }
         return list
@@ -266,6 +326,16 @@ object PageCache {
             return@withContext cached
         }
 
+        // Fast in-memory high-tolerance prefix match
+        val prefix = if (key.contains("_strict")) key.substringBefore("_strict") + "_strict" else key.substringBefore("_scroll") + "_scroll"
+        for ((k, v) in cache.snapshot()) {
+            if (k.startsWith(prefix) && v.isNotEmpty()) {
+                cache.put(key, v)
+                onActiveChapterReady?.invoke(v)
+                return@withContext v
+            }
+        }
+
         if (dbHelper != null) {
             val fromDb = dbHelper.getPageCache(key)
             if (fromDb != null && fromDb.isNotEmpty()) {
@@ -277,22 +347,33 @@ object PageCache {
 
         // Persistent file cache check (survives app reinstalls and updates)
         val pFile = getPersistentCacheFile(context, key)
-        if (pFile != null && pFile.exists() && pFile.length() > 0L && dbHelper != null) {
+        if (pFile != null && pFile.exists() && pFile.length() > 0L) {
+            val t0 = System.currentTimeMillis()
             try {
                 val json = pFile.readText()
-                val fromFile = dbHelper.deserializePages(json)
+                val fromFile = dbHelper?.deserializePages(json) ?: deserializePages(json)
                 if (fromFile.isNotEmpty()) {
                     cache.put(key, fromFile)
-                    dbHelper.savePageCache(key, bookId, -1, fromFile)
+                    if (dbHelper != null) {
+                        try { dbHelper.savePageCache(key, bookId, -1, fromFile) } catch (_: Exception) {}
+                    }
+                    io.github.tasmirz.lumina.util.LuminaLog.perf("PageCache.getOrComputeAsync", System.currentTimeMillis() - t0, "Loaded ${fromFile.size} pages from persistent file")
                     onActiveChapterReady?.invoke(fromFile)
                     return@withContext fromFile
                 }
             } catch (_: Exception) {}
         }
 
+        // Cache completely missed — ensure full chapter paragraphs are loaded if chapters only had metadata
+        val fullChapters = if (chapters.any { it.paragraphs.isNotEmpty() }) {
+            chapters
+        } else {
+            dbHelper?.getAllChaptersForBook(bookId) ?: chapters
+        }
+
         // Fast path: compute active chapter first for immediate UI rendering
-        if (onActiveChapterReady != null && activeChapterIndex in chapters.indices) {
-            val activeChapter = chapters[activeChapterIndex]
+        if (onActiveChapterReady != null && activeChapterIndex in fullChapters.indices) {
+            val activeChapter = fullChapters[activeChapterIndex]
             val activePages = computeChapterPages(
                 chapter = activeChapter,
                 fontSize = fontSize,
@@ -312,7 +393,7 @@ object PageCache {
         }
 
         val list = computePages(
-            chapters = chapters,
+            chapters = fullChapters,
             fontSize = fontSize,
             isLandscape = isLandscape,
             isStrictPaged = isStrictPaged,
@@ -324,11 +405,13 @@ object PageCache {
             paragraphSpacingMultiplier = paragraphSpacingMultiplier,
             safeLinesToRemove = safeLinesToRemove
         )
-        cache.put(key, list)
-        if (dbHelper != null && list.isNotEmpty()) {
-            dbHelper.savePageCache(key, bookId, -1, list)
+        if (list.isNotEmpty()) {
+            cache.put(key, list)
+            if (dbHelper != null) {
+                try { dbHelper.savePageCache(key, bookId, -1, list) } catch (_: Exception) {}
+            }
             if (pFile != null) {
-                try { pFile.writeText(dbHelper.serializePages(list)) } catch (_: Exception) {}
+                try { pFile.writeText(serializePages(list)) } catch (_: Exception) {}
             }
         }
         return@withContext list

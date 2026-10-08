@@ -27,6 +27,8 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.mandatorySystemGestures
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -202,14 +204,17 @@ class MainActivity : ComponentActivity() {
             val aiModel = readerSettings.aiModel
             val preferredLanguage = readerSettings.preferredLanguage
             val showStartupLoadingScreen = readerSettings.showStartupLoadingScreen
+            val verticallyCenterPages = readerSettings.verticallyCenterPages
+            val pagedSwipeThreshold = readerSettings.pagedSwipeThreshold
 
             val isStartupInitialized by bookRepository.isStartupInitialized.collectAsStateWithLifecycle()
             val startupStatusMessage by bookRepository.startupStatusMessage.collectAsStateWithLifecycle()
             var isStartupSkipped by rememberSaveable { mutableStateOf(false) }
 
+            val lastTab = remember { bookRepository.getLastTab() }
             var currentTab by rememberSaveable {
                 mutableStateOf(
-                    if (bookRepository.getLastTab() == ScreenTab.READER.name && books.isNotEmpty()) ScreenTab.READER else ScreenTab.LIBRARY
+                    if (lastTab == ScreenTab.READER.name) ScreenTab.READER else ScreenTab.LIBRARY
                 )
             }
             var showBookmarksSheet by rememberSaveable { mutableStateOf(false) }
@@ -290,15 +295,17 @@ class MainActivity : ComponentActivity() {
 
                 val showBottomNav = !isFullscreen && (currentTab == ScreenTab.LIBRARY)
 
-                if (showStartupLoadingScreen && !isStartupInitialized && !isStartupSkipped) {
-                    StartupLoadingScreen(
-                        statusMessage = startupStatusMessage,
-                        onSkip = { isStartupSkipped = true }
-                    )
-                } else {
-                    Box(
-                        modifier = Modifier.fillMaxSize()
-                    ) {
+                Crossfade(
+                    targetState = isStartupInitialized,
+                    animationSpec = tween(durationMillis = 240),
+                    label = "StartupCrossfade"
+                ) { initialized ->
+                    if (!initialized && showStartupLoadingScreen) {
+                        StartupLoadingScreen()
+                    } else {
+                        Box(
+                            modifier = Modifier.fillMaxSize()
+                        ) {
                         when (currentTab) {
                             ScreenTab.LIBRARY -> {
                                 LibraryScreen(
@@ -429,30 +436,7 @@ class MainActivity : ComponentActivity() {
                                         onOpenAdvancedSettings = { showAdvancedSettingsScreen = true }
                                     )
                                 } else if (activeBook != null) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .background(MaterialTheme.colorScheme.background),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Column(
-                                            horizontalAlignment = Alignment.CenterHorizontally,
-                                            verticalArrangement = Arrangement.spacedBy(16.dp),
-                                            modifier = Modifier.padding(32.dp)
-                                        ) {
-                                            CircularProgressIndicator(
-                                                modifier = Modifier.size(36.dp),
-                                                color = MaterialTheme.colorScheme.primary,
-                                                strokeWidth = 3.dp
-                                            )
-                                            Text(
-                                                text = "Opening ${activeBook.title}...",
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                textAlign = TextAlign.Center
-                                            )
-                                        }
-                                    }
+                                    StartupLoadingScreen()
                                 } else {
                                     Box(
                                         modifier = Modifier.fillMaxSize(),
@@ -472,7 +456,7 @@ class MainActivity : ComponentActivity() {
                                             Text(
                                                 text = "No Book Selected",
                                                 style = MaterialTheme.typography.titleLarge,
-                                                fontWeight = FontWeight.Bold,
+                                                fontWeight = FontWeight.Normal,
                                                 color = MaterialTheme.colorScheme.onSurface
                                             )
                                             Text(
@@ -574,6 +558,7 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     }
+                }
 
                     // Dictionary Bottom Sheet
                     if (activeWordDefinition != null) {

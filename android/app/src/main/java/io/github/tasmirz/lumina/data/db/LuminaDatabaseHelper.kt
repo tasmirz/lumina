@@ -1673,6 +1673,45 @@ class LuminaDatabaseHelper(private val context: Context) : SQLiteOpenHelper(cont
         return chaptersCache[bookId]
     }
 
+    /**
+     * Fast metadata-only retrieval for chapters without reading or deserializing large paragraphs_json.
+     * Takes ~1ms and allocates virtually zero heap memory on cold boot.
+     */
+    fun getChapterMetadataForBook(bookId: String): List<Chapter> {
+        val inMem = chaptersCache[bookId]
+        if (inMem != null && inMem.isNotEmpty()) {
+            return inMem
+        }
+        val list = mutableListOf<Chapter>()
+        try {
+            val db = readableDatabase
+            val cursor = db.query(
+                TABLE_CHAPTERS,
+                arrayOf(COL_CHAP_INDEX, COL_CHAP_TITLE, COL_CHAP_SUBTITLE, COL_CHAP_READ_TIME),
+                "$COL_CHAP_BOOK_ID = ?",
+                arrayOf(bookId),
+                null, null,
+                "$COL_CHAP_INDEX ASC"
+            )
+            cursor.use {
+                val titleCol = it.getColumnIndexOrThrow(COL_CHAP_TITLE)
+                val subtitleCol = it.getColumnIndexOrThrow(COL_CHAP_SUBTITLE)
+                val readTimeCol = it.getColumnIndexOrThrow(COL_CHAP_READ_TIME)
+                while (it.moveToNext()) {
+                    list.add(
+                        Chapter(
+                            title = it.getString(titleCol),
+                            subtitle = it.getString(subtitleCol) ?: "",
+                            readTime = it.getString(readTimeCol) ?: "15 mins",
+                            paragraphs = emptyList()
+                        )
+                    )
+                }
+            }
+        } catch (_: Exception) {}
+        return list
+    }
+
     fun getChapter(bookId: String, chapterIndex: Int): Chapter? {
         val inMem = chaptersCache[bookId]?.getOrNull(chapterIndex)
         if (inMem != null) return inMem
@@ -1784,7 +1823,8 @@ class LuminaDatabaseHelper(private val context: Context) : SQLiteOpenHelper(cont
     fun getPageCache(cacheKey: String): List<Pair<String, String>>? {
         try {
             val db = readableDatabase
-            val cursor = db.query(
+            // 1. Try exact key match first
+            var cursor = db.query(
                 TABLE_PAGE_CACHE,
                 arrayOf(COL_PC_PAGES_JSON),
                 "$COL_PC_KEY = ?",
@@ -1792,13 +1832,43 @@ class LuminaDatabaseHelper(private val context: Context) : SQLiteOpenHelper(cont
                 null, null,
                 "$COL_PC_CHAP_INDEX ASC"
             )
-            cursor.use {
-                val list = mutableListOf<Pair<String, String>>()
-                while (it.moveToNext()) {
-                    val json = it.getString(0)
-                    list.addAll(deserializePages(json))
+            if (cursor.count > 0) {
+                cursor.use {
+                    val list = mutableListOf<Pair<String, String>>()
+                    while (it.moveToNext()) {
+                        val json = it.getString(0)
+                        list.addAll(deserializePages(json))
+                    }
+                    if (list.isNotEmpty()) return list
                 }
-                if (list.isNotEmpty()) return list
+            } else {
+                cursor.close()
+            }
+
+            // 2. High-tolerance fuzzy prefix match: match bookId + chapters + fontSize + orientation + mode
+            // Allows reusing layout cache across minor window insets or padding differences
+            val prefix = if (cacheKey.contains("_strict")) cacheKey.substringBefore("_strict") + "_strict"
+                         else if (cacheKey.contains("_scroll")) cacheKey.substringBefore("_scroll") + "_scroll"
+                         else cacheKey
+            cursor = db.query(
+                TABLE_PAGE_CACHE,
+                arrayOf(COL_PC_KEY, COL_PC_PAGES_JSON),
+                "$COL_PC_KEY LIKE ?",
+                arrayOf("$prefix%"),
+                null, null,
+                "$COL_PC_CREATED_AT DESC, $COL_PC_CHAP_INDEX ASC"
+            )
+            cursor.use {
+                if (it.moveToFirst()) {
+                    val matchedKey = it.getString(0)
+                    val list = mutableListOf<Pair<String, String>>()
+                    do {
+                        if (it.getString(0) == matchedKey) {
+                            list.addAll(deserializePages(it.getString(1)))
+                        }
+                    } while (it.moveToNext())
+                    if (list.isNotEmpty()) return list
+                }
             }
         } catch (_: Exception) {}
         return null
@@ -1832,27 +1902,33 @@ class LuminaDatabaseHelper(private val context: Context) : SQLiteOpenHelper(cont
     }
 
     /**
-     * Compacts SQLite database if file size has grown excessively due to transient cache churn.
+     * Passively checkpoints SQLite WAL if write-ahead log size has grown excessively.
+     * Uses PASSIVE checkpoint mode to avoid blocking active readers or UI queries.
      * Must be invoked on a background IO dispatcher.
      */
     fun compactDatabaseIfNeeded() {
         try {
             val dbFile = context.getDatabasePath(DATABASE_NAME)
             val walFile = java.io.File(dbFile.parentFile, "$DATABASE_NAME-wal")
-            if ((dbFile.exists() && dbFile.length() > 6 * 1024 * 1024L) || (walFile.exists() && walFile.length() > 4 * 1024 * 1024L)) {
+            if (walFile.exists() && walFile.length() > 4 * 1024 * 1024L) {
                 val db = writableDatabase
                 try {
-                    val c1 = db.rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null)
-                    c1?.moveToFirst()
-                    c1?.close()
-                } catch (_: Throwable) {}
-                db.execSQL("VACUUM")
-                try {
-                    val c2 = db.rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null)
-                    c2?.moveToFirst()
-                    c2?.close()
+                    val c = db.rawQuery("PRAGMA wal_checkpoint(PASSIVE)", null)
+                    c.moveToFirst()
+                    c.close()
                 } catch (_: Throwable) {}
             }
+        } catch (_: Throwable) {}
+    }
+
+    /**
+     * Explicit manual vacuum of SQLite database. Should only be called on user request
+     * from diagnostics/settings, never on app startup.
+     */
+    fun vacuumDatabase() {
+        try {
+            val db = writableDatabase
+            db.execSQL("VACUUM")
         } catch (_: Throwable) {}
     }
 

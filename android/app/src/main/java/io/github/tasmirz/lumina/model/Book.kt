@@ -249,6 +249,12 @@ data class ReadingPosition(
     val progressPct: Int = 0
 )
 
+enum class UncachedBookOpenMode {
+    INSTANT_ACTIVE_FIRST, // Active chapter rendered instantly, remaining chapters computed in background
+    SERENE_EMBLEM,        // Serene minimalist breathing emblem until fully computed
+    ADAPTIVE              // Emblem only if computation takes >300ms
+}
+
 @Immutable
 data class ReaderSettings(
     val fontSize: Int = 18,
@@ -271,7 +277,10 @@ data class ReaderSettings(
     val horizontalPadding: Int = 20,
     val verticalPadding: Int = 16,
     val pagedSafeLinesToRemove: Int = 0,
+    val verticallyCenterPages: Boolean = true,
+    val pagedSwipeThreshold: Float = 0.18f,
     val showStartupLoadingScreen: Boolean = false,
+    val uncachedBookOpenMode: UncachedBookOpenMode = UncachedBookOpenMode.INSTANT_ACTIVE_FIRST,
     val assistantOrbStyle: String = "EDGE_DOT",
     val spoilerShield: Boolean = true,
     val autoScrollSpeed: Float = 1.0f,

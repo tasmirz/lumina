@@ -63,6 +63,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -438,6 +439,10 @@ fun ReaderScreen(
     val verticalPadding = verticalPaddingState?.value ?: 0
     val pagedSafeLinesToRemoveState = repository?.pagedSafeLinesToRemove?.collectAsState(initial = 0)
     val pagedSafeLinesToRemove = pagedSafeLinesToRemoveState?.value ?: 0
+    val verticallyCenterPagesState = repository?.verticallyCenterPages?.collectAsState(initial = true)
+    val verticallyCenterPages = verticallyCenterPagesState?.value ?: true
+    val pagedSwipeThresholdState = repository?.pagedSwipeThreshold?.collectAsState(initial = 0.18f)
+    val pagedSwipeThreshold = pagedSwipeThresholdState?.value ?: 0.18f
     val paragraphSpacingState = repository?.paragraphSpacingMultiplier?.collectAsState(initial = 1.2f)
     val paragraphSpacingMultiplier = paragraphSpacingState?.value ?: 1.2f
     val assistantOrbStyleState = repository?.assistantOrbStyle?.collectAsState(initial = "DOCK_DOT")
@@ -850,7 +855,8 @@ fun ReaderScreen(
                 horizontalPaddingDp = horizontalPadding,
                 verticalPaddingDp = verticalPadding,
                 paragraphSpacingMultiplier = paragraphSpacingMultiplier,
-                safeLinesToRemove = pagedSafeLinesToRemove
+                safeLinesToRemove = pagedSafeLinesToRemove,
+                context = context
             )
         } else null
         if (cached != null) {
@@ -875,6 +881,7 @@ fun ReaderScreen(
                 paragraphSpacingMultiplier = paragraphSpacingMultiplier,
                 safeLinesToRemove = pagedSafeLinesToRemove,
                 dbHelper = repository?.dbHelper,
+                context = context,
                 activeChapterIndex = book.currentChapter,
                 onActiveChapterReady = { activePages ->
                     if (pages.isEmpty() || pagesConfigKey != currentConfigKey) {
@@ -2159,8 +2166,24 @@ fun ReaderScreen(
                 // PAGED / PAGED_SCROLL MODE: Swipe horizontal pager
                 // ═════════════════════════════════════════════════════════════════════
                 if (pages.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                    val openMode = repository?.uncachedBookOpenMode?.collectAsState()?.value
+                        ?: io.github.tasmirz.lumina.model.UncachedBookOpenMode.INSTANT_ACTIVE_FIRST
+                    if (openMode == io.github.tasmirz.lumina.model.UncachedBookOpenMode.SERENE_EMBLEM) {
+                        io.github.tasmirz.lumina.ui.components.StartupLoadingScreen()
+                    } else if (openMode == io.github.tasmirz.lumina.model.UncachedBookOpenMode.ADAPTIVE) {
+                        var showEmblem by remember { mutableStateOf(false) }
+                        LaunchedEffect(Unit) {
+                            kotlinx.coroutines.delay(300)
+                            showEmblem = true
+                        }
+                        if (showEmblem) {
+                            io.github.tasmirz.lumina.ui.components.StartupLoadingScreen()
+                        } else {
+                            Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
+                        }
+                    } else {
+                        // INSTANT_ACTIVE_FIRST: Clean serene background while active chapter renders
+                        Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
                     }
                 } else {
                     LaunchedEffect(pagerState.currentPage) {
@@ -2237,6 +2260,10 @@ fun ReaderScreen(
                             state = pagerState,
                             key = { pageIdx -> "paged_page_$pageIdx" },
                             beyondViewportPageCount = 1,
+                            flingBehavior = PagerDefaults.flingBehavior(
+                                state = pagerState,
+                                snapPositionalThreshold = pagedSwipeThreshold.coerceIn(0.05f, 0.60f)
+                            ),
                             pageSpacing = (horizontalPadding * 1.5f).dp.coerceAtLeast(32.dp),
                             modifier = Modifier
                                 .fillMaxSize()
@@ -2439,6 +2466,29 @@ fun ReaderScreen(
                                             } else Modifier
                                         )
                                 ) {
+                                    if (verticallyCenterPages && readingMode == ReadingMode.PAGED) {
+                                        Spacer(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .fillMaxWidth()
+                                                .pointerInput(gestureDoubleTap, gestureSingleTap) {
+                                                    detectTapGestures(
+                                                        onDoubleTap = { executeGestureAction(gestureDoubleTap) },
+                                                        onTap = {
+                                                            if (isAutoScrolling) {
+                                                                isAutoScrolling = false
+                                                            } else if (showSelectionMenu) {
+                                                                showSelectionMenu = false
+                                                                selectedText = ""
+                                                            } else {
+                                                                executeGestureAction(gestureSingleTap)
+                                                            }
+                                                        }
+                                                    )
+                                                }
+                                        )
+                                    }
+
                                     if (isChapterHeaderPage) {
                                         Column(
                                             modifier = Modifier
