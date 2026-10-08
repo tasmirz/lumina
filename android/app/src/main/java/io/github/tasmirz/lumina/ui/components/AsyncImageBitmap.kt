@@ -277,7 +277,7 @@ fun BookCoverImage(
                 text = titleFallback.take(2).uppercase(),
                 fontFamily = FontFamily.Serif,
                 fontSize = 18.sp,
-                fontWeight = FontWeight.Medium,
+                fontWeight = FontWeight.Normal,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }

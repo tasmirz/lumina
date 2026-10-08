@@ -855,7 +855,8 @@ fun ReaderScreen(
                 horizontalPaddingDp = horizontalPadding,
                 verticalPaddingDp = verticalPadding,
                 paragraphSpacingMultiplier = paragraphSpacingMultiplier,
-                safeLinesToRemove = pagedSafeLinesToRemove
+                safeLinesToRemove = pagedSafeLinesToRemove,
+                context = context
             )
         } else null
         if (cached != null) {
@@ -880,6 +881,7 @@ fun ReaderScreen(
                 paragraphSpacingMultiplier = paragraphSpacingMultiplier,
                 safeLinesToRemove = pagedSafeLinesToRemove,
                 dbHelper = repository?.dbHelper,
+                context = context,
                 activeChapterIndex = book.currentChapter,
                 onActiveChapterReady = { activePages ->
                     if (pages.isEmpty() || pagesConfigKey != currentConfigKey) {
@@ -2164,8 +2166,24 @@ fun ReaderScreen(
                 // PAGED / PAGED_SCROLL MODE: Swipe horizontal pager
                 // ═════════════════════════════════════════════════════════════════════
                 if (pages.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                    val openMode = repository?.uncachedBookOpenMode?.collectAsState()?.value
+                        ?: io.github.tasmirz.lumina.model.UncachedBookOpenMode.INSTANT_ACTIVE_FIRST
+                    if (openMode == io.github.tasmirz.lumina.model.UncachedBookOpenMode.SERENE_EMBLEM) {
+                        io.github.tasmirz.lumina.ui.components.StartupLoadingScreen()
+                    } else if (openMode == io.github.tasmirz.lumina.model.UncachedBookOpenMode.ADAPTIVE) {
+                        var showEmblem by remember { mutableStateOf(false) }
+                        LaunchedEffect(Unit) {
+                            kotlinx.coroutines.delay(300)
+                            showEmblem = true
+                        }
+                        if (showEmblem) {
+                            io.github.tasmirz.lumina.ui.components.StartupLoadingScreen()
+                        } else {
+                            Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
+                        }
+                    } else {
+                        // INSTANT_ACTIVE_FIRST: Clean serene background while active chapter renders
+                        Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
                     }
                 } else {
                     LaunchedEffect(pagerState.currentPage) {
