@@ -129,7 +129,7 @@ fun PagedReaderView(
             val isChapterHeaderPage = content.startsWith("CHAPTER_START:::") || content.startsWith("TITLE:::")
             val (cTitle, cSub, bodyText) = if (isChapterHeaderPage) {
                 val prefix = if (content.startsWith("CHAPTER_START:::")) "CHAPTER_START:::" else "TITLE:::"
-                val rawParts = content.removePrefix(prefix).split(":::")
+                val rawParts = content.removePrefix(prefix).split(":::", limit = 3)
                 Triple(
                     rawParts.getOrNull(0)?.ifBlank { chapTitle } ?: chapTitle,
                     rawParts.getOrNull(1) ?: "",

@@ -753,5 +753,64 @@ class PageCacheTest {
         val estimatedLines = PageCache.estimateTableLines(tableToken)
         assertTrue("3-row table should estimate around 6 lines, actual: $estimatedLines", estimatedLines in 5.5f..7.5f)
     }
+
+    @Test
+    fun testDuplicateChapterTitlesDisambiguationInFindPageForLocation() {
+        val part1Chap1 = Chapter("Chapter 1", "Part One", "5 min", listOf("It was a bright cold day in April, and the clocks were striking thirteen."))
+        val part1Chap2 = Chapter("Chapter 2", "Part One", "5 min", listOf("As he put his hand to the door-knob Winston saw that he had left the diary open on the table."))
+        val part2Chap1 = Chapter("Chapter 1", "Part Two", "5 min", listOf("It was the middle of the morning, and Winston had left his cubicle to go to the lavatory."))
+
+        val chapters = listOf(part1Chap1, part1Chap2, part2Chap1)
+        val pages = PageCache.getOrCompute(
+            bookId = "test_1984_multipart",
+            chapters = chapters,
+            fontSize = 16,
+            isStrictPaged = true
+        )
+
+        // Chapter 1 (Part Two) is index 2 in chapters
+        val foundPagePart2 = findPageForLocation(
+            pages = pages,
+            chapterIdx = 2,
+            chapters = chapters,
+            paraIdx = 0,
+            topSnippet = "It was the middle of the morning"
+        )
+
+        val foundPagePart1 = findPageForLocation(
+            pages = pages,
+            chapterIdx = 0,
+            chapters = chapters,
+            paraIdx = 0,
+            topSnippet = "It was a bright cold day in April"
+        )
+
+        assertTrue("Part Two Chapter 1 must be strictly after Part One Chapter 1", foundPagePart2 > foundPagePart1)
+        assertTrue("Part Two page must contain Part Two text", pages[foundPagePart2].second.contains("It was the middle of the morning"))
+        assertTrue("Part One page must contain Part One text", pages[foundPagePart1].second.contains("bright cold day in April"))
+    }
+
+    @Test
+    fun testChapterStartMarkerPerChapterPreservesExactOrder() {
+        val chaps = (1..5).map { i ->
+            Chapter("Chapter $i", "Subtitle $i", "5 min", listOf("Paragraph in chapter $i"))
+        }
+        val pages = PageCache.getOrCompute(
+            bookId = "test_chaps_order",
+            chapters = chaps,
+            fontSize = 16,
+            isStrictPaged = true
+        )
+
+        val starts = mutableListOf<Int>()
+        pages.forEachIndexed { idx, (_, content) ->
+            if (content.startsWith("CHAPTER_START:::")) starts.add(idx)
+        }
+
+        assertEquals("Must have exactly 5 chapter start markers for 5 chapters", 5, starts.size)
+        for (i in 0 until starts.size - 1) {
+            assertTrue("Chapter start pages must be strictly monotonically increasing", starts[i] < starts[i + 1])
+        }
+    }
 }
 

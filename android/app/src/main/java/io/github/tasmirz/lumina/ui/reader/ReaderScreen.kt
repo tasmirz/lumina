@@ -237,30 +237,43 @@ internal fun findPageForLocation(
     val cleanedSnippet = clean(topSnippet.trim())
     val alphaSnippet = cleanAlpha(topSnippet.trim())
 
-    // 1. Try finding page by snippet within the target chapter (multiple lengths)
-    if (cleanedSnippet.isNotBlank()) {
+    val chapterStarts = ArrayList<Int>()
+    pages.forEachIndexed { idx, (_, content) ->
+        if (content.startsWith("CHAPTER_START:::")) {
+            chapterStarts.add(idx)
+        }
+    }
+    val firstPageOfChap = chapterStarts.getOrNull(chapterIdx)
+        ?: pages.indexOfFirst { it.first.equals(chapterTitle, ignoreCase = true) }
+    val lastPageOfChap = if (chapterStarts.isNotEmpty() && chapterIdx in chapterStarts.indices) {
+        val nextStart = chapterStarts.getOrNull(chapterIdx + 1) ?: pages.size
+        (nextStart - 1).coerceAtLeast(firstPageOfChap)
+    } else {
+        pages.indexOfLast { it.first.equals(chapterTitle, ignoreCase = true) }
+    }
+
+    // 1. Try finding page by snippet within the target chapter range
+    if (cleanedSnippet.isNotBlank() && firstPageOfChap in pages.indices && lastPageOfChap in pages.indices && firstPageOfChap <= lastPageOfChap) {
         for (len in listOf(40, 30, 20, 14)) {
             val snip = cleanedSnippet.take(len).trim()
             if (snip.length >= 12) {
-                val found = pages.indexOfFirst { (title, content) ->
-                    (chapterTitle.isBlank() || title.equals(chapterTitle, ignoreCase = true)) &&
-                        clean(content).contains(snip)
+                for (p in firstPageOfChap..lastPageOfChap) {
+                    if (clean(pages[p].second).contains(snip)) return p
                 }
-                if (found >= 0) return found
             }
         }
         for (len in listOf(40, 30, 20, 14)) {
             val snip = alphaSnippet.take(len).trim()
             if (snip.length >= 12) {
-                val found = pages.indexOfFirst { (title, content) ->
-                    (chapterTitle.isBlank() || title.equals(chapterTitle, ignoreCase = true)) &&
-                        cleanAlpha(content).contains(snip)
+                for (p in firstPageOfChap..lastPageOfChap) {
+                    if (cleanAlpha(pages[p].second).contains(snip)) return p
                 }
-                if (found >= 0) return found
             }
         }
+    }
 
-        // Global search across all pages by snippet (in case chapter title naming slightly differs)
+    // Fallback: Global search across all pages by snippet (in case chapter title naming slightly differs)
+    if (cleanedSnippet.isNotBlank()) {
         for (len in listOf(30, 20, 14)) {
             val snip = cleanedSnippet.take(len).trim()
             if (snip.length >= 12) {
@@ -277,58 +290,36 @@ internal fun findPageForLocation(
         }
     }
 
-    // 2. Try finding page by paragraph text
+    // 2. Try finding page by paragraph text within target chapter range
     val rawPara = targetChapter?.paragraphs?.getOrNull(paraIdx)?.trim() ?: ""
     val cleanedPara = clean(rawPara)
     val alphaPara = cleanAlpha(rawPara)
-    if (cleanedPara.isNotBlank()) {
+    if (cleanedPara.isNotBlank() && firstPageOfChap in pages.indices && lastPageOfChap in pages.indices && firstPageOfChap <= lastPageOfChap) {
         for (len in listOf(35, 24, 16)) {
             val paraSnip = cleanedPara.take(len).trim()
             if (paraSnip.length >= 12) {
-                val foundByPara = pages.indexOfFirst { (title, content) ->
-                    (chapterTitle.isBlank() || title.equals(chapterTitle, ignoreCase = true)) &&
-                        clean(content).contains(paraSnip)
+                for (p in firstPageOfChap..lastPageOfChap) {
+                    if (clean(pages[p].second).contains(paraSnip)) return p
                 }
-                if (foundByPara >= 0) return foundByPara
             }
         }
         for (len in listOf(35, 24, 16)) {
             val paraSnip = alphaPara.take(len).trim()
             if (paraSnip.length >= 12) {
-                val foundByPara = pages.indexOfFirst { (title, content) ->
-                    (chapterTitle.isBlank() || title.equals(chapterTitle, ignoreCase = true)) &&
-                        cleanAlpha(content).contains(paraSnip)
+                for (p in firstPageOfChap..lastPageOfChap) {
+                    if (cleanAlpha(pages[p].second).contains(paraSnip)) return p
                 }
-                if (foundByPara >= 0) return foundByPara
-            }
-        }
-        // Global search by paragraph
-        for (len in listOf(24, 16)) {
-            val paraSnip = cleanedPara.take(len).trim()
-            if (paraSnip.length >= 12) {
-                val foundGlobalPara = pages.indexOfFirst { clean(it.second).contains(paraSnip) }
-                if (foundGlobalPara >= 0) return foundGlobalPara
-            }
-        }
-        for (len in listOf(24, 16)) {
-            val paraSnip = alphaPara.take(len).trim()
-            if (paraSnip.length >= 12) {
-                val foundGlobalPara = pages.indexOfFirst { cleanAlpha(it.second).contains(paraSnip) }
-                if (foundGlobalPara >= 0) return foundGlobalPara
             }
         }
     }
 
     // 3. If it's the very start of chapter, return first page of chapter
-    if (paraIdx == 0 && chapterTitle.isNotBlank()) {
-        val firstPage = pages.indexOfFirst { it.first.equals(chapterTitle, ignoreCase = true) }
-        if (firstPage >= 0) return firstPage
+    if (paraIdx == 0 && firstPageOfChap >= 0) {
+        return firstPageOfChap
     }
 
     // 4. Estimate page within the chapter proportionally
-    val firstPageOfChap = pages.indexOfFirst { it.first.equals(chapterTitle, ignoreCase = true) }
-    if (firstPageOfChap >= 0) {
-        val lastPageOfChap = pages.indexOfLast { it.first.equals(chapterTitle, ignoreCase = true) }
+    if (firstPageOfChap >= 0 && lastPageOfChap >= firstPageOfChap) {
         val chapPageCount = lastPageOfChap - firstPageOfChap + 1
         val totalParasInChap = maxOf(targetChapter?.paragraphs?.size ?: 1, 1)
         val estimatedOffset = ((paraIdx.toFloat() / totalParasInChap) * chapPageCount).toInt()
@@ -927,6 +918,16 @@ fun ReaderScreen(
         }
     }
 
+    val chapterStartPages = remember(pages) {
+        val starts = ArrayList<Int>(book.chapters.size)
+        pages.forEachIndexed { idx, (_, content) ->
+            if (content.startsWith("CHAPTER_START:::")) {
+                starts.add(idx)
+            }
+        }
+        starts
+    }
+
     val chapterCumulativeParaOffsets = remember(book.id, book.chapters.size) {
         val offsets = IntArray(book.chapters.size)
         var accum = 0
@@ -1001,6 +1002,45 @@ fun ReaderScreen(
         initialPage = book.currentPage.coerceIn(0, maxOf(pages.size - 1, 0)),
         pageCount = { pages.size }
     )
+
+    var hasInitialPageRestored by rememberSaveable(book.id) { mutableStateOf(false) }
+
+    LaunchedEffect(pages.size, book.id) {
+        if (pages.isNotEmpty() && !hasInitialPageRestored) {
+            val targetPage = if (book.currentPage in pages.indices && book.currentPage > 0) {
+                val pageChap = if (chapterStartPages.isNotEmpty()) {
+                    val found = chapterStartPages.indexOfLast { it <= book.currentPage }
+                    if (found >= 0) found else 0
+                } else 0
+                if (pageChap == book.currentChapter || book.currentChapter == 0) {
+                    book.currentPage
+                } else {
+                    if (chapterStartPages.isNotEmpty() && book.currentChapter in chapterStartPages.indices) {
+                        chapterStartPages[book.currentChapter]
+                    } else {
+                        book.currentPage
+                    }
+                }
+            } else if (chapterStartPages.isNotEmpty() && book.currentChapter in chapterStartPages.indices && book.currentChapter > 0) {
+                chapterStartPages[book.currentChapter]
+            } else if (anchorSnippet.isNotBlank() || anchorChapterIdx > 0 || anchorParaIdx > 0) {
+                findPageForLocation(
+                    pages = pages,
+                    chapterIdx = anchorChapterIdx,
+                    chapters = book.chapters,
+                    paraIdx = anchorParaIdx,
+                    topSnippet = anchorSnippet
+                )
+            } else {
+                0
+            }
+            val coercedTarget = targetPage.coerceIn(0, pages.size - 1)
+            if (coercedTarget != pagerState.currentPage) {
+                pagerState.scrollToPage(coercedTarget)
+            }
+            hasInitialPageRestored = true
+        }
+    }
 
     // Remembers the return position before jumping to saved/read-till location so user can tap back
     var previousJumpLocation by rememberSaveable { mutableStateOf<Triple<Int, Int, Int>?>(null) }
@@ -1148,7 +1188,11 @@ fun ReaderScreen(
                     }
                     coroutineScope.launch { listState.animateScrollToItem(target) }
                 } else {
-                    val pageIdx = pages.indexOfFirst { it.first == activeChapterTitle }
+                    val pageIdx = if (chapterStartPages.isNotEmpty() && prev in chapterStartPages.indices) {
+                        chapterStartPages[prev]
+                    } else {
+                        pages.indexOfFirst { it.first == activeChapterTitle }
+                    }
                     if (pageIdx != -1) {
                         coroutineScope.launch { pagerState.animateScrollToPage(pageIdx) }
                     }
@@ -1167,7 +1211,11 @@ fun ReaderScreen(
                     }
                     coroutineScope.launch { listState.animateScrollToItem(target) }
                 } else {
-                    val pageIdx = pages.indexOfFirst { it.first == activeChapterTitle }
+                    val pageIdx = if (chapterStartPages.isNotEmpty() && next in chapterStartPages.indices) {
+                        chapterStartPages[next]
+                    } else {
+                        pages.indexOfFirst { it.first == activeChapterTitle }
+                    }
                     if (pageIdx != -1) {
                         coroutineScope.launch { pagerState.animateScrollToPage(pageIdx) }
                     }
@@ -1345,7 +1393,11 @@ fun ReaderScreen(
                             listState.animateScrollToItem(idx)
                         }
                     } else {
-                        val targetPage = pages.indexOfFirst { it.first == chapTitle }.coerceAtLeast(0)
+                        val targetPage = if (chapterStartPages.isNotEmpty() && next in chapterStartPages.indices) {
+                            chapterStartPages[next]
+                        } else {
+                            pages.indexOfFirst { it.first == chapTitle }.coerceAtLeast(0)
+                        }
                         if (kotlin.math.abs(pagerState.currentPage - targetPage) > 3) {
                             pagerState.scrollToPage(targetPage)
                         } else {
@@ -1373,7 +1425,11 @@ fun ReaderScreen(
                             listState.animateScrollToItem(idx)
                         }
                     } else {
-                        val targetPage = pages.indexOfFirst { it.first == chapTitle }.coerceAtLeast(0)
+                        val targetPage = if (chapterStartPages.isNotEmpty() && prev in chapterStartPages.indices) {
+                            chapterStartPages[prev]
+                        } else {
+                            pages.indexOfFirst { it.first == chapTitle }.coerceAtLeast(0)
+                        }
                         if (kotlin.math.abs(pagerState.currentPage - targetPage) > 3) {
                             pagerState.scrollToPage(targetPage)
                         } else {
@@ -1401,7 +1457,11 @@ fun ReaderScreen(
                             listState.animateScrollToItem(idx)
                         }
                     } else {
-                        val targetPage = pages.indexOfFirst { it.first == chapTitle }.coerceAtLeast(0)
+                        val targetPage = if (chapterStartPages.isNotEmpty() && target in chapterStartPages.indices) {
+                            chapterStartPages[target]
+                        } else {
+                            pages.indexOfFirst { it.first == chapTitle }.coerceAtLeast(0)
+                        }
                         if (kotlin.math.abs(pagerState.currentPage - targetPage) > 3) {
                             pagerState.scrollToPage(targetPage)
                         } else {
@@ -2223,7 +2283,10 @@ fun ReaderScreen(
                         Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
                     }
                 } else {
-                    LaunchedEffect(pagerState.currentPage) {
+                    LaunchedEffect(pagerState.currentPage, hasInitialPageRestored) {
+                        if (!hasInitialPageRestored && pages.isNotEmpty()) {
+                            return@LaunchedEffect
+                        }
                         try {
                             activeReleaseSelectionAction?.invoke()
                         } catch (_: Throwable) {}
@@ -2242,7 +2305,12 @@ fun ReaderScreen(
                             if (activeChapterTitle != currentPageChapTitle) {
                                 activeChapterTitle = currentPageChapTitle
                             }
-                            val chapIdx = book.chapters.indexOfFirst { it.title == currentPageChapTitle }.coerceAtLeast(0)
+                            val chapIdx = if (chapterStartPages.isNotEmpty()) {
+                                val found = chapterStartPages.indexOfLast { it <= currentPage }
+                                if (found >= 0) found else 0
+                            } else {
+                                book.chapters.indexOfFirst { it.title == currentPageChapTitle }.coerceAtLeast(0)
+                            }
                             if (speakingChapterIdx != chapIdx) {
                                 speakingChapterIdx = chapIdx
                             }
@@ -2806,7 +2874,12 @@ fun ReaderScreen(
             TableOfContentsSheet(
                 chapters = book.chapters,
                 bookTitle = book.title,
-                currentChapterIndex = book.chapters.indexOfFirst { it.title == activeChapterTitle }.coerceAtLeast(0),
+                currentChapterIndex = if (readingMode != ReadingMode.SCROLL && chapterStartPages.isNotEmpty()) {
+                    val found = chapterStartPages.indexOfLast { it <= pagerState.currentPage }
+                    if (found >= 0) found else 0
+                } else {
+                    book.chapters.indexOfFirst { it.title == activeChapterTitle }.coerceAtLeast(0)
+                },
                 onSelectChapter = { idx ->
                     stopAllAudio()
                     activeChapterTitle = book.chapters.getOrNull(idx)?.title ?: "Chapter ${idx + 1}"
@@ -2825,7 +2898,11 @@ fun ReaderScreen(
                             }
                         }
                     } else {
-                        val targetPage = pages.indexOfFirst { it.first == activeChapterTitle }.coerceAtLeast(0)
+                        val targetPage = if (chapterStartPages.isNotEmpty() && idx in chapterStartPages.indices) {
+                            chapterStartPages[idx]
+                        } else {
+                            pages.indexOfFirst { it.first == activeChapterTitle }.coerceAtLeast(0)
+                        }
                         coroutineScope.launch {
                             if (kotlin.math.abs(pagerState.currentPage - targetPage) > 3) {
                                 pagerState.scrollToPage(targetPage)
@@ -2925,13 +3002,15 @@ fun ReaderScreen(
                         listState.animateScrollToItem(itemIdx.coerceAtLeast(0), scrollOffset = -focusOffsetPx)
                     }
                 } else {
-                    val cleanSnippet = match.snippet.replace("...", "").trim().take(15)
-                    val pageIdx = pages.indexOfFirst {
-                        it.first.equals(match.chapterTitle, ignoreCase = true) &&
-                        it.second.contains(cleanSnippet, ignoreCase = true)
-                    }.let { if (it != -1) it else pages.indexOfFirst { p -> p.first.equals(match.chapterTitle, ignoreCase = true) } }
+                    val pageIdx = findPageForLocation(
+                        pages = pages,
+                        chapterIdx = match.chapterIndex,
+                        chapters = book.chapters,
+                        paraIdx = match.paragraphIndex,
+                        topSnippet = match.snippet
+                    )
 
-                    if (pageIdx != -1) {
+                    if (pageIdx in pages.indices) {
                         coroutineScope.launch { pagerState.animateScrollToPage(pageIdx) }
                     }
                 }

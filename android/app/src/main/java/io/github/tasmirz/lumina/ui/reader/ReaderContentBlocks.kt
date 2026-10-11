@@ -200,11 +200,18 @@ fun ReaderTableCard(
         val vScrollState = rememberScrollState()
         val hScrollState = rememberScrollState()
 
+        val tableContainerModifier = if (isPagedMode) {
+            Modifier
+                .heightIn(max = maxTableHeight)
+                .verticalScroll(vScrollState)
+        } else {
+            Modifier
+        }
+
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .then(if (isPagedMode) Modifier.heightIn(max = maxTableHeight) else Modifier)
-                .verticalScroll(vScrollState)
+                .then(tableContainerModifier)
                 .padding(vertical = 6.dp, horizontal = 8.dp),
             contentAlignment = if (isSingleColCentered) Alignment.Center else Alignment.CenterStart
         ) {

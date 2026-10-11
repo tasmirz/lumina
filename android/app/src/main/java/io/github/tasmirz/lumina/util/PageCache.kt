@@ -85,8 +85,8 @@ object PageCache {
         } catch (_: Exception) { null }
     }
 
-    // Bumped to v48_ to support configurable fillPageToBottom and vertical balance toggles
-    private const val CACHE_VERSION = "v48_"
+    // Bumped to v49_ to ensure full-book page integrity and eliminate single-chapter index shifts
+    private const val CACHE_VERSION = "v49_"
 
     data class DeviceMetrics(
         val charsPerLine: Int,
@@ -442,28 +442,6 @@ object PageCache {
             dbHelper?.getAllChaptersForBook(bookId) ?: chapters
         }
 
-        // Fast path: compute active chapter first for immediate UI rendering
-        if (onActiveChapterReady != null && activeChapterIndex in fullChapters.indices) {
-            val activeChapter = fullChapters[activeChapterIndex]
-            val activePages = computeChapterPages(
-                chapter = activeChapter,
-                fontSize = fontSize,
-                isLandscape = isLandscape,
-                isStrictPaged = isStrictPaged,
-                screenWidthDp = screenWidthDp,
-                screenHeightDp = screenHeightDp,
-                horizontalPaddingDp = horizontalPaddingDp,
-                verticalPaddingDp = verticalPaddingDp,
-                lineHeightMultiplier = lineHeightMultiplier,
-                paragraphSpacingMultiplier = paragraphSpacingMultiplier,
-                safeLinesToRemove = safeLinesToRemove,
-                fillPageToBottom = fillPageToBottom
-            )
-            if (activePages.isNotEmpty()) {
-                onActiveChapterReady(activePages)
-            }
-        }
-
         val list = computePages(
             chapters = fullChapters,
             fontSize = fontSize,
@@ -480,6 +458,7 @@ object PageCache {
         )
         if (list.isNotEmpty()) {
             cache.put(key, list)
+            onActiveChapterReady?.invoke(list)
             if (dbHelper != null) {
                 try { dbHelper.savePageCache(key, bookId, -1, list) } catch (_: Exception) {}
             }
