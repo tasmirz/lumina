@@ -85,8 +85,8 @@ object PageCache {
         } catch (_: Exception) { null }
     }
 
-    // Bumped to v43_ to inline quotes and verses and prevent empty pages
-    private const val CACHE_VERSION = "v43_"
+    // Bumped to v45_ to inline tables when space permits and prevent chopped bottom lines
+    private const val CACHE_VERSION = "v45_"
 
     data class DeviceMetrics(
         val charsPerLine: Int,
@@ -94,6 +94,23 @@ object PageCache {
         val headerLinesCost: Int,
         val baseTargetChars: Int
     )
+
+    fun estimateTableLines(tableToken: String): Float {
+        return try {
+            val rowsMatch = Regex("\"rows\"\\s*:\\s*\\[(.*?)\\]\\s*\\}").find(tableToken)
+            val rowContent = rowsMatch?.groupValues?.getOrNull(1) ?: ""
+            val rowCount = if (rowContent.isBlank()) 0 else Regex("\\[[^\\]]*\\]").findAll(rowContent).count()
+
+            val headersMatch = Regex("\"headers\"\\s*:\\s*\\[(.*?)\\]").find(tableToken)
+            val headerContent = headersMatch?.groupValues?.getOrNull(1) ?: ""
+            val headerCount = if (headerContent.isBlank()) 0 else Regex("\"[^\"]*\"").findAll(headerContent).count()
+
+            val lines = 2.0f + (if (headerCount > 0) 1.5f else 0f) + (rowCount * 1.4f)
+            lines.coerceAtLeast(3f)
+        } catch (_: Exception) {
+            6f
+        }
+    }
 
     fun calculateDeviceMetrics(
         fontSize: Int,
@@ -118,9 +135,9 @@ object PageCache {
 
         // Dynamic vertical margin deduction (status bar, top bar, bottom dock, reading controls)
         // In landscape: top padding (statusBarTopInset + 36.dp + verticalPadding * 0.25f) + bottom padding (progressBottomInset + 36.dp + verticalPadding * 0.25f)
-        // gives ~90-100dp total vertical chrome.
-        // In portrait: top padding (statusBarTopInset + 66.dp + verticalPadding * 0.5f) + bottom padding (progressBottomInset + 52.dp + verticalPadding * 0.35f)
-        // gives ~176dp total vertical chrome.
+        // gives ~110-120dp total vertical chrome.
+        // In portrait: top padding (statusBarTopInset + 66.dp + verticalPadding * 0.5f) + bottom padding (progressBottomInset + 68.dp + verticalPadding * 0.35f) + column padding (4.dp)
+        // gives ~216-230dp total vertical chrome.
         val verticalMargin = if (isLandscape) {
             96 + (verticalPaddingDp * 0.5f).toInt()
         } else {
@@ -503,10 +520,48 @@ object PageCache {
                 while (queue.isNotEmpty()) {
                     val item = queue.removeFirst()
                     val p = item.text
-                    if ((p.startsWith("[IMG:") || p.startsWith("[TABLE:")) && p.endsWith("]")) {
+                    if (p.startsWith("[IMG:") && p.endsWith("]")) {
                         flushBatch()
                         list.add(Pair(chap.title, p))
                         continue
+                    }
+
+                    if (p.startsWith("[TABLE:") && p.endsWith("]")) {
+                        val pageLineBudget = if (isFirstPageOfChapter) {
+                            (maxLines - headerLinesCost).coerceAtLeast(if (isLandscape) 2 else 4).toFloat()
+                        } else {
+                            maxLines.toFloat()
+                        }
+                        val availableLines = pageLineBudget - currentLines
+                        val blankLinesBefore = if (currentBatch.isEmpty()) 0f else paragraphGapLines
+                        val tableLines = estimateTableLines(p)
+                        val totalLinesNeeded = blankLinesBefore + tableLines
+
+                        if (totalLinesNeeded <= availableLines) {
+                            // Table fits on the current page!
+                            if (currentBatch.isNotEmpty()) {
+                                currentBatch.append("\n\n")
+                            }
+                            currentBatch.append(p)
+                            currentLines += totalLinesNeeded
+                            continue
+                        } else {
+                            if (currentBatch.isNotEmpty()) {
+                                flushBatch()
+                                queue.addFirst(item)
+                                continue
+                            } else {
+                                if (tableLines <= pageLineBudget) {
+                                    currentBatch.append(p)
+                                    currentLines += tableLines
+                                    continue
+                                } else {
+                                    // Oversized table occupies full page
+                                    list.add(Pair(chap.title, p))
+                                    continue
+                                }
+                            }
+                        }
                     }
 
                     // Convert quotes, verses, and scene dividers to inline flow
@@ -624,11 +679,31 @@ object PageCache {
                 }
 
                 paragraphs.forEach { p ->
-                    if ((p.startsWith("[IMG:") || p.startsWith("[TABLE:")) && p.endsWith("]")) {
+                    if (p.startsWith("[IMG:") && p.endsWith("]")) {
                         flushBatch(isChapterHeader = isFirstPageOfChapter)
                         isFirstPageOfChapter = false
                         list.add(Pair(chap.title, p))
                         return@forEach
+                    }
+
+                    if (p.startsWith("[TABLE:") && p.endsWith("]")) {
+                        val tableChars = (estimateTableLines(p) * metrics.charsPerLine).toInt()
+                        val target = if (isFirstPageOfChapter) firstPageTarget else targetCharsPerPage
+                        if (currentBatch.length + tableChars <= target) {
+                            if (currentBatch.isNotEmpty()) currentBatch.append("\n\n")
+                            currentBatch.append(p)
+                            return@forEach
+                        } else {
+                            flushBatch(isChapterHeader = isFirstPageOfChapter)
+                            isFirstPageOfChapter = false
+                            if (tableChars <= targetCharsPerPage) {
+                                currentBatch.append(p)
+                                return@forEach
+                            } else {
+                                list.add(Pair(chap.title, p))
+                                return@forEach
+                            }
+                        }
                     }
 
                     val effectiveP = if (p.startsWith("[QUOTE:") && p.endsWith("]")) {

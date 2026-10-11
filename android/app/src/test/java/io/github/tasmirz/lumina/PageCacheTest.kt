@@ -716,5 +716,43 @@ class PageCacheTest {
             )
         }
     }
+
+    @Test
+    fun testTableInlinedOnSamePageWhenFittingBudget() {
+        val intro = "From where Winston stood it was just possible to read, picked out on its white face in elegant lettering, the three slogans of the Party:"
+        val table = "[TABLE:{\"headers\":[],\"rows\":[[\"WAR IS PEACE\"],[\"FREEDOM IS SLAVERY\"],[\"IGNORANCE IS STRENGTH\"]]}]"
+        val following = "The Ministry of Truth — Minitrue, in Newspeak — was startlingly different from any other object in sight."
+
+        val chapter = Chapter("Chapter 1", "", "5 min", listOf(intro, table, following))
+        val pages = PageCache.getOrCompute(
+            bookId = "test_1984_slogans_table",
+            chapters = listOf(chapter),
+            fontSize = 16,
+            isStrictPaged = true
+        )
+
+        assertTrue("Should have at least 1 page", pages.isNotEmpty())
+        val firstPageContent = pages[0].second
+
+        // The introductory text and table MUST be on the same page, NOT severed onto an isolated table page
+        assertTrue("First page must contain intro text", firstPageContent.contains("the three slogans of the Party"))
+        assertTrue("First page must contain inlined table", firstPageContent.contains("[TABLE:"))
+    }
+
+    @Test
+    fun testCalculateDeviceMetricsSafetyBufferPreventsChoppedBottomLines() {
+        val metricsPortrait = PageCache.calculateDeviceMetrics(
+            fontSize = 18,
+            isLandscape = false,
+            screenWidthDp = 360,
+            screenHeightDp = 720
+        )
+        // Ensure max lines is comfortably bounded and safe
+        assertTrue("Max lines must be positive and safe", metricsPortrait.maxLines in 10..22)
+
+        val tableToken = "[TABLE:{\"headers\":[],\"rows\":[[\"WAR IS PEACE\"],[\"FREEDOM IS SLAVERY\"],[\"IGNORANCE IS STRENGTH\"]]}]"
+        val estimatedLines = PageCache.estimateTableLines(tableToken)
+        assertTrue("3-row table should estimate around 6 lines, actual: $estimatedLines", estimatedLines in 5.5f..7.5f)
+    }
 }
 

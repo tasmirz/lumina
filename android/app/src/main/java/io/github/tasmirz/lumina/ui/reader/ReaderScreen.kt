@@ -94,6 +94,8 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import kotlin.math.roundToInt
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
@@ -423,6 +425,8 @@ fun ReaderScreen(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
 
     // Distraction-Free Reading: Hide the notification/status bar in reading mode
     DisposableEffect(Unit) {
@@ -836,6 +840,8 @@ fun ReaderScreen(
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val screenHeightPx = with(density) { configuration.screenHeightDp.dp.toPx() }
     val screenWidthPx = with(density) { configuration.screenWidthDp.dp.toPx() }
+    val currentImeBottomInset = WindowInsets.ime.asPaddingValues().calculateBottomPadding()
+    val currentImeOffsetPx = with(density) { currentImeBottomInset.toPx() }
     val isStrictPaged = readingMode == ReadingMode.PAGED
     val isPagedReading = readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL
     var showCharacterGuideSheet by rememberSaveable { mutableStateOf(false) }
@@ -2487,7 +2493,7 @@ fun ReaderScreen(
                                     bottom = if (isLandscape) {
                                         progressBottomInset + 36.dp + (verticalPadding * 0.25f).dp
                                     } else {
-                                        if (readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL) progressBottomInset + 68.dp + (verticalPadding * 0.35f).dp
+                                        if (readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL) progressBottomInset + 48.dp + (verticalPadding * 0.35f).dp
                                         else if (isUiVisible) progressBottomInset + 64.dp + (verticalPadding * 0.35f).dp
                                         else progressBottomInset + 24.dp + (verticalPadding * 0.35f).dp
                                     },
@@ -2636,25 +2642,10 @@ fun ReaderScreen(
 
                                 val pagedInlineImages = remember(pageText) { extractInlineImages(pageText) }
                                 val pagedInlineContentMap = rememberInlineContentMap(pagedInlineImages, fontSize)
+                                val pagedBlocks = remember(pageText) { splitPageIntoBlocks(pageText) }
 
-                                val annotatedContent = remember(pageText, matchingBookmarks, fontSize, fontFamily, onBgColor, isDropCap, activeSearchQ, isActiveMatch) {
-                                    buildHighlightedAnnotatedString(
-                                        text = pageText,
-                                        matchingBookmarks = matchingBookmarks,
-                                        onBookmarkClick = { bm ->
-                                            selectedBookmarkForModal = bm
-                                            showBookmarkDetailModal = true
-                                        },
-                                        isDropCap = isDropCap,
-                                        baseFontFamily = fontFamily,
-                                        baseFontSize = fontSize.sp,
-                                        baseTextColor = onBgColor,
-                                        searchQuery = activeSearchQ,
-                                        isActiveSearchMatch = isActiveMatch
-                                    )
-                                }
-
-                                val pagedScrollModifier = if (readingMode == ReadingMode.PAGED_SCROLL) {
+                                val isImeOpenInSearch = showInBookSearchDialog && currentImeOffsetPx > 0f
+                                val pagedScrollModifier = if (readingMode == ReadingMode.PAGED_SCROLL || isImeOpenInSearch) {
                                     Modifier.verticalScroll(rememberScrollState())
                                 } else {
                                     Modifier
@@ -2744,20 +2735,48 @@ fun ReaderScreen(
                                         }
                                     }
 
-                                    SelectionContainer(
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Text(
-                                            text = annotatedContent,
-                                            inlineContent = pagedInlineContentMap,
-                                            fontFamily = fontFamily,
-                                            fontSize = fontSize.sp,
-                                            lineHeight = (fontSize * lineHeightMultiplier).sp,
-                                            letterSpacing = letterSpacing.sp,
-                                            textAlign = contentTextAlign,
-                                            color = MaterialTheme.colorScheme.onBackground,
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
+                                    pagedBlocks.forEachIndexed { blockIdx, block ->
+                                        when (block) {
+                                            is PageBlock.Text -> {
+                                                val blockAnnotated = remember(block.text, matchingBookmarks, fontSize, fontFamily, onBgColor, isDropCap, activeSearchQ, isActiveMatch) {
+                                                    buildHighlightedAnnotatedString(
+                                                        text = block.text,
+                                                        matchingBookmarks = matchingBookmarks,
+                                                        onBookmarkClick = { bm ->
+                                                            selectedBookmarkForModal = bm
+                                                            showBookmarkDetailModal = true
+                                                        },
+                                                        isDropCap = isDropCap && blockIdx == 0,
+                                                        baseFontFamily = fontFamily,
+                                                        baseFontSize = fontSize.sp,
+                                                        baseTextColor = onBgColor,
+                                                        searchQuery = activeSearchQ,
+                                                        isActiveSearchMatch = isActiveMatch
+                                                    )
+                                                }
+                                                SelectionContainer(
+                                                    modifier = Modifier.fillMaxWidth()
+                                                ) {
+                                                    Text(
+                                                        text = blockAnnotated,
+                                                        inlineContent = pagedInlineContentMap,
+                                                        fontFamily = fontFamily,
+                                                        fontSize = fontSize.sp,
+                                                        lineHeight = (fontSize * lineHeightMultiplier).sp,
+                                                        letterSpacing = letterSpacing.sp,
+                                                        textAlign = contentTextAlign,
+                                                        color = MaterialTheme.colorScheme.onBackground,
+                                                        modifier = Modifier.fillMaxWidth()
+                                                    )
+                                                }
+                                            }
+                                            is PageBlock.Table -> {
+                                                ReaderTableCard(
+                                                    tableToken = block.token,
+                                                    modifier = Modifier.fillMaxWidth()
+                                                )
+                                            }
+                                        }
                                     }
                                     val tapSpacerModifier = if (readingMode == ReadingMode.PAGED_SCROLL) {
                                         Modifier
@@ -3312,10 +3331,9 @@ fun ReaderScreen(
             )
         }
 
-        val currentImeBottomInset = WindowInsets.ime.asPaddingValues().calculateBottomPadding()
-        val currentImeOffsetPx = with(density) { currentImeBottomInset.toPx() }
-
         val jumpToMatch: (SceneMatch) -> Unit = { match ->
+            keyboardController?.hide()
+            focusManager.clearFocus()
             val cIdx = if (match.chapterIndex in book.chapters.indices) {
                 match.chapterIndex
             } else {
@@ -3423,6 +3441,37 @@ fun ReaderScreen(
         }
     }
 }
+}
+
+sealed class PageBlock {
+    data class Text(val text: String) : PageBlock()
+    data class Table(val token: String) : PageBlock()
+}
+
+fun splitPageIntoBlocks(rawText: String): List<PageBlock> {
+    if (!rawText.contains("[TABLE:")) {
+        return listOf(PageBlock.Text(rawText))
+    }
+    val blocks = mutableListOf<PageBlock>()
+    val tableRegex = "\\[TABLE:[^\\]]+\\]".toRegex()
+    var lastIdx = 0
+    tableRegex.findAll(rawText).forEach { match ->
+        if (match.range.first > lastIdx) {
+            val txt = rawText.substring(lastIdx, match.range.first).trim()
+            if (txt.isNotEmpty()) {
+                blocks.add(PageBlock.Text(txt))
+            }
+        }
+        blocks.add(PageBlock.Table(match.value))
+        lastIdx = match.range.last + 1
+    }
+    if (lastIdx < rawText.length) {
+        val txt = rawText.substring(lastIdx).trim()
+        if (txt.isNotEmpty()) {
+            blocks.add(PageBlock.Text(txt))
+        }
+    }
+    return if (blocks.isEmpty()) listOf(PageBlock.Text(rawText)) else blocks
 }
 
 @Composable

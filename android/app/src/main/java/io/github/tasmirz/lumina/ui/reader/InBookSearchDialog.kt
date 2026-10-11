@@ -25,6 +25,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
@@ -65,6 +66,7 @@ fun InBookSearchDialog(
     var isSearchingInBook by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
 
     LaunchedEffect(showDialog) {
         if (showDialog) {
@@ -346,6 +348,8 @@ fun InBookSearchDialog(
                             ),
                             keyboardActions = KeyboardActions(
                                 onNext = {
+                                    keyboardController?.hide()
+                                    focusManager.clearFocus()
                                     if (inBookSearchResults.isNotEmpty()) {
                                         inBookCurrentMatchIndex = (inBookCurrentMatchIndex + 1) % inBookSearchResults.size
                                         onSearchResultsUpdate?.invoke(inBookSearchResults, inBookCurrentMatchIndex)
@@ -353,6 +357,8 @@ fun InBookSearchDialog(
                                     }
                                 },
                                 onSearch = {
+                                    keyboardController?.hide()
+                                    focusManager.clearFocus()
                                     if (inBookSearchResults.isNotEmpty()) {
                                         onJumpToMatch(inBookSearchResults[inBookCurrentMatchIndex])
                                     }
@@ -403,6 +409,8 @@ fun InBookSearchDialog(
 
                         IconButton(
                             onClick = {
+                                keyboardController?.hide()
+                                focusManager.clearFocus()
                                 if (inBookSearchResults.isNotEmpty()) {
                                     inBookCurrentMatchIndex = if (inBookCurrentMatchIndex <= 0) inBookSearchResults.size - 1 else inBookCurrentMatchIndex - 1
                                     onSearchResultsUpdate?.invoke(inBookSearchResults, inBookCurrentMatchIndex)
@@ -422,6 +430,8 @@ fun InBookSearchDialog(
 
                         IconButton(
                             onClick = {
+                                keyboardController?.hide()
+                                focusManager.clearFocus()
                                 if (inBookSearchResults.isNotEmpty()) {
                                     inBookCurrentMatchIndex = (inBookCurrentMatchIndex + 1) % inBookSearchResults.size
                                     onSearchResultsUpdate?.invoke(inBookSearchResults, inBookCurrentMatchIndex)
@@ -519,6 +529,8 @@ fun InBookSearchDialog(
                                             .fillMaxWidth()
                                             .clip(RoundedCornerShape(10.dp))
                                             .clickable {
+                                                keyboardController?.hide()
+                                                focusManager.clearFocus()
                                                 onJumpToMatch(match)
                                                 Toast.makeText(context, "Navigated to ${match.chapterTitle}", Toast.LENGTH_SHORT).show()
                                             },
