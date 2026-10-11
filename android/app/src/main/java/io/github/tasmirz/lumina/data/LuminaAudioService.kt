@@ -317,7 +317,7 @@ class LuminaAudioService : Service() {
         }
 
         val rawText = paragraphs[pIdx]
-        val cleanText = if (rawText.startsWith("[IMG:") && rawText.endsWith("]")) {
+        val cleanText = if ((rawText.startsWith("[IMG:") || rawText.startsWith("[TABLE:")) && rawText.endsWith("]")) {
             advanceToNextParagraph()
             return
         } else rawText

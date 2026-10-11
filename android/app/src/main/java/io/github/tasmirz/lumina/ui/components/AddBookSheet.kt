@@ -139,7 +139,7 @@ fun AddBookSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false),
         containerColor = MaterialTheme.colorScheme.surface,
         dragHandle = { BottomSheetDefaults.DragHandle() },
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
@@ -147,7 +147,7 @@ fun AddBookSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight(0.88f)
+                .fillMaxHeight(0.92f)
                 .padding(horizontal = 20.dp)
         ) {
             // Search Input Bar
@@ -226,7 +226,7 @@ fun AddBookSheet(
                                 Text(
                                     "Direct Download Link",
                                     fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold,
+                                    fontWeight = FontWeight.Normal,
                                     color = MaterialTheme.colorScheme.primary
                                 )
                                 Text(
@@ -286,7 +286,7 @@ fun AddBookSheet(
                                 text = source.displayName,
                                 fontFamily = FontFamily.SansSerif,
                                 fontSize = 12.sp,
-                                fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal
+                                fontWeight = FontWeight.Normal
                             )
                         },
                         colors = FilterChipDefaults.filterChipColors(
@@ -324,7 +324,7 @@ fun AddBookSheet(
                                 text = endpoint.name,
                                 fontFamily = FontFamily.SansSerif,
                                 fontSize = 12.sp,
-                                fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal
+                                fontWeight = FontWeight.Normal
                             )
                         },
                         colors = FilterChipDefaults.filterChipColors(
@@ -410,7 +410,7 @@ fun AddBookSheet(
                                             text = book.title,
                                             fontFamily = FontFamily.Serif,
                                             fontSize = 14.sp,
-                                            fontWeight = FontWeight.Medium,
+                                            fontWeight = FontWeight.Normal,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
@@ -572,7 +572,7 @@ fun AddBookSheet(
                 Text(
                     "Upload from device",
                     fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
+                    fontWeight = FontWeight.Normal,
                     color = MaterialTheme.colorScheme.onSurface
                 )
             }

@@ -37,6 +37,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -73,10 +75,21 @@ fun LibraryScreen(
     onAddToWishlist: (title: String, author: String, notes: String) -> Unit = { _, _, _ -> },
     onRemoveFromWishlist: (String) -> Unit = {},
     onShareReadingList: () -> Unit = {},
+    triggerSearchFocus: Int = 0,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+    val searchFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(triggerSearchFocus) {
+        if (triggerSearchFocus > 0) {
+            try {
+                searchFocusRequester.requestFocus()
+            } catch (_: Exception) {}
+        }
+    }
+
     val activeBackgroundTask by (repository?.activeBackgroundTask?.collectAsState(initial = null) ?: remember { mutableStateOf(null) })
     var isRefreshing by remember { mutableStateOf(false) }
     var selectedTab by rememberSaveable { mutableIntStateOf(0) } // 0: All, 1: Read, 2: Wishlist
@@ -182,7 +195,8 @@ fun LibraryScreen(
                         LibrarySearchBar(
                             searchQuery = searchQuery,
                             onSearchQueryChange = { searchQuery = it },
-                            isLandscape = true
+                            isLandscape = true,
+                            modifier = Modifier.focusRequester(searchFocusRequester)
                         )
                     }
 
@@ -202,7 +216,7 @@ fun LibraryScreen(
                         Text(
                             text = "MATCHING BOOKS (${filteredBooks.size})",
                             fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold,
+                            fontWeight = FontWeight.Normal,
                             letterSpacing = 1.sp,
                             color = MaterialTheme.colorScheme.secondary,
                             modifier = Modifier.padding(start = 20.dp, top = 6.dp, bottom = 2.dp)
@@ -239,7 +253,7 @@ fun LibraryScreen(
                                             text = book.title,
                                             fontFamily = FontFamily.Serif,
                                             fontSize = 14.sp,
-                                            fontWeight = FontWeight.Medium,
+                                            fontWeight = FontWeight.Normal,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
@@ -272,7 +286,7 @@ fun LibraryScreen(
                         Text(
                             text = "DEEP SCENE MATCHES (${deepSearchResults.size})",
                             fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold,
+                            fontWeight = FontWeight.Normal,
                             letterSpacing = 1.sp,
                             color = MaterialTheme.colorScheme.secondary,
                             modifier = Modifier.padding(start = 20.dp, top = 10.dp, bottom = 2.dp)
@@ -303,7 +317,7 @@ fun LibraryScreen(
                                     ) {
                                         Text(
                                             text = matchedBook?.title ?: "Book",
-                                            fontWeight = FontWeight.SemiBold,
+                                            fontWeight = FontWeight.Normal,
                                             fontSize = 12.sp,
                                             color = MaterialTheme.colorScheme.primary,
                                             maxLines = 1,
@@ -386,7 +400,8 @@ fun LibraryScreen(
                     LibrarySearchBar(
                         searchQuery = searchQuery,
                         onSearchQueryChange = { searchQuery = it },
-                        isLandscape = false
+                        isLandscape = false,
+                        modifier = Modifier.focusRequester(searchFocusRequester)
                     )
                     LazyColumn(
                         contentPadding = PaddingValues(bottom = 140.dp),
@@ -400,7 +415,7 @@ fun LibraryScreen(
                         }
                         if (filteredBooks.isNotEmpty()) {
                             item(key = "matching-books-title-p") {
-                                Text("MATCHING BOOKS (${filteredBooks.size})", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.sp, color = MaterialTheme.colorScheme.secondary, modifier = Modifier.padding(start = 20.dp, top = 6.dp, bottom = 2.dp))
+                                Text("MATCHING BOOKS (${filteredBooks.size})", fontSize = 11.sp, fontWeight = FontWeight.Normal, letterSpacing = 1.sp, color = MaterialTheme.colorScheme.secondary, modifier = Modifier.padding(start = 20.dp, top = 6.dp, bottom = 2.dp))
                             }
                             items(filteredBooks, key = { "search-book-p-${it.id}" }) { book ->
                                 Box(modifier = Modifier.padding(horizontal = 20.dp)) {
@@ -411,7 +426,7 @@ fun LibraryScreen(
                                                 modifier = Modifier.width(44.dp).height(64.dp).clip(RoundedCornerShape(6.dp)))
                                             Spacer(modifier = Modifier.width(12.dp))
                                             Column(modifier = Modifier.weight(1f)) {
-                                                Text(book.title, fontFamily = FontFamily.Serif, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                Text(book.title, fontFamily = FontFamily.Serif, fontSize = 14.sp, fontWeight = FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                                 Text(book.author, fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                             }
                                         }
@@ -424,7 +439,7 @@ fun LibraryScreen(
                                 Text(
                                     text = "DEEP SCENE MATCHES (${deepSearchResults.size})",
                                     fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold,
+                                    fontWeight = FontWeight.Normal,
                                     letterSpacing = 1.sp,
                                     color = MaterialTheme.colorScheme.secondary,
                                     modifier = Modifier.padding(start = 20.dp, top = 10.dp, bottom = 2.dp)
@@ -455,7 +470,7 @@ fun LibraryScreen(
                                             ) {
                                                 Text(
                                                     text = matchedBook?.title ?: "Book",
-                                                    fontWeight = FontWeight.SemiBold,
+                                                    fontWeight = FontWeight.Normal,
                                                     fontSize = 12.sp,
                                                     color = MaterialTheme.colorScheme.primary,
                                                     maxLines = 1,
@@ -538,7 +553,8 @@ fun LibraryScreen(
                         LibrarySearchBar(
                             searchQuery = searchQuery,
                             onSearchQueryChange = { searchQuery = it },
-                            isLandscape = true
+                            isLandscape = true,
+                            modifier = Modifier.focusRequester(searchFocusRequester)
                         )
                     }
                     if (readBooks.isEmpty()) {
@@ -561,7 +577,7 @@ fun LibraryScreen(
                                         text = "No Completed Books Yet",
                                         fontFamily = FontFamily.Serif,
                                         fontSize = 18.sp,
-                                        fontWeight = FontWeight.Medium,
+                                        fontWeight = FontWeight.Normal,
                                         color = MaterialTheme.colorScheme.onBackground
                                     )
                                     Spacer(modifier = Modifier.height(6.dp))
@@ -620,7 +636,7 @@ fun LibraryScreen(
                                                 Text(
                                                     "READ",
                                                     fontSize = 8.5.sp,
-                                                    fontWeight = FontWeight.Bold,
+                                                    fontWeight = FontWeight.Normal,
                                                     color = MaterialTheme.colorScheme.onPrimaryContainer
                                                 )
                                             }
@@ -631,7 +647,7 @@ fun LibraryScreen(
                                         text = b.title,
                                         fontFamily = FontFamily.Serif,
                                         fontSize = 12.5.sp,
-                                        fontWeight = FontWeight.Medium,
+                                        fontWeight = FontWeight.Normal,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
                                         color = MaterialTheme.colorScheme.onSurface
@@ -674,7 +690,8 @@ fun LibraryScreen(
                     LibrarySearchBar(
                         searchQuery = searchQuery,
                         onSearchQueryChange = { searchQuery = it },
-                        isLandscape = false
+                        isLandscape = false,
+                        modifier = Modifier.focusRequester(searchFocusRequester)
                     )
                     LazyVerticalGrid(
                         columns = GridCells.Adaptive(minSize = gridMinSize),
@@ -703,7 +720,7 @@ fun LibraryScreen(
                                             text = "No Completed Books Yet",
                                             fontFamily = FontFamily.Serif,
                                             fontSize = 18.sp,
-                                            fontWeight = FontWeight.Medium,
+                                            fontWeight = FontWeight.Normal,
                                             color = MaterialTheme.colorScheme.onBackground
                                         )
                                         Spacer(modifier = Modifier.height(6.dp))
@@ -762,7 +779,7 @@ fun LibraryScreen(
                                                     Text(
                                                         "READ",
                                                         fontSize = 8.5.sp,
-                                                        fontWeight = FontWeight.Bold,
+                                                        fontWeight = FontWeight.Normal,
                                                         color = MaterialTheme.colorScheme.onPrimaryContainer
                                                     )
                                                 }
@@ -773,7 +790,7 @@ fun LibraryScreen(
                                             text = b.title,
                                             fontFamily = FontFamily.Serif,
                                             fontSize = 12.5.sp,
-                                            fontWeight = FontWeight.Medium,
+                                            fontWeight = FontWeight.Normal,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
                                             color = MaterialTheme.colorScheme.onSurface
@@ -829,7 +846,8 @@ fun LibraryScreen(
                         LibrarySearchBar(
                             searchQuery = searchQuery,
                             onSearchQueryChange = { searchQuery = it },
-                            isLandscape = true
+                            isLandscape = true,
+                            modifier = Modifier.focusRequester(searchFocusRequester)
                         )
                     }
                     if (wishlistBooks.isEmpty()) {
@@ -843,7 +861,7 @@ fun LibraryScreen(
                                         tint = MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f), modifier = Modifier.size(48.dp))
                                     Spacer(modifier = Modifier.height(12.dp))
                                     Text("Your Wishlist is Empty", fontFamily = FontFamily.Serif, fontSize = 18.sp,
-                                        fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onBackground)
+                                        fontWeight = FontWeight.Normal, color = MaterialTheme.colorScheme.onBackground)
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text("Tap + above to add titles you wish to read next.", fontFamily = FontFamily.SansSerif,
                                         fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -861,7 +879,7 @@ fun LibraryScreen(
                                     verticalAlignment = Alignment.CenterVertically) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(item.title, fontFamily = FontFamily.Serif, fontSize = 15.sp,
-                                            fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
+                                            fontWeight = FontWeight.Normal, color = MaterialTheme.colorScheme.onSurface)
                                         if (item.author.isNotBlank()) Text(item.author, fontFamily = FontFamily.SansSerif,
                                             fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         if (item.note.isNotBlank()) {
@@ -905,7 +923,8 @@ fun LibraryScreen(
                     LibrarySearchBar(
                         searchQuery = searchQuery,
                         onSearchQueryChange = { searchQuery = it },
-                        isLandscape = false
+                        isLandscape = false,
+                        modifier = Modifier.focusRequester(searchFocusRequester)
                     )
                     LazyColumn(
                         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 140.dp),
@@ -923,7 +942,7 @@ fun LibraryScreen(
                                             tint = MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f), modifier = Modifier.size(48.dp))
                                         Spacer(modifier = Modifier.height(12.dp))
                                         Text("Your Wishlist is Empty", fontFamily = FontFamily.Serif, fontSize = 18.sp,
-                                            fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onBackground)
+                                            fontWeight = FontWeight.Normal, color = MaterialTheme.colorScheme.onBackground)
                                         Spacer(modifier = Modifier.height(6.dp))
                                         Text("Tap + above to add titles you wish to read next.", fontFamily = FontFamily.SansSerif,
                                             fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -941,7 +960,7 @@ fun LibraryScreen(
                                         verticalAlignment = Alignment.CenterVertically) {
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(item.title, fontFamily = FontFamily.Serif, fontSize = 15.sp,
-                                                fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
+                                                fontWeight = FontWeight.Normal, color = MaterialTheme.colorScheme.onSurface)
                                             if (item.author.isNotBlank()) Text(item.author, fontFamily = FontFamily.SansSerif,
                                                 fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             if (item.note.isNotBlank()) {
@@ -1010,7 +1029,8 @@ fun LibraryScreen(
                             LibrarySearchBar(
                                 searchQuery = searchQuery,
                                 onSearchQueryChange = { searchQuery = it },
-                                isLandscape = true
+                                isLandscape = true,
+                                modifier = Modifier.focusRequester(searchFocusRequester)
                             )
                         }
 
@@ -1071,7 +1091,7 @@ fun LibraryScreen(
                                             text = "CURRENT READ",
                                             fontFamily = FontFamily.SansSerif,
                                             fontSize = 11.sp,
-                                            fontWeight = FontWeight.Medium,
+                                            fontWeight = FontWeight.Normal,
                                             letterSpacing = 1.sp,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -1079,7 +1099,7 @@ fun LibraryScreen(
                                             text = "TAP TO OPEN",
                                             fontFamily = FontFamily.SansSerif,
                                             fontSize = 11.sp,
-                                            fontWeight = FontWeight.Medium,
+                                            fontWeight = FontWeight.Normal,
                                             letterSpacing = 0.5.sp,
                                             color = MaterialTheme.colorScheme.secondary,
                                             modifier = Modifier.clickable { onBookSelect(activeBook.id) }
@@ -1130,7 +1150,7 @@ fun LibraryScreen(
                                                     text = activeBook.title,
                                                     fontFamily = FontFamily.Serif,
                                                     fontSize = if (isLandscape) 15.sp else 17.sp,
-                                                    fontWeight = FontWeight.Medium,
+                                                    fontWeight = FontWeight.Normal,
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis
                                                 )
@@ -1201,7 +1221,7 @@ fun LibraryScreen(
                                     text = "ALL BOOKS",
                                     fontFamily = FontFamily.SansSerif,
                                     fontSize = 11.sp,
-                                    fontWeight = FontWeight.Medium,
+                                    fontWeight = FontWeight.Normal,
                                     letterSpacing = 1.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -1278,7 +1298,7 @@ fun LibraryScreen(
                                         text = book.title,
                                         fontFamily = FontFamily.Serif,
                                         fontSize = 13.sp,
-                                        fontWeight = FontWeight.Medium,
+                                        fontWeight = FontWeight.Normal,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
@@ -1378,7 +1398,7 @@ fun LibraryScreen(
                                         text = "Add Book",
                                         fontFamily = FontFamily.SansSerif,
                                         fontSize = 14.sp,
-                                        fontWeight = FontWeight.Medium,
+                                        fontWeight = FontWeight.Normal,
                                         color = MaterialTheme.colorScheme.onBackground
                                     )
                                     Spacer(modifier = Modifier.height(2.dp))
@@ -1420,7 +1440,8 @@ fun LibraryScreen(
                     LibrarySearchBar(
                         searchQuery = searchQuery,
                         onSearchQueryChange = { searchQuery = it },
-                        isLandscape = false
+                        isLandscape = false,
+                        modifier = Modifier.focusRequester(searchFocusRequester)
                     )
                     PullToRefreshBox(
                         isRefreshing = isRefreshing,
@@ -1468,8 +1489,8 @@ fun LibraryScreen(
                                     item(span = { GridItemSpan(maxLineSpan) }, key = "current-read-p") {
                                         Column {
                                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                                Text("CURRENT READ", fontFamily = FontFamily.SansSerif, fontSize = 11.sp, fontWeight = FontWeight.Medium, letterSpacing = 1.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                Text("TAP TO OPEN", fontFamily = FontFamily.SansSerif, fontSize = 11.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.5.sp, color = MaterialTheme.colorScheme.secondary, modifier = Modifier.clickable { onBookSelect(activeBook.id) })
+                                                Text("CURRENT READ", fontFamily = FontFamily.SansSerif, fontSize = 11.sp, fontWeight = FontWeight.Normal, letterSpacing = 1.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                Text("TAP TO OPEN", fontFamily = FontFamily.SansSerif, fontSize = 11.sp, fontWeight = FontWeight.Normal, letterSpacing = 0.5.sp, color = MaterialTheme.colorScheme.secondary, modifier = Modifier.clickable { onBookSelect(activeBook.id) })
                                             }
                                             Spacer(modifier = Modifier.height(6.dp))
                                             Card(modifier = Modifier.fillMaxWidth().clickable { onBookSelect(activeBook.id) }, shape = RoundedCornerShape(16.dp),
@@ -1481,7 +1502,7 @@ fun LibraryScreen(
                                                     Column(modifier = Modifier.weight(1f)) {
                                                         Text("LAST READ ${activeBook.lastRead.uppercase()}", fontFamily = FontFamily.SansSerif, fontSize = 10.sp, letterSpacing = 0.5.sp, color = MaterialTheme.colorScheme.secondary)
                                                         Spacer(modifier = Modifier.height(2.dp))
-                                                        Text(activeBook.title, fontFamily = FontFamily.Serif, fontSize = 17.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                        Text(activeBook.title, fontFamily = FontFamily.Serif, fontSize = 17.sp, fontWeight = FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                                         Text("${activeBook.author} • ${activeBook.chapters.getOrNull(activeBook.currentChapter)?.title ?: "Chapter 1"}",
                                                             fontFamily = FontFamily.SansSerif, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                                         Spacer(modifier = Modifier.height(8.dp))
@@ -1503,7 +1524,7 @@ fun LibraryScreen(
                                 item(span = { GridItemSpan(maxLineSpan) }, key = "all-books-header-p") {
                                     Spacer(modifier = Modifier.height(2.dp))
                                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Text("ALL BOOKS", fontFamily = FontFamily.SansSerif, fontSize = 11.sp, fontWeight = FontWeight.Medium, letterSpacing = 1.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("ALL BOOKS", fontFamily = FontFamily.SansSerif, fontSize = 11.sp, fontWeight = FontWeight.Normal, letterSpacing = 1.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         if (!activeBackgroundTask.isNullOrBlank()) {
                                             TooltipBox(positionProvider = TooltipDefaults.rememberTooltipPositionProvider(),
                                                 tooltip = { PlainTooltip { Text(activeBackgroundTask ?: "") } }, state = rememberTooltipState()) {
@@ -1524,7 +1545,7 @@ fun LibraryScreen(
                                             BookCoverImage(source = book.coverUrl, titleFallback = book.title, authorFallback = book.author,
                                                 modifier = Modifier.fillMaxWidth().aspectRatio(1f / 1.30f).clip(RoundedCornerShape(8.dp)))
                                             Spacer(modifier = Modifier.height(6.dp))
-                                            Text(book.title, fontFamily = FontFamily.Serif, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text(book.title, fontFamily = FontFamily.Serif, fontSize = 13.sp, fontWeight = FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                             Text(book.author, fontFamily = FontFamily.SansSerif, fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                             Spacer(modifier = Modifier.height(6.dp))
                                             Box(modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
@@ -1548,7 +1569,7 @@ fun LibraryScreen(
                                                 Box(contentAlignment = Alignment.Center) { Icon(Icons.Default.UploadFile, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp)) }
                                             }
                                             Spacer(modifier = Modifier.height(8.dp))
-                                            Text("Add Book", fontFamily = FontFamily.SansSerif, fontSize = 13.5.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onBackground)
+                                            Text("Add Book", fontFamily = FontFamily.SansSerif, fontSize = 13.5.sp, fontWeight = FontWeight.Normal, color = MaterialTheme.colorScheme.onBackground)
                                             Spacer(modifier = Modifier.height(2.dp))
                                             Text("Online catalog or file", fontFamily = FontFamily.SansSerif, fontSize = 9.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
@@ -1573,7 +1594,7 @@ fun LibraryScreen(
                     Text(
                         text = "Add to Wishlist",
                         fontFamily = FontFamily.Serif,
-                        fontWeight = FontWeight.Medium,
+                        fontWeight = FontWeight.Normal,
                         fontSize = 18.sp
                     )
                 },
@@ -1662,7 +1683,7 @@ fun LibraryScreen(
                     Text(
                         text = "Remove Book",
                         fontFamily = FontFamily.SansSerif,
-                        fontWeight = FontWeight.Medium,
+                        fontWeight = FontWeight.Normal,
                         fontSize = 17.sp
                     )
                 },
@@ -1684,7 +1705,7 @@ fun LibraryScreen(
                         Text(
                             text = "Remove",
                             fontFamily = FontFamily.SansSerif,
-                            fontWeight = FontWeight.Medium,
+                            fontWeight = FontWeight.Normal,
                             color = MaterialTheme.colorScheme.error
                         )
                     }
@@ -1830,7 +1851,8 @@ private fun LibraryTabChips(
 private fun LibrarySearchBar(
     searchQuery: String,
     onSearchQueryChange: (String) -> Unit,
-    isLandscape: Boolean
+    isLandscape: Boolean,
+    modifier: Modifier = Modifier
 ) {
     OutlinedTextField(
         value = searchQuery,
@@ -1865,7 +1887,7 @@ private fun LibrarySearchBar(
             focusedBorderColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.6f),
             unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
         ),
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .padding(
                 horizontal = if (isLandscape) 4.dp else 20.dp,

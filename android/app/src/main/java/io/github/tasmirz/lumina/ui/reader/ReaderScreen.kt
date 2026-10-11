@@ -10,6 +10,7 @@ import android.widget.Toast
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import android.graphics.BitmapFactory
 import java.io.File
 import io.github.tasmirz.lumina.data.EdgeTtsService
 import io.github.tasmirz.lumina.data.LuminaAudioService
@@ -33,17 +34,25 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateRotation
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.ui.input.pointer.PointerInputChange
@@ -85,6 +94,8 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import kotlin.math.roundToInt
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
@@ -226,98 +237,89 @@ internal fun findPageForLocation(
     val cleanedSnippet = clean(topSnippet.trim())
     val alphaSnippet = cleanAlpha(topSnippet.trim())
 
-    // 1. Try finding page by snippet within the target chapter (multiple lengths)
-    if (cleanedSnippet.isNotBlank()) {
-        for (len in listOf(40, 30, 20, 14, 10)) {
-            val snip = cleanedSnippet.take(len).trim()
-            if (snip.length >= 8) {
-                val found = pages.indexOfFirst { (title, content) ->
-                    (chapterTitle.isBlank() || title.equals(chapterTitle, ignoreCase = true)) &&
-                        clean(content).contains(snip)
-                }
-                if (found >= 0) return found
-            }
+    val chapterStarts = ArrayList<Int>()
+    pages.forEachIndexed { idx, (_, content) ->
+        if (content.startsWith("CHAPTER_START:::")) {
+            chapterStarts.add(idx)
         }
-        for (len in listOf(40, 30, 20, 14, 10)) {
-            val snip = alphaSnippet.take(len).trim()
-            if (snip.length >= 8) {
-                val found = pages.indexOfFirst { (title, content) ->
-                    (chapterTitle.isBlank() || title.equals(chapterTitle, ignoreCase = true)) &&
-                        cleanAlpha(content).contains(snip)
-                }
-                if (found >= 0) return found
-            }
-        }
+    }
+    val firstPageOfChap = chapterStarts.getOrNull(chapterIdx)
+        ?: pages.indexOfFirst { it.first.equals(chapterTitle, ignoreCase = true) }
+    val lastPageOfChap = if (chapterStarts.isNotEmpty() && chapterIdx in chapterStarts.indices) {
+        val nextStart = chapterStarts.getOrNull(chapterIdx + 1) ?: pages.size
+        (nextStart - 1).coerceAtLeast(firstPageOfChap)
+    } else {
+        pages.indexOfLast { it.first.equals(chapterTitle, ignoreCase = true) }
+    }
 
-        // Global search across all pages by snippet (in case chapter title naming slightly differs)
-        for (len in listOf(30, 20, 14, 10)) {
+    // 1. Try finding page by snippet within the target chapter range
+    if (cleanedSnippet.isNotBlank() && firstPageOfChap in pages.indices && lastPageOfChap in pages.indices && firstPageOfChap <= lastPageOfChap) {
+        for (len in listOf(40, 30, 20, 14)) {
             val snip = cleanedSnippet.take(len).trim()
-            if (snip.length >= 8) {
+            if (snip.length >= 12) {
+                for (p in firstPageOfChap..lastPageOfChap) {
+                    if (clean(pages[p].second).contains(snip)) return p
+                }
+            }
+        }
+        for (len in listOf(40, 30, 20, 14)) {
+            val snip = alphaSnippet.take(len).trim()
+            if (snip.length >= 12) {
+                for (p in firstPageOfChap..lastPageOfChap) {
+                    if (cleanAlpha(pages[p].second).contains(snip)) return p
+                }
+            }
+        }
+    }
+
+    // Fallback: Global search across all pages by snippet (in case chapter title naming slightly differs)
+    if (cleanedSnippet.isNotBlank()) {
+        for (len in listOf(30, 20, 14)) {
+            val snip = cleanedSnippet.take(len).trim()
+            if (snip.length >= 12) {
                 val foundGlobal = pages.indexOfFirst { clean(it.second).contains(snip) }
                 if (foundGlobal >= 0) return foundGlobal
             }
         }
-        for (len in listOf(30, 20, 14, 10)) {
+        for (len in listOf(30, 20, 14)) {
             val snip = alphaSnippet.take(len).trim()
-            if (snip.length >= 8) {
+            if (snip.length >= 12) {
                 val foundGlobal = pages.indexOfFirst { cleanAlpha(it.second).contains(snip) }
                 if (foundGlobal >= 0) return foundGlobal
             }
         }
     }
 
-    // 2. Try finding page by paragraph text
+    // 2. Try finding page by paragraph text within target chapter range
     val rawPara = targetChapter?.paragraphs?.getOrNull(paraIdx)?.trim() ?: ""
     val cleanedPara = clean(rawPara)
     val alphaPara = cleanAlpha(rawPara)
-    if (cleanedPara.isNotBlank()) {
-        for (len in listOf(35, 24, 14, 8)) {
+    if (cleanedPara.isNotBlank() && firstPageOfChap in pages.indices && lastPageOfChap in pages.indices && firstPageOfChap <= lastPageOfChap) {
+        for (len in listOf(35, 24, 16)) {
             val paraSnip = cleanedPara.take(len).trim()
-            if (paraSnip.length >= 6) {
-                val foundByPara = pages.indexOfFirst { (title, content) ->
-                    (chapterTitle.isBlank() || title.equals(chapterTitle, ignoreCase = true)) &&
-                        clean(content).contains(paraSnip)
+            if (paraSnip.length >= 12) {
+                for (p in firstPageOfChap..lastPageOfChap) {
+                    if (clean(pages[p].second).contains(paraSnip)) return p
                 }
-                if (foundByPara >= 0) return foundByPara
             }
         }
-        for (len in listOf(35, 24, 14, 8)) {
+        for (len in listOf(35, 24, 16)) {
             val paraSnip = alphaPara.take(len).trim()
-            if (paraSnip.length >= 6) {
-                val foundByPara = pages.indexOfFirst { (title, content) ->
-                    (chapterTitle.isBlank() || title.equals(chapterTitle, ignoreCase = true)) &&
-                        cleanAlpha(content).contains(paraSnip)
+            if (paraSnip.length >= 12) {
+                for (p in firstPageOfChap..lastPageOfChap) {
+                    if (cleanAlpha(pages[p].second).contains(paraSnip)) return p
                 }
-                if (foundByPara >= 0) return foundByPara
-            }
-        }
-        // Global search by paragraph
-        for (len in listOf(24, 14, 8)) {
-            val paraSnip = cleanedPara.take(len).trim()
-            if (paraSnip.length >= 6) {
-                val foundGlobalPara = pages.indexOfFirst { clean(it.second).contains(paraSnip) }
-                if (foundGlobalPara >= 0) return foundGlobalPara
-            }
-        }
-        for (len in listOf(24, 14, 8)) {
-            val paraSnip = alphaPara.take(len).trim()
-            if (paraSnip.length >= 6) {
-                val foundGlobalPara = pages.indexOfFirst { cleanAlpha(it.second).contains(paraSnip) }
-                if (foundGlobalPara >= 0) return foundGlobalPara
             }
         }
     }
 
     // 3. If it's the very start of chapter, return first page of chapter
-    if (paraIdx == 0 && chapterTitle.isNotBlank()) {
-        val firstPage = pages.indexOfFirst { it.first.equals(chapterTitle, ignoreCase = true) }
-        if (firstPage >= 0) return firstPage
+    if (paraIdx == 0 && firstPageOfChap >= 0) {
+        return firstPageOfChap
     }
 
     // 4. Estimate page within the chapter proportionally
-    val firstPageOfChap = pages.indexOfFirst { it.first.equals(chapterTitle, ignoreCase = true) }
-    if (firstPageOfChap >= 0) {
-        val lastPageOfChap = pages.indexOfLast { it.first.equals(chapterTitle, ignoreCase = true) }
+    if (firstPageOfChap >= 0 && lastPageOfChap >= firstPageOfChap) {
         val chapPageCount = lastPageOfChap - firstPageOfChap + 1
         val totalParasInChap = maxOf(targetChapter?.paragraphs?.size ?: 1, 1)
         val estimatedOffset = ((paraIdx.toFloat() / totalParasInChap) * chapPageCount).toInt()
@@ -414,6 +416,8 @@ fun ReaderScreen(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
 
     // Distraction-Free Reading: Hide the notification/status bar in reading mode
     DisposableEffect(Unit) {
@@ -439,10 +443,16 @@ fun ReaderScreen(
     val verticalPadding = verticalPaddingState?.value ?: 0
     val pagedSafeLinesToRemoveState = repository?.pagedSafeLinesToRemove?.collectAsState(initial = 0)
     val pagedSafeLinesToRemove = pagedSafeLinesToRemoveState?.value ?: 0
-    val verticallyCenterPagesState = repository?.verticallyCenterPages?.collectAsState(initial = true)
-    val verticallyCenterPages = verticallyCenterPagesState?.value ?: true
-    val pagedSwipeThresholdState = repository?.pagedSwipeThreshold?.collectAsState(initial = 0.18f)
-    val pagedSwipeThreshold = pagedSwipeThresholdState?.value ?: 0.18f
+    val verticallyCenterPagesState = repository?.verticallyCenterPages?.collectAsState(initial = false)
+    val verticallyCenterPages = verticallyCenterPagesState?.value ?: false
+    val fillPageToBottomState = repository?.fillPageToBottom?.collectAsState(initial = true)
+    val fillPageToBottom = fillPageToBottomState?.value ?: true
+    val adaptiveVerticalSpacingState = repository?.adaptiveVerticalSpacing?.collectAsState(initial = false)
+    val adaptiveVerticalSpacing = adaptiveVerticalSpacingState?.value ?: false
+    val goldenRatioChapterOpenersState = repository?.goldenRatioChapterOpeners?.collectAsState(initial = false)
+    val goldenRatioChapterOpeners = goldenRatioChapterOpenersState?.value ?: false
+    val pagedSwipeThresholdState = repository?.pagedSwipeThreshold?.collectAsState(initial = 0.08f)
+    val pagedSwipeThreshold = pagedSwipeThresholdState?.value ?: 0.08f
     val paragraphSpacingState = repository?.paragraphSpacingMultiplier?.collectAsState(initial = 1.2f)
     val paragraphSpacingMultiplier = paragraphSpacingState?.value ?: 1.2f
     val assistantOrbStyleState = repository?.assistantOrbStyle?.collectAsState(initial = "DOCK_DOT")
@@ -484,19 +494,28 @@ fun ReaderScreen(
 
     var showControls by rememberSaveable { mutableStateOf(true) }
     var selectedText by remember { mutableStateOf("") }
-    var selectedChapterTitle by rememberSaveable { mutableStateOf("") }
+    var selectedChapterTitle by rememberSaveable(book.id) { mutableStateOf("") }
     var showSelectionMenu by remember { mutableStateOf(false) }
     var activeReleaseSelectionAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     var selectedBookmarkForModal by remember { mutableStateOf<Bookmark?>(null) }
     var showBookmarkDetailModal by remember { mutableStateOf(false) }
     var showTocSheet by rememberSaveable { mutableStateOf(false) }
-    var activeChapterTitle by rememberSaveable { mutableStateOf(book.chapters.firstOrNull()?.title ?: "Chapter 1") }
+    var activeChapterTitle by rememberSaveable(book.id) { mutableStateOf(book.chapters.firstOrNull()?.title ?: "Chapter 1") }
+    LaunchedEffect(book.id) {
+        if (book.chapters.none { it.title.equals(activeChapterTitle, ignoreCase = true) }) {
+            activeChapterTitle = book.chapters.firstOrNull()?.title ?: "Chapter 1"
+        }
+    }
     var showInBookSearchDialog by rememberSaveable { mutableStateOf(false) }
     var inBookSearchMode by rememberSaveable { mutableStateOf(InBookSearchMode.PLAIN) }
-    var inBookSearchQuery by rememberSaveable { mutableStateOf("") }
+    var inBookSearchQuery by rememberSaveable(book.id) { mutableStateOf("") }
     var inBookSearchResults by remember { mutableStateOf<List<SceneMatch>>(emptyList()) }
-    var inBookCurrentMatchIndex by rememberSaveable { mutableIntStateOf(0) }
+    var inBookCurrentMatchIndex by rememberSaveable(book.id) { mutableIntStateOf(0) }
     var isSearchingInBook by remember { mutableStateOf(false) }
+    var activeLightboxBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var activeLightboxPath by remember { mutableStateOf<String?>(null) }
+    val inlineImageWidthPercent = repository?.inlineImageWidthPercent?.collectAsState()?.value ?: 100
+    val inlineImageWidthFraction = (inlineImageWidthPercent / 100f).coerceIn(0.4f, 1.0f)
 
     var transientFontBadge by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(transientFontBadge) {
@@ -818,6 +837,8 @@ fun ReaderScreen(
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val screenHeightPx = with(density) { configuration.screenHeightDp.dp.toPx() }
     val screenWidthPx = with(density) { configuration.screenWidthDp.dp.toPx() }
+    val currentImeBottomInset = WindowInsets.ime.asPaddingValues().calculateBottomPadding()
+    val currentImeOffsetPx = with(density) { currentImeBottomInset.toPx() }
     val isStrictPaged = readingMode == ReadingMode.PAGED
     val isPagedReading = readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL
     var showCharacterGuideSheet by rememberSaveable { mutableStateOf(false) }
@@ -837,12 +858,12 @@ fun ReaderScreen(
     val screenWidthDp = configuration.screenWidthDp
     val screenHeightDp = configuration.screenHeightDp
 
-    val currentConfigKey = "${book.id}_${fontSize}_${isLandscape}_${readingMode}_${screenWidthDp}_${screenHeightDp}_${horizontalPadding}_${verticalPadding}_${(lineHeightMultiplier * 100).toInt()}_${(paragraphSpacingMultiplier * 100).toInt()}_${pagedSafeLinesToRemove}"
+    val currentConfigKey = "${book.id}_${fontSize}_${isLandscape}_${readingMode}_${screenWidthDp}_${screenHeightDp}_${horizontalPadding}_${verticalPadding}_${(lineHeightMultiplier * 100).toInt()}_${(paragraphSpacingMultiplier * 100).toInt()}_${pagedSafeLinesToRemove}_${fillPageToBottom}"
     var pagesConfigKey by remember { mutableStateOf(currentConfigKey) }
 
     // Prepared pages for Paged Mode with smart character/sentence budgeting so text never overflows
     // Non-blocking in-memory cache lookup on composition; background precomputation via getOrComputeAsync
-    var pages by remember(book.id, book.chapters.size, fontSize, readingMode, isLandscape, screenWidthDp, screenHeightDp, horizontalPadding, verticalPadding, lineHeightMultiplier, paragraphSpacingMultiplier, pagedSafeLinesToRemove) {
+    var pages by remember(book.id, book.chapters.size, fontSize, readingMode, isLandscape, screenWidthDp, screenHeightDp, horizontalPadding, verticalPadding, lineHeightMultiplier, paragraphSpacingMultiplier, pagedSafeLinesToRemove, fillPageToBottom) {
         val cached = if (isPagedReading) {
             PageCache.getCached(
                 bookId = book.id,
@@ -856,6 +877,7 @@ fun ReaderScreen(
                 verticalPaddingDp = verticalPadding,
                 paragraphSpacingMultiplier = paragraphSpacingMultiplier,
                 safeLinesToRemove = pagedSafeLinesToRemove,
+                fillPageToBottom = fillPageToBottom,
                 context = context
             )
         } else null
@@ -865,7 +887,7 @@ fun ReaderScreen(
         mutableStateOf(cached ?: emptyList())
     }
 
-    LaunchedEffect(book.id, book.chapters.size, fontSize, readingMode, isLandscape, isPagedReading, screenWidthDp, screenHeightDp, horizontalPadding, verticalPadding, lineHeightMultiplier, paragraphSpacingMultiplier, pagedSafeLinesToRemove) {
+    LaunchedEffect(book.id, book.chapters.size, fontSize, readingMode, isLandscape, isPagedReading, screenWidthDp, screenHeightDp, horizontalPadding, verticalPadding, lineHeightMultiplier, paragraphSpacingMultiplier, pagedSafeLinesToRemove, fillPageToBottom) {
         if (isPagedReading && (pages.isEmpty() || pagesConfigKey != currentConfigKey) && book.chapters.isNotEmpty()) {
             val allPages = PageCache.getOrComputeAsync(
                 bookId = book.id,
@@ -880,6 +902,7 @@ fun ReaderScreen(
                 lineHeightMultiplier = lineHeightMultiplier,
                 paragraphSpacingMultiplier = paragraphSpacingMultiplier,
                 safeLinesToRemove = pagedSafeLinesToRemove,
+                fillPageToBottom = fillPageToBottom,
                 dbHelper = repository?.dbHelper,
                 context = context,
                 activeChapterIndex = book.currentChapter,
@@ -893,6 +916,16 @@ fun ReaderScreen(
             pages = allPages
             pagesConfigKey = currentConfigKey
         }
+    }
+
+    val chapterStartPages = remember(pages) {
+        val starts = ArrayList<Int>(book.chapters.size)
+        pages.forEachIndexed { idx, (_, content) ->
+            if (content.startsWith("CHAPTER_START:::")) {
+                starts.add(idx)
+            }
+        }
+        starts
     }
 
     val chapterCumulativeParaOffsets = remember(book.id, book.chapters.size) {
@@ -924,14 +957,40 @@ fun ReaderScreen(
     var currentVisibleParaIdx by remember { mutableIntStateOf(initialParaIdx) }
     var currentTopSnippet by remember { mutableStateOf(initialSnippet) }
 
+    // Asynchronous prefetch of inline images and diagrams for current & neighboring chapters
+    LaunchedEffect(book.id, currentVisibleChapterIdx, pages.size) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val imgPaths = mutableListOf<String>()
+            val currentChap = book.chapters.getOrNull(currentVisibleChapterIdx)
+            currentChap?.paragraphs?.forEach { p ->
+                if (p.contains("[INLINE_IMG:")) {
+                    extractInlineImages(p).forEach { imgPaths.add(it.path) }
+                }
+                if (p.startsWith("[IMG:") && p.endsWith("]")) {
+                    imgPaths.add(p.removePrefix("[IMG:").removeSuffix("]"))
+                }
+            }
+            val nextChap = book.chapters.getOrNull(currentVisibleChapterIdx + 1)
+            nextChap?.paragraphs?.forEach { p ->
+                if (p.contains("[INLINE_IMG:")) {
+                    extractInlineImages(p).forEach { imgPaths.add(it.path) }
+                }
+                if (p.startsWith("[IMG:") && p.endsWith("]")) {
+                    imgPaths.add(p.removePrefix("[IMG:").removeSuffix("]"))
+                }
+            }
+            if (imgPaths.isNotEmpty()) {
+                io.github.tasmirz.lumina.ui.components.prewarmInlineBitmaps(imgPaths)
+            }
+        }
+    }
+
     // Persistent reading anchor that survives font zooming and screen orientation changes
     var anchorSnippet by rememberSaveable { mutableStateOf(initialSnippet) }
     var anchorChapterIdx by rememberSaveable { mutableIntStateOf(initialChapIdx) }
     var anchorParaIdx by rememberSaveable { mutableIntStateOf(initialParaIdx) }
 
     var isPinching by remember { mutableStateOf(false) }
-    var activePagedTextLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
-    var activeTextBoundsInRoot by remember { mutableStateOf<Rect?>(null) }
 
     var prevReadingMode by remember { mutableStateOf(readingMode) }
     var lastAnchoredFontSize by remember { mutableIntStateOf(fontSize) }
@@ -943,6 +1002,57 @@ fun ReaderScreen(
         initialPage = book.currentPage.coerceIn(0, maxOf(pages.size - 1, 0)),
         pageCount = { pages.size }
     )
+
+    var hasInitialPageRestored by rememberSaveable(book.id) { mutableStateOf(false) }
+
+    LaunchedEffect(pages.size, book.id) {
+        if (pages.isNotEmpty() && !hasInitialPageRestored) {
+            val targetPage = if (book.currentPage in pages.indices && book.currentPage > 0) {
+                val pageChap = if (chapterStartPages.isNotEmpty()) {
+                    val found = chapterStartPages.indexOfLast { it <= book.currentPage }
+                    if (found >= 0) found else 0
+                } else 0
+                if (pageChap == book.currentChapter || book.currentChapter == 0) {
+                    book.currentPage
+                } else {
+                    if (chapterStartPages.isNotEmpty() && book.currentChapter in chapterStartPages.indices) {
+                        chapterStartPages[book.currentChapter]
+                    } else {
+                        book.currentPage
+                    }
+                }
+            } else if (chapterStartPages.isNotEmpty() && book.currentChapter in chapterStartPages.indices && book.currentChapter > 0) {
+                chapterStartPages[book.currentChapter]
+            } else if (anchorSnippet.isNotBlank() || anchorChapterIdx > 0 || anchorParaIdx > 0) {
+                findPageForLocation(
+                    pages = pages,
+                    chapterIdx = anchorChapterIdx,
+                    chapters = book.chapters,
+                    paraIdx = anchorParaIdx,
+                    topSnippet = anchorSnippet
+                )
+            } else {
+                0
+            }
+            val coercedTarget = targetPage.coerceIn(0, pages.size - 1)
+            if (coercedTarget != pagerState.currentPage) {
+                pagerState.scrollToPage(coercedTarget)
+            }
+            hasInitialPageRestored = true
+        }
+    }
+
+    // Remembers the return position before jumping to saved/read-till location so user can tap back
+    var previousJumpLocation by rememberSaveable { mutableStateOf<Triple<Int, Int, Int>?>(null) }
+
+    // Track verified reading position to enforce sequential progression (20 -> 21 -> 22 with >= 5s delay)
+    // Clicking or scrubbing the progress bar does NOT count as read.
+    val initialVerifiedPage = remember(book.id) {
+        val repoVerified = repository?.getVerifiedPage(book.id) ?: -1
+        if (repoVerified >= 0) repoVerified else book.currentPage
+    }
+    var lastVerifiedReadPage by rememberSaveable(book.id) { mutableIntStateOf(initialVerifiedPage) }
+    var lastVerifiedScrollPos by rememberSaveable(book.id) { mutableIntStateOf(book.scrollPos) }
 
     // Detect font zoom or screen rotation changes to trigger re-anchoring to the exact reading position
     LaunchedEffect(fontSize, isLandscape) {
@@ -999,9 +1109,34 @@ fun ReaderScreen(
         }
     }
 
+    // When in SCROLL mode, restore lazy list scroll position to anchored paragraph on font size or zoom change
+    LaunchedEffect(pendingTargetSync, isPinching, readingMode) {
+        if (!isPagedReading && pendingTargetSync && !isPinching) {
+            val targetScroll = findScrollIndexForLocation(
+                chapterIdx = anchorChapterIdx,
+                paraIdx = anchorParaIdx,
+                topSnippet = anchorSnippet,
+                chapters = book.chapters,
+                chapterOffsets = chapterCumulativeParaOffsets
+            )
+            val viewportH = listState.layoutInfo.viewportSize.height
+            val centerOffset = (viewportH * 0.35f).roundToInt()
+            listState.scrollToItem(
+                targetScroll.coerceIn(0, maxOf(0, totalScrollItems - 1)),
+                scrollOffset = -centerOffset
+            )
+            pendingTargetSync = false
+        }
+    }
+
     fun executeGestureAction(action: GestureAction, chapIdx: Int = speakingChapterIdx, pIdx: Int = speakingParaIdx) {
         when (action) {
             GestureAction.TOGGLE_AUTOSCROLL -> {
+                if (readingMode != ReadingMode.SCROLL) {
+                    isAutoScrolling = false
+                    Toast.makeText(context, "Auto-scroll is only available in Continuous Scroll mode", Toast.LENGTH_SHORT).show()
+                    return
+                }
                 isAutoScrolling = !isAutoScrolling
                 if (isAutoScrolling) {
                     showTtsDock = false
@@ -1053,7 +1188,11 @@ fun ReaderScreen(
                     }
                     coroutineScope.launch { listState.animateScrollToItem(target) }
                 } else {
-                    val pageIdx = pages.indexOfFirst { it.first == activeChapterTitle }
+                    val pageIdx = if (chapterStartPages.isNotEmpty() && prev in chapterStartPages.indices) {
+                        chapterStartPages[prev]
+                    } else {
+                        pages.indexOfFirst { it.first == activeChapterTitle }
+                    }
                     if (pageIdx != -1) {
                         coroutineScope.launch { pagerState.animateScrollToPage(pageIdx) }
                     }
@@ -1072,7 +1211,11 @@ fun ReaderScreen(
                     }
                     coroutineScope.launch { listState.animateScrollToItem(target) }
                 } else {
-                    val pageIdx = pages.indexOfFirst { it.first == activeChapterTitle }
+                    val pageIdx = if (chapterStartPages.isNotEmpty() && next in chapterStartPages.indices) {
+                        chapterStartPages[next]
+                    } else {
+                        pages.indexOfFirst { it.first == activeChapterTitle }
+                    }
                     if (pageIdx != -1) {
                         coroutineScope.launch { pagerState.animateScrollToPage(pageIdx) }
                     }
@@ -1112,7 +1255,14 @@ fun ReaderScreen(
         }
     }
 
-    // Auto-scroll loop for hands-free reading in both Continuous Scroll and Paged modes
+    // Turn off auto-scroll if user switches out of SCROLL mode
+    LaunchedEffect(readingMode) {
+        if (readingMode != ReadingMode.SCROLL && isAutoScrolling) {
+            isAutoScrolling = false
+        }
+    }
+
+    // Auto-scroll loop for hands-free reading: strictly active in continuous scroll mode
     LaunchedEffect(isAutoScrolling, autoScrollSpeed, readingMode) {
         if (!isAutoScrolling) return@LaunchedEffect
         if (readingMode == ReadingMode.SCROLL) {
@@ -1132,22 +1282,7 @@ fun ReaderScreen(
                 kotlinx.coroutines.delay(delayMs)
             }
         } else {
-            // Paged modes (PAGED, PAGED_SCROLL): pacing-based page auto-advancement
-            while (isAutoScrolling) {
-                val pageIntervalMs = (6000L / autoScrollSpeed.coerceIn(0.5f, 4.0f)).toLong()
-                kotlinx.coroutines.delay(pageIntervalMs)
-                if (!isAutoScrolling) break
-                if (pagerState.currentPage < pagerState.pageCount - 1) {
-                    try {
-                        pagerState.animateScrollToPage(pagerState.currentPage + 1)
-                    } catch (_: kotlinx.coroutines.CancellationException) {
-                        kotlinx.coroutines.delay(500L)
-                    } catch (_: Exception) {}
-                } else if (pagerState.currentPage >= pagerState.pageCount - 1) {
-                    isAutoScrolling = false
-                    break
-                }
-            }
+            isAutoScrolling = false
         }
     }
 
@@ -1184,7 +1319,9 @@ fun ReaderScreen(
             }
             is AssistantAction.JumpToScene -> {
                 coroutineScope.launch {
-                    val matches = repository?.searchScenes(book.id, action.query) ?: emptyList()
+                    val matches = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        repository?.searchScenes(book.id, action.query) ?: emptyList()
+                    }
                     val target = matches.firstOrNull()
                     if (target != null) {
                         val chapIdx = book.chapters.indexOfFirst { it.title.equals(target.chapterTitle, ignoreCase = true) }
@@ -1225,12 +1362,17 @@ fun ReaderScreen(
                 }
             }
             is AssistantAction.ToggleAutoScroll -> {
-                isAutoScrolling = action.enable
-                if (isAutoScrolling) {
-                    showTtsDock = false
-                    stopAllAudio()
+                if (action.enable && readingMode != ReadingMode.SCROLL) {
+                    isAutoScrolling = false
+                    Toast.makeText(context, "Auto-scroll is only available in Continuous Scroll mode", Toast.LENGTH_SHORT).show()
+                } else {
+                    isAutoScrolling = action.enable
+                    if (isAutoScrolling) {
+                        showTtsDock = false
+                        stopAllAudio()
+                    }
+                    Toast.makeText(context, if (action.enable) "Auto-scroll started" else "Auto-scroll stopped", Toast.LENGTH_SHORT).show()
                 }
-                Toast.makeText(context, if (action.enable) "Auto-scroll started" else "Auto-scroll stopped", Toast.LENGTH_SHORT).show()
             }
             is AssistantAction.NextChapter -> {
                 stopAllAudio()
@@ -1251,7 +1393,11 @@ fun ReaderScreen(
                             listState.animateScrollToItem(idx)
                         }
                     } else {
-                        val targetPage = pages.indexOfFirst { it.first == chapTitle }.coerceAtLeast(0)
+                        val targetPage = if (chapterStartPages.isNotEmpty() && next in chapterStartPages.indices) {
+                            chapterStartPages[next]
+                        } else {
+                            pages.indexOfFirst { it.first == chapTitle }.coerceAtLeast(0)
+                        }
                         if (kotlin.math.abs(pagerState.currentPage - targetPage) > 3) {
                             pagerState.scrollToPage(targetPage)
                         } else {
@@ -1279,7 +1425,11 @@ fun ReaderScreen(
                             listState.animateScrollToItem(idx)
                         }
                     } else {
-                        val targetPage = pages.indexOfFirst { it.first == chapTitle }.coerceAtLeast(0)
+                        val targetPage = if (chapterStartPages.isNotEmpty() && prev in chapterStartPages.indices) {
+                            chapterStartPages[prev]
+                        } else {
+                            pages.indexOfFirst { it.first == chapTitle }.coerceAtLeast(0)
+                        }
                         if (kotlin.math.abs(pagerState.currentPage - targetPage) > 3) {
                             pagerState.scrollToPage(targetPage)
                         } else {
@@ -1307,7 +1457,11 @@ fun ReaderScreen(
                             listState.animateScrollToItem(idx)
                         }
                     } else {
-                        val targetPage = pages.indexOfFirst { it.first == chapTitle }.coerceAtLeast(0)
+                        val targetPage = if (chapterStartPages.isNotEmpty() && target in chapterStartPages.indices) {
+                            chapterStartPages[target]
+                        } else {
+                            pages.indexOfFirst { it.first == chapTitle }.coerceAtLeast(0)
+                        }
                         if (kotlin.math.abs(pagerState.currentPage - targetPage) > 3) {
                             pagerState.scrollToPage(targetPage)
                         } else {
@@ -1373,7 +1527,12 @@ fun ReaderScreen(
                                 for (c in 0..maxChap) {
                                     val ch = book.chapters.getOrNull(c) ?: continue
                                     appendLine("--- ${ch.title} ---")
-                                    appendLine(ch.paragraphs.filterNot { it.startsWith("[IMG:") }.joinToString(" "))
+                                    appendLine(ch.paragraphs.filterNot { it.startsWith("[IMG:") || it.startsWith("[TABLE:") || it == "[DIVIDER]" }
+                                        .map {
+                                            if (it.startsWith("[VERSE:") && it.endsWith("]")) it.removePrefix("[VERSE:").removeSuffix("]")
+                                            else if (it.startsWith("[QUOTE:") && it.endsWith("]")) it.removePrefix("[QUOTE:").removeSuffix("]")
+                                            else it
+                                        }.joinToString(" "))
                                 }
                             }
                             val response = assistantService.queryAssistant(
@@ -1452,25 +1611,141 @@ fun ReaderScreen(
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background)
                 .nestedScroll(nestedScrollConnection)
-                .pointerInput(currentFontSize) {
-                    var cumulativeZoom = 1.0f
-                    detectTransformGestures(panZoomLock = false) { _, _, zoom, _ ->
-                        if (zoom != 1.0f) {
-                            cumulativeZoom *= zoom
-                            if (cumulativeZoom > 1.15f) {
-                                val newSize = (currentFontSize + 1).coerceAtMost(36)
-                                if (newSize != currentFontSize) {
-                                    currentOnFontSizeChange(newSize)
-                                    view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        var cumulativeZoom = 1.0f
+                        var pinchStarted = false
+                        var currentTargetFontSize = currentFontSize
+
+                        try {
+                            do {
+                                val event = awaitPointerEvent(PointerEventPass.Main)
+                                if (event.changes.any { it.isConsumed }) {
+                                    // Touch was consumed by a child element (e.g. image pinch or button)
+                                    // Do NOT alter text font size!
+                                    continue
                                 }
-                                cumulativeZoom = 1.0f
-                            } else if (cumulativeZoom < 0.85f) {
-                                val newSize = (currentFontSize - 1).coerceAtLeast(12)
-                                if (newSize != currentFontSize) {
-                                    currentOnFontSizeChange(newSize)
-                                    view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                var pressedCount = 0
+                                var p0: PointerInputChange? = null
+                                var p1: PointerInputChange? = null
+
+                                for (i in event.changes.indices) {
+                                    val c = event.changes[i]
+                                    if (c.pressed) {
+                                        pressedCount++
+                                        if (p0 == null) {
+                                            p0 = c
+                                        } else if (p1 == null) {
+                                            p1 = c
+                                        }
+                                    }
                                 }
-                                cumulativeZoom = 1.0f
+
+                                if (pressedCount >= 2 && p0 != null && p1 != null) {
+                                    val currentDist = kotlin.math.hypot(p0.position.x - p1.position.x, p0.position.y - p1.position.y)
+                                    val prevDist = kotlin.math.hypot(p0.previousPosition.x - p1.previousPosition.x, p0.previousPosition.y - p1.previousPosition.y)
+                                    val avgTouchY = (p0.position.y + p1.position.y) / 2f
+
+                                    if (!pinchStarted) {
+                                        pinchStarted = true
+                                        isPinching = true
+                                        currentTargetFontSize = currentFontSize
+
+                                        if (currentIsPagedReading) {
+                                            val activePages = currentPages
+                                            val curPage = pagerState.currentPage
+                                            if (curPage in activePages.indices) {
+                                                val (cTitle, pageContent) = activePages[curPage]
+                                                val isChapterHeaderPage = pageContent.startsWith("CHAPTER_START:::") || pageContent.startsWith("TITLE:::")
+                                                val pageBody = if (isChapterHeaderPage) pageContent.substringAfterLast(":::") else pageContent
+                                                val cIdx = currentChapters.indexOfFirst { it.title == cTitle }.coerceAtLeast(0)
+                                                val chap = currentChapters.getOrNull(cIdx)
+
+                                                var targetSnippet = ""
+                                                var targetParaIdx = 0
+
+                                                val cleanExact = cleanAlpha(pageBody.take(60))
+                                                val foundIdx = chap?.paragraphs?.indexOfFirst { fullPara ->
+                                                    val cleanFull = cleanAlpha(fullPara)
+                                                    cleanFull.contains(cleanExact.take(25)) || cleanExact.contains(cleanFull.take(25))
+                                                } ?: -1
+                                                if (foundIdx >= 0) {
+                                                    targetParaIdx = foundIdx
+                                                    targetSnippet = chap?.paragraphs?.getOrNull(foundIdx)?.trim()?.take(60) ?: ""
+                                                }
+                                                if (targetSnippet.isBlank()) {
+                                                    targetSnippet = pageBody.trim().take(60)
+                                                }
+
+                                                if (targetSnippet.isNotBlank()) {
+                                                    anchorSnippet = targetSnippet
+                                                    anchorChapterIdx = cIdx
+                                                    anchorParaIdx = targetParaIdx
+                                                    currentTopSnippet = targetSnippet
+                                                }
+                                            }
+                                        } else if (currentReadingMode == ReadingMode.SCROLL) {
+                                            val visibleItems = listState.layoutInfo.visibleItemsInfo
+                                            val viewportH = listState.layoutInfo.viewportSize.height
+                                            val targetY = if (viewportH > 0) viewportH * 0.4f else avgTouchY
+                                            val touchedItem = visibleItems.find { targetY >= it.offset && targetY <= it.offset + it.size }
+                                                ?: visibleItems.firstOrNull()
+
+                                            if (touchedItem != null) {
+                                                val itemIdx = touchedItem.index
+                                                val binIdx = chapterCumulativeParaOffsets.binarySearch(itemIdx)
+                                                val cIdx = if (binIdx >= 0) binIdx else (-binIdx - 2).coerceIn(0, currentChapters.size - 1)
+                                                val pIdx = (itemIdx - chapterCumulativeParaOffsets.getOrElse(cIdx) { 0 } - 1).coerceAtLeast(0)
+                                                val paraText = currentChapters.getOrNull(cIdx)?.paragraphs?.getOrNull(pIdx) ?: ""
+                                                val snip = paraText.trim().take(60)
+
+                                                if (snip.isNotBlank()) {
+                                                    anchorSnippet = snip
+                                                    anchorChapterIdx = cIdx
+                                                    anchorParaIdx = pIdx
+                                                    currentTopSnippet = snip
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if (prevDist > 0f) {
+                                        val scale = currentDist / prevDist
+                                        cumulativeZoom *= scale
+                                        if (cumulativeZoom > 1.08f) {
+                                            val newSize = (currentTargetFontSize + 1).coerceAtMost(36)
+                                            if (newSize != currentTargetFontSize) {
+                                                currentTargetFontSize = newSize
+                                                currentOnFontSizeChange(newSize)
+                                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                            }
+                                            cumulativeZoom = 1.0f
+                                        } else if (cumulativeZoom < 0.92f) {
+                                            val newSize = (currentTargetFontSize - 1).coerceAtLeast(12)
+                                            if (newSize != currentTargetFontSize) {
+                                                currentTargetFontSize = newSize
+                                                currentOnFontSizeChange(newSize)
+                                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                            }
+                                            cumulativeZoom = 1.0f
+                                        }
+                                    }
+
+                                    for (i in event.changes.indices) {
+                                        event.changes[i].consume()
+                                    }
+                                } else if (pinchStarted) {
+                                    // Touch release debounce: consume remaining pointer motion to prevent swipe fling
+                                    for (i in event.changes.indices) {
+                                        event.changes[i].consume()
+                                    }
+                                }
+                            } while (event.changes.any { it.pressed })
+                        } finally {
+                            if (pinchStarted) {
+                                isPinching = false
+                                pendingTargetSync = true
                             }
                         }
                     }
@@ -1489,26 +1764,23 @@ fun ReaderScreen(
         }
 
         // Dynamic Rolling Texture Computation across SCROLL, PAGED, and PAGED_SCROLL
-        val textureScrollOffsetX by remember(dynamicRollingTexture, readingMode) {
-            derivedStateOf {
-                if (!dynamicRollingTexture) 0
-                else if (readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL) {
-                    ((pagerState.currentPage * 240) + (pagerState.currentPageOffsetFraction * 240)).toInt()
-                } else {
-                    0
-                }
+        // Lambda providers defer state reads strictly into the Draw phase, preventing composition storms during swiping
+        val getTextureScrollOffsetX: () -> Int = {
+            if (!dynamicRollingTexture) 0
+            else if (readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL) {
+                ((pagerState.currentPage * 240) + (pagerState.currentPageOffsetFraction * 240)).toInt()
+            } else {
+                0
             }
         }
-        val textureScrollOffsetY by remember(dynamicRollingTexture, readingMode) {
-            derivedStateOf {
-                if (!dynamicRollingTexture) 0
-                else if (readingMode == ReadingMode.SCROLL) {
-                    listState.firstVisibleItemIndex * 400 + listState.firstVisibleItemScrollOffset
-                } else if (readingMode == ReadingMode.PAGED_SCROLL) {
-                    ((pagerState.currentPage * 160) + (pagerState.currentPageOffsetFraction * 160)).toInt()
-                } else {
-                    ((pagerState.currentPage * 120) + (pagerState.currentPageOffsetFraction * 120)).toInt()
-                }
+        val getTextureScrollOffsetY: () -> Int = {
+            if (!dynamicRollingTexture) 0
+            else if (readingMode == ReadingMode.SCROLL) {
+                listState.firstVisibleItemIndex * 400 + listState.firstVisibleItemScrollOffset
+            } else if (readingMode == ReadingMode.PAGED_SCROLL) {
+                ((pagerState.currentPage * 160) + (pagerState.currentPageOffsetFraction * 160)).toInt()
+            } else {
+                ((pagerState.currentPage * 120) + (pagerState.currentPageOffsetFraction * 120)).toInt()
             }
         }
 
@@ -1539,8 +1811,8 @@ fun ReaderScreen(
                     android.graphics.BitmapShader(tile, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
                 }
                 Canvas(modifier = Modifier.fillMaxSize()) {
-                    val rollX = if (dynamicRollingTexture) (((textureScrollOffsetX % 128) + 128) % 128).toFloat() else 0f
-                    val rollY = if (dynamicRollingTexture) (((textureScrollOffsetY % 128) + 128) % 128).toFloat() else 0f
+                    val rollX = if (dynamicRollingTexture) (((getTextureScrollOffsetX() % 128) + 128) % 128).toFloat() else 0f
+                    val rollY = if (dynamicRollingTexture) (((getTextureScrollOffsetY() % 128) + 128) % 128).toFloat() else 0f
                     withTransform({
                         translate(left = -rollX, top = -rollY)
                     }) {
@@ -1590,8 +1862,8 @@ fun ReaderScreen(
                         )
                 ) {
                     Canvas(modifier = Modifier.fillMaxSize()) {
-                        val rollX = if (dynamicRollingTexture) (((textureScrollOffsetX % 128) + 128) % 128).toFloat() else 0f
-                        val rollY = if (dynamicRollingTexture) (((textureScrollOffsetY % 128) + 128) % 128).toFloat() else 0f
+                        val rollX = if (dynamicRollingTexture) (((getTextureScrollOffsetX() % 128) + 128) % 128).toFloat() else 0f
+                        val rollY = if (dynamicRollingTexture) (((getTextureScrollOffsetY() % 128) + 128) % 128).toFloat() else 0f
                         withTransform({
                             translate(left = -rollX, top = -rollY)
                         }) {
@@ -1631,8 +1903,8 @@ fun ReaderScreen(
                     android.graphics.BitmapShader(tile, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
                 }
                 Canvas(modifier = Modifier.fillMaxSize()) {
-                    val rollX = if (dynamicRollingTexture) (((textureScrollOffsetX % 48) + 48) % 48).toFloat() else 0f
-                    val rollY = if (dynamicRollingTexture) (((textureScrollOffsetY % 48) + 48) % 48).toFloat() else 0f
+                    val rollX = if (dynamicRollingTexture) (((getTextureScrollOffsetX() % 48) + 48) % 48).toFloat() else 0f
+                    val rollY = if (dynamicRollingTexture) (((getTextureScrollOffsetY() % 48) + 48) % 48).toFloat() else 0f
                     withTransform({
                         translate(left = -rollX, top = -rollY)
                     }) {
@@ -1672,8 +1944,8 @@ fun ReaderScreen(
                     android.graphics.BitmapShader(tile, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
                 }
                 Canvas(modifier = Modifier.fillMaxSize()) {
-                    val rollX = if (dynamicRollingTexture) (((textureScrollOffsetX % 36) + 36) % 36).toFloat() else 0f
-                    val rollY = if (dynamicRollingTexture) (((textureScrollOffsetY % 36) + 36) % 36).toFloat() else 0f
+                    val rollX = if (dynamicRollingTexture) (((getTextureScrollOffsetX() % 36) + 36) % 36).toFloat() else 0f
+                    val rollY = if (dynamicRollingTexture) (((getTextureScrollOffsetY() % 36) + 36) % 36).toFloat() else 0f
                     withTransform({
                         translate(left = -rollX, top = -rollY)
                     }) {
@@ -1713,8 +1985,8 @@ fun ReaderScreen(
                         .background((if (isDark) Color(0xFF382A1C) else Color(0xFFB88C56)).copy(alpha = 0.10f))
                 ) {
                     Canvas(modifier = Modifier.fillMaxSize()) {
-                        val rollX = if (dynamicRollingTexture) (((textureScrollOffsetX % 128) + 128) % 128).toFloat() else 0f
-                        val rollY = if (dynamicRollingTexture) (((textureScrollOffsetY % 128) + 128) % 128).toFloat() else 0f
+                        val rollX = if (dynamicRollingTexture) (((getTextureScrollOffsetX() % 128) + 128) % 128).toFloat() else 0f
+                        val rollY = if (dynamicRollingTexture) (((getTextureScrollOffsetY() % 128) + 128) % 128).toFloat() else 0f
                         withTransform({
                             translate(left = -rollX, top = -rollY)
                         }) {
@@ -1743,7 +2015,7 @@ fun ReaderScreen(
                     android.graphics.BitmapShader(tile, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
                 }
                 Canvas(modifier = Modifier.fillMaxSize()) {
-                    val rollY = if (dynamicRollingTexture) (((textureScrollOffsetY % 72) + 72) % 72).toFloat() else 0f
+                    val rollY = if (dynamicRollingTexture) (((getTextureScrollOffsetY() % 72) + 72) % 72).toFloat() else 0f
                     withTransform({
                         translate(left = 0f, top = -rollY)
                     }) {
@@ -1771,7 +2043,7 @@ fun ReaderScreen(
                     android.graphics.BitmapShader(tile, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
                 }
                 Canvas(modifier = Modifier.fillMaxSize()) {
-                    val rollY = if (dynamicRollingTexture) (((textureScrollOffsetY % 112) + 112) % 112).toFloat() else 0f
+                    val rollY = if (dynamicRollingTexture) (((getTextureScrollOffsetY() % 112) + 112) % 112).toFloat() else 0f
                     withTransform({
                         translate(left = 0f, top = -rollY)
                     }) {
@@ -1799,8 +2071,8 @@ fun ReaderScreen(
                     android.graphics.BitmapShader(tile, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
                 }
                 Canvas(modifier = Modifier.fillMaxSize()) {
-                    val rollX = if (dynamicRollingTexture) (((textureScrollOffsetX % 64) + 64) % 64).toFloat() else 0f
-                    val rollY = if (dynamicRollingTexture) (((textureScrollOffsetY % 64) + 64) % 64).toFloat() else 0f
+                    val rollX = if (dynamicRollingTexture) (((getTextureScrollOffsetX() % 64) + 64) % 64).toFloat() else 0f
+                    val rollY = if (dynamicRollingTexture) (((getTextureScrollOffsetY() % 64) + 64) % 64).toFloat() else 0f
                     withTransform({
                         translate(left = -rollX, top = -rollY)
                     }) {
@@ -1821,7 +2093,10 @@ fun ReaderScreen(
                         try {
                             val f = java.io.File(activeTexture.imagePath)
                             if (f.exists()) {
-                                android.graphics.BitmapFactory.decodeFile(f.absolutePath)
+                                io.github.tasmirz.lumina.ui.components.bitmapCache.get(f.absolutePath)
+                                    ?: android.graphics.BitmapFactory.decodeFile(f.absolutePath)?.also {
+                                        io.github.tasmirz.lumina.ui.components.bitmapCache.put(f.absolutePath, it)
+                                    }
                             } else null
                         } catch (_: Exception) { null }
                     }
@@ -1833,8 +2108,8 @@ fun ReaderScreen(
                             Canvas(modifier = Modifier.fillMaxSize()) {
                                 val tileW = customBitmap.width.coerceAtLeast(1)
                                 val tileH = customBitmap.height.coerceAtLeast(1)
-                                val rollX = if (dynamicRollingTexture) (((textureScrollOffsetX % tileW) + tileW) % tileW).toFloat() else 0f
-                                val rollY = if (dynamicRollingTexture) (((textureScrollOffsetY % tileH) + tileH) % tileH).toFloat() else 0f
+                                val rollX = if (dynamicRollingTexture) (((getTextureScrollOffsetX() % tileW) + tileW) % tileW).toFloat() else 0f
+                                val rollY = if (dynamicRollingTexture) (((getTextureScrollOffsetY() % tileH) + tileH) % tileH).toFloat() else 0f
                                 withTransform({
                                     translate(left = -rollX, top = -rollY)
                                 }) {
@@ -1896,271 +2171,90 @@ fun ReaderScreen(
                                     anchorParaIdx = paraIdx
                                 }
 
-                                delay(500)
-                                onPositionChange(currentChap, 0, firstIndex, overallProgress)
                                 val finalTitle = book.chapters.getOrNull(currentChap)?.title ?: "Chapter 1"
-                                repository?.updateLastReadBookmark(
-                                    bookId = book.id,
-                                    chapterTitle = finalTitle,
-                                    pageNumber = 1,
-                                    paragraphSnippet = paraText.take(150).ifBlank { "Chapter ${currentChap + 1}, paragraph ${paraIdx + 1}" }
-                                )
+                                if (firstIndex <= lastVerifiedScrollPos + 4 || (lastVerifiedScrollPos == 0 && firstIndex == 0)) {
+                                    delay(4700)
+                                    lastVerifiedScrollPos = maxOf(lastVerifiedScrollPos, firstIndex)
+                                    onPositionChange(currentChap, 0, firstIndex, overallProgress)
+                                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                        repository?.updateLastReadBookmark(
+                                            bookId = book.id,
+                                            chapterTitle = finalTitle,
+                                            pageNumber = 1,
+                                            paragraphSnippet = paraText.take(150).ifBlank { "Chapter ${currentChap + 1}, paragraph ${paraIdx + 1}" }
+                                        )
+                                    }
+                                } else if (firstIndex <= lastVerifiedScrollPos) {
+                                    delay(1200)
+                                    val verifiedProg = ((lastVerifiedScrollPos.toFloat() / totalParas) * 100).toInt().coerceIn(0, 100)
+                                    onPositionChange(currentChap, 0, firstIndex, verifiedProg)
+                                }
                             }
                     }
 
                     val scrollHorizontalPaddingStart = if (isLandscape) landscapeSidePaddingStart else horizontalPadding.dp
                     val scrollHorizontalPaddingEnd = if (isLandscape) landscapeSidePaddingEnd else horizontalPadding.dp
 
-                    SelectionContainer(modifier = Modifier.fillMaxSize()) {
-                        LazyColumn(
-                            state = listState,
-                            contentPadding = PaddingValues(
-                                top = (76 + verticalPadding).dp,
-                                bottom = 100.dp + progressBottomInset + verticalPadding.dp,
-                                start = scrollHorizontalPaddingStart,
-                                end = scrollHorizontalPaddingEnd
-                            ),
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                        book.chapters.forEachIndexed { chapIdx, chapter ->
-                            val chapterBookmarks = bookmarksByChapter[chapter.title.trim().lowercase()] ?: emptyList()
-                            item(key = "chap-header-$chapIdx", contentType = "chap_header") {
-                                DisableSelection {
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(top = if (chapIdx == 0) 16.dp else 48.dp, bottom = 28.dp),
-                                        horizontalAlignment = Alignment.CenterHorizontally
-                                    ) {
-                                        if (chapIdx > 0) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .width(48.dp)
-                                                    .height(1.dp)
-                                                    .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                                            )
-                                            Spacer(modifier = Modifier.height(32.dp))
-                                        }
-                                        val eyebrowText = if (chapter.subtitle.isNotBlank() && chapter.subtitle.startsWith("Part", ignoreCase = true)) {
-                                            chapter.subtitle.uppercase()
-                                        } else {
-                                            book.title.uppercase()
-                                        }
-                                        Text(
-                                            text = eyebrowText,
-                                            fontFamily = FontFamily.SansSerif,
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Normal,
-                                            letterSpacing = 2.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                        Spacer(modifier = Modifier.height(6.dp))
-                                        Text(
-                                            text = chapter.title,
-                                            fontFamily = FontFamily.Serif,
-                                            fontSize = 26.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            textAlign = TextAlign.Center,
-                                            color = MaterialTheme.colorScheme.onBackground
-                                        )
-                                        if (chapter.subtitle.isNotBlank() && !chapter.subtitle.startsWith("Part", ignoreCase = true)) {
-                                            Spacer(modifier = Modifier.height(4.dp))
-                                            Text(
-                                                text = chapter.subtitle,
-                                                fontStyle = FontStyle.Italic,
-                                                fontSize = 14.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                    }
-                                }
-                            }
+                    val imeBottomInset = WindowInsets.ime.asPaddingValues().calculateBottomPadding()
+                    val effectiveImePadding = if (showInBookSearchDialog) imeBottomInset else 0.dp
 
-                            itemsIndexed(
-                                items = chapter.paragraphs,
-                                key = { pIdx, _ -> "chap-${chapIdx}-para-${pIdx}" },
-                                contentType = { _, _ -> "paragraph" }
-                            ) { pIdx, para ->
-                                val matchingBookmarks = remember(para, chapterBookmarks) {
-                                    if (chapterBookmarks.isEmpty()) {
-                                        emptyList()
-                                    } else {
-                                        chapterBookmarks.filter { b ->
-                                            val q = b.quote.trim()
-                                            q.isNotBlank() && para.contains(q, ignoreCase = true)
-                                        }
-                                    }
-                                }
-                                val isBeingSpoken = if (isTtsSpeaking) speakingChapterIdx == chapIdx && speakingParaIdx == pIdx else false
-
-                                if (para.startsWith("[IMG:") && para.endsWith("]")) {
-                                    // Inline illustration with safe image loading and placeholder
-                                    val imgPath = para.removePrefix("[IMG:").removeSuffix("]")
-                                    val bitmap = rememberBookImage(imgPath)
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(vertical = 22.dp)
-                                            .clickable(
-                                                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                                                indication = null
-                                            ) {
-                                                if (showSelectionMenu) showSelectionMenu = false else showControls = !showControls
-                                            },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        if (bitmap != null) {
-                                            Image(
-                                                bitmap = bitmap.asImageBitmap(),
-                                                contentDescription = "Illustration",
-                                                contentScale = ContentScale.Fit,
-                                                modifier = Modifier
-                                                    .fillMaxWidth(0.94f)
-                                                    .clip(RoundedCornerShape(8.dp))
-                                            )
-                                        } else {
-                                            Surface(
-                                                shape = RoundedCornerShape(8.dp),
-                                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-                                                modifier = Modifier
-                                                    .fillMaxWidth(0.92f)
-                                                    .height(160.dp)
-                                            ) {
-                                                Box(contentAlignment = Alignment.Center) {
-                                                    Text(
-                                                        text = "Illustration",
-                                                        fontFamily = FontFamily.SansSerif,
-                                                        fontSize = 12.sp,
-                                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    val isDropCap = chapIdx == 0 && pIdx == 0 && para.length > 40 && !para.startsWith("[IMG:")
-                                    val onBgColor = MaterialTheme.colorScheme.onBackground
-                                    val secColor = MaterialTheme.colorScheme.secondary
-                                    val activeSearchQ = if (inBookSearchQuery.length >= 2) inBookSearchQuery else ""
-                                    val isActiveMatch = inBookSearchResults.getOrNull(inBookCurrentMatchIndex)?.let {
-                                        it.chapterIndex == chapIdx && it.paragraphIndex == pIdx
-                                    } ?: false
-                                    val hasFormatting = matchingBookmarks.isNotEmpty() || isDropCap || activeSearchQ.isNotEmpty()
-
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .then(
-                                                if (isBeingSpoken) {
-                                                    Modifier
-                                                        .background(
-                                                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f),
-                                                            shape = RoundedCornerShape(6.dp)
-                                                        )
-                                                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                                                } else {
-                                                    Modifier.padding(bottom = (fontSize * 0.45f).dp)
-                                                }
-                                            )
-                                            .then(
-                                                if (isTtsSpeaking) {
-                                                    Modifier.clickable {
-                                                        speakingChapterIdx = chapIdx
-                                                        speakingParaIdx = pIdx
-                                                        showTtsDock = true
-                                                        val chapterObj = book.chapters.getOrNull(chapIdx)
-                                                        if (chapterObj != null) {
-                                                            LuminaAudioService.startOrUpdate(
-                                                                context = context,
-                                                                bookId = book.id,
-                                                                bookTitle = book.title,
-                                                                chapterIndex = chapIdx,
-                                                                chapterTitle = chapterObj.title,
-                                                                paragraphIndex = pIdx,
-                                                                paragraphs = chapterObj.paragraphs,
-                                                                isEdgeTts = ttsEngine == "EDGE_NEURAL",
-                                                                voice = ttsEdgeVoice,
-                                                                speed = ttsSpeed
-                                                            )
-                                                        }
-                                                    }
-                                                } else Modifier
-                                            )
-                                    ) {
-                                        if (hasFormatting) {
-                                            val annotatedText = remember(
-                                                para, matchingBookmarks, isDropCap, fontSize, fontFamily, onBgColor,
-                                                activeSearchQ, isActiveMatch
-                                            ) {
-                                                buildHighlightedAnnotatedString(
-                                                    text = para,
-                                                    matchingBookmarks = matchingBookmarks,
-                                                    onBookmarkClick = { bm ->
-                                                        selectedBookmarkForModal = bm
-                                                        showBookmarkDetailModal = true
-                                                    },
-                                                    isDropCap = isDropCap,
-                                                    dropCapFontFamily = FontFamily.Serif,
-                                                    dropCapFontSize = (fontSize * 2.2f).sp,
-                                                    dropCapColor = secColor,
-                                                    baseFontFamily = fontFamily,
-                                                    baseFontSize = fontSize.sp,
-                                                    baseTextColor = onBgColor,
-                                                    searchQuery = activeSearchQ,
-                                                    isActiveSearchMatch = isActiveMatch
-                                                )
-                                            }
-                                            Text(
-                                                text = annotatedText,
-                                                lineHeight = (fontSize * lineHeightMultiplier).sp,
-                                                letterSpacing = letterSpacing.sp,
-                                                textAlign = contentTextAlign,
-                                                modifier = Modifier.fillMaxWidth()
-                                            )
-                                        } else {
-                                            Text(
-                                                text = para,
-                                                fontFamily = fontFamily,
-                                                fontSize = fontSize.sp,
-                                                color = onBgColor,
-                                                lineHeight = (fontSize * lineHeightMultiplier).sp,
-                                                letterSpacing = letterSpacing.sp,
-                                                textAlign = contentTextAlign,
-                                                modifier = Modifier.fillMaxWidth()
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        item(key = "bottom-empty-space", contentType = "bottom_space") {
-                            DisableSelection {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(280.dp)
-                                        .pointerInput(gestureDoubleTap, gestureSingleTap) {
-                                            detectTapGestures(
-                                                onDoubleTap = {
-                                                    executeGestureAction(gestureDoubleTap)
-                                                },
-                                                onTap = {
-                                                    if (isAutoScrolling) {
-                                                        isAutoScrolling = false
-                                                    } else if (showSelectionMenu) {
-                                                        showSelectionMenu = false
-                                                        selectedText = ""
-                                                    } else {
-                                                        executeGestureAction(gestureSingleTap)
-                                                    }
-                                                }
-                                            )
-                                        }
+                    ScrollReaderView(
+                        listState = listState,
+                        book = book,
+                        readingMode = readingMode,
+                        fontSize = fontSize,
+                        fontFamily = fontFamily,
+                        lineHeightMultiplier = lineHeightMultiplier,
+                        letterSpacing = letterSpacing,
+                        contentTextAlign = contentTextAlign,
+                        verticalPadding = verticalPadding,
+                        progressBottomInset = progressBottomInset,
+                        effectiveImePadding = effectiveImePadding,
+                        scrollHorizontalPaddingStart = scrollHorizontalPaddingStart,
+                        scrollHorizontalPaddingEnd = scrollHorizontalPaddingEnd,
+                        bookmarksByChapter = bookmarksByChapter,
+                        speakingChapterIdx = speakingChapterIdx,
+                        speakingParaIdx = speakingParaIdx,
+                        isTtsSpeaking = isTtsSpeaking,
+                        inlineImageWidthFraction = inlineImageWidthFraction,
+                        inBookSearchQuery = inBookSearchQuery,
+                        inBookSearchResults = inBookSearchResults,
+                        inBookCurrentMatchIndex = inBookCurrentMatchIndex,
+                        gestureDoubleTap = gestureDoubleTap,
+                        gestureSingleTap = gestureSingleTap,
+                        onExecuteGesture = { executeGestureAction(it) },
+                        onToggleControls = {
+                            if (showSelectionMenu) showSelectionMenu = false else showControls = !showControls
+                        },
+                        onOpenLightbox = { bmp, path ->
+                            activeLightboxBitmap = bmp
+                            activeLightboxPath = path
+                        },
+                        onBookmarkClick = { bm ->
+                            selectedBookmarkForModal = bm
+                            showBookmarkDetailModal = true
+                        },
+                        onTtsPlayFromParagraph = { chapIdx, pIdx ->
+                            speakingChapterIdx = chapIdx
+                            speakingParaIdx = pIdx
+                            showTtsDock = true
+                            val chapterObj = book.chapters.getOrNull(chapIdx)
+                            if (chapterObj != null) {
+                                LuminaAudioService.startOrUpdate(
+                                    context = context,
+                                    bookId = book.id,
+                                    bookTitle = book.title,
+                                    chapterIndex = chapIdx,
+                                    chapterTitle = chapterObj.title,
+                                    paragraphIndex = pIdx,
+                                    paragraphs = chapterObj.paragraphs,
+                                    isEdgeTts = ttsEngine == "EDGE_NEURAL",
+                                    voice = ttsEdgeVoice,
+                                    speed = ttsSpeed
                                 )
                             }
                         }
-                    }
-                }
+                    )
             } else {
                 // ═════════════════════════════════════════════════════════════════════
                 // PAGED / PAGED_SCROLL MODE: Swipe horizontal pager
@@ -2186,7 +2280,10 @@ fun ReaderScreen(
                         Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
                     }
                 } else {
-                    LaunchedEffect(pagerState.currentPage) {
+                    LaunchedEffect(pagerState.currentPage, hasInitialPageRestored) {
+                        if (!hasInitialPageRestored && pages.isNotEmpty()) {
+                            return@LaunchedEffect
+                        }
                         try {
                             activeReleaseSelectionAction?.invoke()
                         } catch (_: Throwable) {}
@@ -2205,7 +2302,12 @@ fun ReaderScreen(
                             if (activeChapterTitle != currentPageChapTitle) {
                                 activeChapterTitle = currentPageChapTitle
                             }
-                            val chapIdx = book.chapters.indexOfFirst { it.title == currentPageChapTitle }.coerceAtLeast(0)
+                            val chapIdx = if (chapterStartPages.isNotEmpty()) {
+                                val found = chapterStartPages.indexOfLast { it <= currentPage }
+                                if (found >= 0) found else 0
+                            } else {
+                                book.chapters.indexOfFirst { it.title == currentPageChapTitle }.coerceAtLeast(0)
+                            }
                             if (speakingChapterIdx != chapIdx) {
                                 speakingChapterIdx = chapIdx
                             }
@@ -2235,403 +2337,111 @@ fun ReaderScreen(
                                 }
                             }
 
-                            delay(800)
-                            onPositionChange(chapIdx, currentPage, 0, progress)
-                            repository?.updateLastReadBookmark(
-                                bookId = book.id,
-                                chapterTitle = book.chapters.getOrNull(chapIdx)?.title ?: "Chapter ${chapIdx + 1}",
-                                pageNumber = currentPage + 1,
-                                paragraphSnippet = cleanSnippet.take(150).ifBlank { "Page ${currentPage + 1}" }
-                            )
+                            // DWELL GUARD & INCREASING ORDER CHECK:
+                            // Issue #COLLECT-20261011-174342:
+                            // Clicking the bar or random scrubbing jumps the viewport but does NOT count as read.
+                            // Advancing the reading amount / read-till requires sequential page progression
+                            // (e.g. 20 -> 21 -> 22) with at least 5s dwell time on each page.
+                            if (currentPage == lastVerifiedReadPage + 1 || (lastVerifiedReadPage == 0 && currentPage == 0)) {
+                                delay(5000L)
+                                lastVerifiedReadPage = currentPage
+                                repository?.setVerifiedPage(book.id, currentPage)
+                                onPositionChange(chapIdx, currentPage, 0, progress)
+                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    repository?.updateLastReadBookmark(
+                                        bookId = book.id,
+                                        chapterTitle = book.chapters.getOrNull(chapIdx)?.title ?: "Chapter ${chapIdx + 1}",
+                                        pageNumber = currentPage + 1,
+                                        paragraphSnippet = cleanSnippet.take(150).ifBlank { "Page ${currentPage + 1}" }
+                                    )
+                                }
+                            } else if (currentPage <= lastVerifiedReadPage) {
+                                delay(1200L)
+                                val verifiedProgress = if (pages.size > 1) {
+                                    ((lastVerifiedReadPage.toFloat() / (pages.size - 1)) * 100).toInt().coerceIn(0, 100)
+                                } else progress
+                                onPositionChange(chapIdx, currentPage, 0, verifiedProgress)
+                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    repository?.updateLastReadBookmark(
+                                        bookId = book.id,
+                                        chapterTitle = book.chapters.getOrNull(chapIdx)?.title ?: "Chapter ${chapIdx + 1}",
+                                        pageNumber = currentPage + 1,
+                                        paragraphSnippet = cleanSnippet.take(150).ifBlank { "Page ${currentPage + 1}" }
+                                    )
+                                }
+                            } else {
+                                // Random drop / jump (e.g. scrubbing to page 50 from 20):
+                                // DOES NOT count as read! Do not advance lastVerifiedReadPage or reading progress.
+                                // Preserves verified reading position and allows double-tap to return.
+                            }
                         }
                     }
 
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .pointerInput(gestureDoubleTap, gestureSingleTap) {
-                                detectTapGestures(
-                                    onDoubleTap = { executeGestureAction(gestureDoubleTap) },
-                                    onTap = { executeGestureAction(gestureSingleTap) }
-                                )
+                    PagedReaderView(
+                        pagerState = pagerState,
+                        pages = pages,
+                        book = book,
+                        readingMode = readingMode,
+                        isLandscape = isLandscape,
+                        fontSize = fontSize,
+                        fontFamily = fontFamily,
+                        lineHeightMultiplier = lineHeightMultiplier,
+                        letterSpacing = letterSpacing,
+                        contentTextAlign = contentTextAlign,
+                        pagedSwipeThreshold = pagedSwipeThreshold,
+                        horizontalPadding = horizontalPadding,
+                        verticalPadding = verticalPadding,
+                        statusBarTopInset = statusBarTopInset,
+                        progressBottomInset = progressBottomInset,
+                        effectiveStartPadding = effectiveStartPadding,
+                        effectiveEndPadding = effectiveEndPadding,
+                        isUiVisible = isUiVisible,
+                        isAutoScrolling = isAutoScrolling,
+                        verticallyCenterPages = verticallyCenterPages,
+                        adaptiveVerticalSpacing = adaptiveVerticalSpacing,
+                        goldenRatioChapterOpeners = goldenRatioChapterOpeners,
+                        bookmarksByChapter = bookmarksByChapter,
+                        showInBookSearchDialog = showInBookSearchDialog,
+                        inBookSearchQuery = inBookSearchQuery,
+                        inBookSearchResults = inBookSearchResults,
+                        inBookCurrentMatchIndex = inBookCurrentMatchIndex,
+                        currentImeOffsetPx = currentImeOffsetPx,
+                        showTtsDock = showTtsDock,
+                        isTtsSpeaking = isTtsSpeaking,
+                        inlineImageWidthFraction = inlineImageWidthFraction,
+                        gestureDoubleTap = gestureDoubleTap,
+                        gestureSingleTap = gestureSingleTap,
+                        onExecuteGesture = { executeGestureAction(it) },
+                        onToggleControls = { showControls = !showControls },
+                        onOpenLightbox = { bmp, path ->
+                            activeLightboxBitmap = bmp
+                            activeLightboxPath = path
+                        },
+                        onBookmarkClick = { bm ->
+                            selectedBookmarkForModal = bm
+                            showBookmarkDetailModal = true
+                        },
+                        onTtsPlayFromChapter = { pagedChapIdx ->
+                            speakingChapterIdx = pagedChapIdx
+                            speakingParaIdx = 0
+                            showTtsDock = true
+                            speakNextPara.value()
+                        },
+                        onPrevPage = {
+                            if (isAutoScrolling) {
+                                isAutoScrolling = false
+                            } else if (pagerState.currentPage > 0) {
+                                coroutineScope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
                             }
-                    ) {
-                        HorizontalPager(
-                            state = pagerState,
-                            key = { pageIdx -> "paged_page_$pageIdx" },
-                            beyondViewportPageCount = 1,
-                            flingBehavior = PagerDefaults.flingBehavior(
-                                state = pagerState,
-                                snapPositionalThreshold = pagedSwipeThreshold.coerceIn(0.05f, 0.60f)
-                            ),
-                            pageSpacing = (horizontalPadding * 1.5f).dp.coerceAtLeast(32.dp),
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(
-                                    top = if (isLandscape) {
-                                        statusBarTopInset + 36.dp + (verticalPadding * 0.25f).dp
-                                    } else {
-                                        if (readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL) statusBarTopInset + 66.dp + (verticalPadding * 0.5f).dp
-                                        else if (isUiVisible) statusBarTopInset + 66.dp + (verticalPadding * 0.5f).dp
-                                        else (verticalPadding * 0.5f).dp
-                                    },
-                                    bottom = if (isLandscape) {
-                                        progressBottomInset + 36.dp + (verticalPadding * 0.25f).dp
-                                    } else {
-                                        if (readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL) progressBottomInset + 52.dp + (verticalPadding * 0.35f).dp
-                                        else if (isUiVisible) progressBottomInset + 50.dp + (verticalPadding * 0.35f).dp
-                                        else progressBottomInset + 18.dp + (verticalPadding * 0.35f).dp
-                                    },
-                                    start = effectiveStartPadding,
-                                    end = effectiveEndPadding
-                                )
-                        ) { pageIdx ->
-                            val (chapTitle, content) = pages[pageIdx]
-                            val isChapterHeaderPage = content.startsWith("CHAPTER_START:::") || content.startsWith("TITLE:::")
-                            val (cTitle, cSub, bodyText) = if (isChapterHeaderPage) {
-                                val prefix = if (content.startsWith("CHAPTER_START:::")) "CHAPTER_START:::" else "TITLE:::"
-                                val rawParts = content.removePrefix(prefix).split(":::")
-                                Triple(
-                                    rawParts.getOrNull(0)?.ifBlank { chapTitle } ?: chapTitle,
-                                    rawParts.getOrNull(1) ?: "",
-                                    rawParts.getOrNull(2) ?: ""
-                                )
-                            } else {
-                                Triple("", "", "")
-                            }
-
-                            if (isChapterHeaderPage && bodyText.isBlank()) {
-                                // Title-only page (e.g. part divider or section header without text)
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .pointerInput(gestureDoubleTap, gestureSingleTap) {
-                                            detectTapGestures(
-                                                onDoubleTap = { executeGestureAction(gestureDoubleTap) },
-                                                onTap = { showControls = !showControls }
-                                            )
-                                        },
-                                    verticalArrangement = Arrangement.Center,
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    val eyebrowText = if (cSub.isNotBlank() && cSub.startsWith("Part", ignoreCase = true)) {
-                                        cSub.uppercase()
-                                    } else {
-                                        book.title.uppercase()
-                                    }
-                                    Text(
-                                        text = eyebrowText,
-                                        fontFamily = FontFamily.SansSerif,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Normal,
-                                        letterSpacing = 2.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text(
-                                        text = cTitle,
-                                        fontFamily = FontFamily.Serif,
-                                        fontSize = 26.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        textAlign = TextAlign.Center,
-                                        color = MaterialTheme.colorScheme.onBackground
-                                    )
-                                    if (cSub.isNotBlank() && !cSub.startsWith("Part", ignoreCase = true)) {
-                                        Spacer(modifier = Modifier.height(6.dp))
-                                        Text(
-                                            text = cSub,
-                                            fontStyle = FontStyle.Italic,
-                                            fontSize = 14.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-                            } else if (content.startsWith("[IMG:") && content.endsWith("]")) {
-                                val imgPath = content.removePrefix("[IMG:").removeSuffix("]")
-                                val bitmap = rememberBookImage(imgPath)
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .pointerInput(gestureDoubleTap, gestureSingleTap) {
-                                            detectTapGestures(
-                                                onDoubleTap = { executeGestureAction(gestureDoubleTap) },
-                                                onTap = { showControls = !showControls }
-                                            )
-                                        },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    if (bitmap != null) {
-                                        Image(
-                                            bitmap = bitmap.asImageBitmap(),
-                                            contentDescription = "Illustration",
-                                            contentScale = ContentScale.Fit,
-                                            modifier = Modifier
-                                                .fillMaxWidth(0.94f)
-                                                .clip(RoundedCornerShape(8.dp))
-                                        )
-                                    } else {
-                                        Surface(
-                                            shape = RoundedCornerShape(8.dp),
-                                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-                                            modifier = Modifier
-                                                .fillMaxWidth(0.92f)
-                                                .height(200.dp)
-                                        ) {
-                                            Box(contentAlignment = Alignment.Center) {
-                                                Text(
-                                                    text = "Illustration",
-                                                    fontFamily = FontFamily.SansSerif,
-                                                    fontSize = 12.sp,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            } else {
-                                val pageText = if (isChapterHeaderPage) bodyText else content
-                                val chapterBookmarks = remember(bookmarksByChapter, chapTitle) {
-                                    bookmarksByChapter[chapTitle.trim().lowercase()] ?: emptyList()
-                                }
-                                val matchingBookmarks = remember(pageText, chapterBookmarks) {
-                                    if (chapterBookmarks.isEmpty()) emptyList()
-                                    else chapterBookmarks.filter { b ->
-                                        val q = b.quote.trim()
-                                        q.isNotBlank() && pageText.contains(q, ignoreCase = true)
-                                    }
-                                }
-                                val onBgColor = MaterialTheme.colorScheme.onBackground
-                                val isDropCap = isChapterHeaderPage
-                                val currentMatch = inBookSearchResults.getOrNull(inBookCurrentMatchIndex)
-                                val isActiveMatch = showInBookSearchDialog && inBookSearchQuery.isNotBlank() &&
-                                    currentMatch != null && currentMatch.chapterTitle.equals(chapTitle, ignoreCase = true) &&
-                                    (pageText.contains(currentMatch.snippet.replace("...", "").trim().take(15), ignoreCase = true) ||
-                                     (inBookSearchQuery.isNotBlank() && pageText.contains(inBookSearchQuery.trim(), ignoreCase = true)))
-                                val activeSearchQ = if (showInBookSearchDialog) inBookSearchQuery.trim() else ""
-
-                                val annotatedContent = remember(pageText, matchingBookmarks, fontSize, fontFamily, onBgColor, isDropCap, activeSearchQ, isActiveMatch) {
-                                    buildHighlightedAnnotatedString(
-                                        text = pageText,
-                                        matchingBookmarks = matchingBookmarks,
-                                        onBookmarkClick = { bm ->
-                                            selectedBookmarkForModal = bm
-                                            showBookmarkDetailModal = true
-                                        },
-                                        isDropCap = isDropCap,
-                                        baseFontFamily = fontFamily,
-                                        baseFontSize = fontSize.sp,
-                                        baseTextColor = onBgColor,
-                                        searchQuery = activeSearchQ,
-                                        isActiveSearchMatch = isActiveMatch
-                                    )
-                                }
-
-                                var pagedTextLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
-                                val pagedScrollModifier = if (readingMode == ReadingMode.PAGED_SCROLL) {
-                                    Modifier.verticalScroll(rememberScrollState())
-                                } else {
-                                    Modifier
-                                }
-
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .clipToBounds()
-                                        .then(pagedScrollModifier)
-                                        .padding(horizontal = 4.dp, vertical = 2.dp)
-                                        .pointerInput(gestureDoubleTap, gestureSingleTap) {
-                                            detectTapGestures(
-                                                onDoubleTap = { executeGestureAction(gestureDoubleTap) },
-                                                onTap = {
-                                                    if (isAutoScrolling) {
-                                                        isAutoScrolling = false
-                                                    } else if (showSelectionMenu) {
-                                                        showSelectionMenu = false
-                                                        selectedText = ""
-                                                    } else {
-                                                        executeGestureAction(gestureSingleTap)
-                                                    }
-                                                }
-                                            )
-                                        }
-                                        .then(
-                                            if (showTtsDock || isTtsSpeaking) {
-                                                val pagedChapIdx = book.chapters.indexOfFirst { it.title == chapTitle }.coerceAtLeast(0)
-                                                Modifier.clickable {
-                                                    speakingChapterIdx = pagedChapIdx
-                                                    speakingParaIdx = 0
-                                                    showTtsDock = true
-                                                    speakNextPara.value()
-                                                }
-                                            } else Modifier
-                                        )
-                                ) {
-                                    if (verticallyCenterPages && readingMode == ReadingMode.PAGED) {
-                                        Spacer(
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .fillMaxWidth()
-                                                .pointerInput(gestureDoubleTap, gestureSingleTap) {
-                                                    detectTapGestures(
-                                                        onDoubleTap = { executeGestureAction(gestureDoubleTap) },
-                                                        onTap = {
-                                                            if (isAutoScrolling) {
-                                                                isAutoScrolling = false
-                                                            } else if (showSelectionMenu) {
-                                                                showSelectionMenu = false
-                                                                selectedText = ""
-                                                            } else {
-                                                                executeGestureAction(gestureSingleTap)
-                                                            }
-                                                        }
-                                                    )
-                                                }
-                                        )
-                                    }
-
-                                    if (isChapterHeaderPage) {
-                                        Column(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(top = 8.dp, bottom = 18.dp),
-                                            horizontalAlignment = Alignment.CenterHorizontally
-                                        ) {
-                                            val eyebrowText = if (cSub.isNotBlank() && cSub.startsWith("Part", ignoreCase = true)) {
-                                                cSub.uppercase()
-                                            } else {
-                                                book.title.uppercase()
-                                            }
-                                            Text(
-                                                text = eyebrowText,
-                                                fontFamily = FontFamily.SansSerif,
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Normal,
-                                                letterSpacing = 2.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                            Spacer(modifier = Modifier.height(6.dp))
-                                            Text(
-                                                text = cTitle,
-                                                fontFamily = FontFamily.Serif,
-                                                fontSize = 24.sp,
-                                                fontWeight = FontWeight.Medium,
-                                                textAlign = TextAlign.Center,
-                                                color = MaterialTheme.colorScheme.onBackground
-                                            )
-                                            if (cSub.isNotBlank() && !cSub.startsWith("Part", ignoreCase = true)) {
-                                                Spacer(modifier = Modifier.height(4.dp))
-                                                Text(
-                                                    text = cSub,
-                                                    fontStyle = FontStyle.Italic,
-                                                    fontSize = 13.sp,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
-                                            }
-                                        }
-                                    }
-
-                                    SelectionContainer(
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Text(
-                                            text = annotatedContent,
-                                            onTextLayout = { layoutResult ->
-                                                pagedTextLayoutResult = layoutResult
-                                                if (pageIdx == pagerState.currentPage) {
-                                                    activePagedTextLayoutResult = layoutResult
-                                                }
-                                            },
-                                            fontFamily = fontFamily,
-                                            fontSize = fontSize.sp,
-                                            lineHeight = (fontSize * lineHeightMultiplier).sp,
-                                            letterSpacing = letterSpacing.sp,
-                                            textAlign = contentTextAlign,
-                                            color = MaterialTheme.colorScheme.onBackground,
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .onGloballyPositioned { coords ->
-                                                    if (pageIdx == pagerState.currentPage) {
-                                                        activeTextBoundsInRoot = coords.boundsInRoot()
-                                                    }
-                                                }
-                                        )
-                                    }
-                                    val tapSpacerModifier = if (readingMode == ReadingMode.PAGED_SCROLL) {
-                                        Modifier
-                                            .fillMaxWidth()
-                                            .heightIn(min = 40.dp)
-                                    } else {
-                                        Modifier
-                                            .weight(1f)
-                                            .fillMaxWidth()
-                                    }
-                                    Spacer(
-                                        modifier = tapSpacerModifier
-                                            .pointerInput(gestureDoubleTap, gestureSingleTap) {
-                                                detectTapGestures(
-                                                    onDoubleTap = { executeGestureAction(gestureDoubleTap) },
-                                                    onTap = {
-                                                        if (isAutoScrolling) {
-                                                            isAutoScrolling = false
-                                                        } else if (showSelectionMenu) {
-                                                            showSelectionMenu = false
-                                                            selectedText = ""
-                                                        } else {
-                                                            executeGestureAction(gestureSingleTap)
-                                                        }
-                                                    }
-                                                )
-                                            }
-                                    )
-                                    if (readingMode == ReadingMode.PAGED_SCROLL) {
-                                        Spacer(modifier = Modifier.height(24.dp))
-                                    }
-                                }
+                        },
+                        onNextPage = {
+                            if (isAutoScrolling) {
+                                isAutoScrolling = false
+                            } else if (pagerState.currentPage < pages.size - 1) {
+                                coroutineScope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
                             }
                         }
-
-                        // Page Navigation Tap Zones
-                        Box(
-                            modifier = Modifier
-                                .fillMaxHeight()
-                                .width(60.dp)
-                                .align(Alignment.CenterStart)
-                                .pointerInput(isAutoScrolling, gestureDoubleTap) {
-                                    detectTapGestures(
-                                        onDoubleTap = {
-                                            executeGestureAction(gestureDoubleTap)
-                                        },
-                                        onTap = {
-                                            if (isAutoScrolling) {
-                                                isAutoScrolling = false
-                                            } else if (pagerState.currentPage > 0) {
-                                                coroutineScope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
-                                            }
-                                        }
-                                    )
-                                }
-                        )
-                        Box(
-                            modifier = Modifier
-                                .fillMaxHeight()
-                                .width(60.dp)
-                                .align(Alignment.CenterEnd)
-                                .pointerInput(isAutoScrolling, gestureDoubleTap) {
-                                    detectTapGestures(
-                                        onDoubleTap = {
-                                            executeGestureAction(gestureDoubleTap)
-                                        },
-                                        onTap = {
-                                            if (isAutoScrolling) {
-                                                isAutoScrolling = false
-                                            } else if (pagerState.currentPage < pages.size - 1) {
-                                                coroutineScope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
-                                            }
-                                        }
-                                    )
-                                }
-                        )
-                    }
+                    )
                 }
             }
 
@@ -2674,15 +2484,138 @@ fun ReaderScreen(
             progressBottomInset = progressBottomInset,
             showNavBarInReader = showNavBarInReader,
             currentProgressPct = currentProgressPct,
-            currentReadTillPct = readTillMapState?.value?.get(book.id) ?: currentProgressPct,
+            currentReadTillPct = maxOf(
+                if (pages.size > 1) ((lastVerifiedReadPage.toFloat() / (pages.size - 1)) * 100).toInt().coerceIn(0, 100) else 0,
+                readTillMapState?.value?.get(book.id) ?: currentProgressPct
+            ),
             readTimeLeft = book.readTimeLeft,
             activeChapterTitle = activeChapterTitle,
             onToggleNavBar = onToggleNavBar,
+            onJumpToLastRead = {
+                coroutineScope.launch {
+                    if (readingMode == ReadingMode.SCROLL) {
+                        val targetScroll = lastVerifiedScrollPos.coerceIn(0, maxOf(0, totalScrollItems - 1))
+                        if (kotlin.math.abs(listState.firstVisibleItemIndex - targetScroll) > 4) {
+                            listState.scrollToItem(targetScroll)
+                        } else {
+                            listState.animateScrollToItem(targetScroll)
+                        }
+                    } else {
+                        val targetPage = lastVerifiedReadPage.coerceIn(0, maxOf(0, pages.size - 1))
+                        if (kotlin.math.abs(pagerState.currentPage - targetPage) > 3) {
+                            pagerState.scrollToPage(targetPage)
+                        } else {
+                            pagerState.animateScrollToPage(targetPage)
+                        }
+                    }
+                }
+            },
+            onSeekToProgress = { targetPct ->
+                val clamped = targetPct.coerceIn(0, 100)
+                currentProgressPct = clamped
+                coroutineScope.launch {
+                    if (readingMode == ReadingMode.SCROLL) {
+                        val targetScroll = ((clamped.toFloat() / 100f) * totalParas).toInt().coerceIn(0, maxOf(0, totalScrollItems - 1))
+                        if (kotlin.math.abs(listState.firstVisibleItemIndex - targetScroll) > 4) {
+                            listState.scrollToItem(targetScroll)
+                        } else {
+                            listState.animateScrollToItem(targetScroll)
+                        }
+                    } else {
+                        if (pages.isNotEmpty()) {
+                            val targetPage = ((clamped.toFloat() / 100f) * (pages.size - 1)).roundToInt().coerceIn(0, pages.size - 1)
+                            if (kotlin.math.abs(pagerState.currentPage - targetPage) > 3) {
+                                pagerState.scrollToPage(targetPage)
+                            } else {
+                                pagerState.animateScrollToPage(targetPage)
+                            }
+                        }
+                    }
+                }
+            },
+            onJumpToPreviousLocation = {
+                val currentChapIdx = speakingChapterIdx.coerceIn(0, (book.chapters.size - 1).coerceAtLeast(0))
+                val currentPageIdx = if (readingMode != ReadingMode.SCROLL) pagerState.currentPage else 0
+                val currentScrollPos = if (readingMode == ReadingMode.SCROLL) listState.firstVisibleItemIndex else 0
+
+                val prevJump = previousJumpLocation
+                if (prevJump != null) {
+                    // Return back to where we jumped from
+                    previousJumpLocation = null
+                    val (returnChap, returnPage, returnScroll) = prevJump
+                    speakingChapterIdx = returnChap
+                    coroutineScope.launch {
+                        if (readingMode == ReadingMode.SCROLL) {
+                            if (kotlin.math.abs(listState.firstVisibleItemIndex - returnScroll) > 4) {
+                                listState.scrollToItem(returnScroll)
+                            } else {
+                                listState.animateScrollToItem(returnScroll)
+                            }
+                        } else {
+                            if (kotlin.math.abs(pagerState.currentPage - returnPage) > 3) {
+                                pagerState.scrollToPage(returnPage.coerceIn(0, maxOf(0, pages.size - 1)))
+                            } else {
+                                pagerState.animateScrollToPage(returnPage.coerceIn(0, maxOf(0, pages.size - 1)))
+                            }
+                        }
+                    }
+                    Toast.makeText(context, "Returned to previous location", Toast.LENGTH_SHORT).show()
+                } else {
+                    // Find saved / last read position or read-till percent
+                    val savedChap = book.currentChapter.coerceIn(0, (book.chapters.size - 1).coerceAtLeast(0))
+                    val savedPage = book.currentPage.coerceIn(0, maxOf(0, pages.size - 1))
+                    val savedScroll = book.scrollPos.coerceIn(0, maxOf(0, totalScrollItems - 1))
+
+                    val isAlreadyAtSaved = if (readingMode == ReadingMode.SCROLL) {
+                        kotlin.math.abs(listState.firstVisibleItemIndex - savedScroll) <= 1
+                    } else {
+                        pagerState.currentPage == savedPage
+                    }
+
+                    if (isAlreadyAtSaved) {
+                        // If already at saved position, check if read-till percentage is further ahead
+                        val readTillPct = readTillMapState?.value?.get(book.id) ?: book.progress
+                        if (readTillPct > currentProgressPct && pages.isNotEmpty()) {
+                            val targetPage = ((readTillPct.toFloat() / 100f) * (pages.size - 1)).roundToInt().coerceIn(0, pages.size - 1)
+                            previousJumpLocation = Triple(currentChapIdx, currentPageIdx, currentScrollPos)
+                            coroutineScope.launch {
+                                pagerState.animateScrollToPage(targetPage.coerceIn(0, maxOf(0, pagerState.pageCount - 1)))
+                            }
+                            Toast.makeText(context, "Jumped to max read: ${readTillPct}%", Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(context, "Already at saved position (${currentProgressPct}%)", Toast.LENGTH_SHORT).show()
+                        }
+                    } else {
+                        // Record current position so user can return on subsequent tap
+                        previousJumpLocation = Triple(currentChapIdx, currentPageIdx, currentScrollPos)
+                        speakingChapterIdx = savedChap
+                        coroutineScope.launch {
+                            if (readingMode == ReadingMode.SCROLL) {
+                                if (kotlin.math.abs(listState.firstVisibleItemIndex - savedScroll) > 4) {
+                                    listState.scrollToItem(savedScroll)
+                                } else {
+                                    listState.animateScrollToItem(savedScroll)
+                                }
+                            } else {
+                                if (kotlin.math.abs(pagerState.currentPage - savedPage) > 3) {
+                                    pagerState.scrollToPage(savedPage)
+                                } else {
+                                    pagerState.animateScrollToPage(savedPage)
+                                }
+                            }
+                        }
+                        Toast.makeText(context, "Jumped to saved position (${book.progress}%)", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            },
             onForceSavePosition = {
                 val currentChapIdx = speakingChapterIdx.coerceIn(0, (book.chapters.size - 1).coerceAtLeast(0))
                 val currentPageIdx = if (readingMode != ReadingMode.SCROLL) pagerState.currentPage else 0
                 val currentScrollPos = if (readingMode == ReadingMode.SCROLL) listState.firstVisibleItemIndex else 0
 
+                lastVerifiedReadPage = currentPageIdx
+                lastVerifiedScrollPos = currentScrollPos
+                repository?.setVerifiedPage(book.id, currentPageIdx)
                 repository?.forceSetLastReadPosition(
                     book.id,
                     currentChapIdx,
@@ -2713,6 +2646,7 @@ fun ReaderScreen(
                 onBackToLibrary()
             },
             onOpenToc = { showTocSheet = true },
+            onOpenSearch = { showInBookSearchDialog = true },
             onOpenBookmarks = onOpenBookmarks,
             onOpenReadingSettings = onOpenAppearance,
             modifier = Modifier.align(Alignment.BottomCenter)
@@ -2892,7 +2826,7 @@ fun ReaderScreen(
             paragraphText = selectedParagraphText,
             selectedChapterTitle = selectedChapterTitle,
             activeChapterTitle = activeChapterTitle,
-            activePage = if (readingMode != ReadingMode.SCROLL) pagerState.currentPage + 1 else book.currentPage + 1,
+            activePage = if (showSelectionMenu) (if (readingMode != ReadingMode.SCROLL) pagerState.currentPage + 1 else book.currentPage + 1) else (book.currentPage + 1),
             author = book.author,
             bookTitle = book.title,
             activeBookmark = activeBookmark,
@@ -2937,7 +2871,12 @@ fun ReaderScreen(
             TableOfContentsSheet(
                 chapters = book.chapters,
                 bookTitle = book.title,
-                currentChapterIndex = book.chapters.indexOfFirst { it.title == activeChapterTitle }.coerceAtLeast(0),
+                currentChapterIndex = if (readingMode != ReadingMode.SCROLL && chapterStartPages.isNotEmpty()) {
+                    val found = chapterStartPages.indexOfLast { it <= pagerState.currentPage }
+                    if (found >= 0) found else 0
+                } else {
+                    book.chapters.indexOfFirst { it.title == activeChapterTitle }.coerceAtLeast(0)
+                },
                 onSelectChapter = { idx ->
                     stopAllAudio()
                     activeChapterTitle = book.chapters.getOrNull(idx)?.title ?: "Chapter ${idx + 1}"
@@ -2956,7 +2895,11 @@ fun ReaderScreen(
                             }
                         }
                     } else {
-                        val targetPage = pages.indexOfFirst { it.first == activeChapterTitle }.coerceAtLeast(0)
+                        val targetPage = if (chapterStartPages.isNotEmpty() && idx in chapterStartPages.indices) {
+                            chapterStartPages[idx]
+                        } else {
+                            pages.indexOfFirst { it.first == activeChapterTitle }.coerceAtLeast(0)
+                        }
                         coroutineScope.launch {
                             if (kotlin.math.abs(pagerState.currentPage - targetPage) > 3) {
                                 pagerState.scrollToPage(targetPage)
@@ -3028,6 +2971,8 @@ fun ReaderScreen(
         }
 
         val jumpToMatch: (SceneMatch) -> Unit = { match ->
+            keyboardController?.hide()
+            focusManager.clearFocus()
             val cIdx = if (match.chapterIndex in book.chapters.indices) {
                 match.chapterIndex
             } else {
@@ -3044,17 +2989,25 @@ fun ReaderScreen(
                     }
                     itemIdx += (match.paragraphIndex + 1)
                     coroutineScope.launch {
-                        val focusOffsetPx = (screenHeightPx * 0.22f).roundToInt().coerceIn(120, 450)
+                        val imeOffsetPx = currentImeOffsetPx
+                        val visibleHeight = if (showInBookSearchDialog && imeOffsetPx > 0f) {
+                            (screenHeightPx - imeOffsetPx).coerceAtLeast(300f)
+                        } else {
+                            screenHeightPx.toFloat()
+                        }
+                        val focusOffsetPx = (visibleHeight * 0.18f).roundToInt().coerceIn(100, 360)
                         listState.animateScrollToItem(itemIdx.coerceAtLeast(0), scrollOffset = -focusOffsetPx)
                     }
                 } else {
-                    val cleanSnippet = match.snippet.replace("...", "").trim().take(15)
-                    val pageIdx = pages.indexOfFirst {
-                        it.first.equals(match.chapterTitle, ignoreCase = true) &&
-                        it.second.contains(cleanSnippet, ignoreCase = true)
-                    }.let { if (it != -1) it else pages.indexOfFirst { p -> p.first.equals(match.chapterTitle, ignoreCase = true) } }
+                    val pageIdx = findPageForLocation(
+                        pages = pages,
+                        chapterIdx = match.chapterIndex,
+                        chapters = book.chapters,
+                        paraIdx = match.paragraphIndex,
+                        topSnippet = match.snippet
+                    )
 
-                    if (pageIdx != -1) {
+                    if (pageIdx in pages.indices) {
                         coroutineScope.launch { pagerState.animateScrollToPage(pageIdx) }
                     }
                 }
@@ -3066,8 +3019,19 @@ fun ReaderScreen(
             showDialog = showInBookSearchDialog,
             book = book,
             repository = repository,
-            onDismiss = { showInBookSearchDialog = false },
+            onDismiss = {
+                showInBookSearchDialog = false
+                inBookSearchQuery = ""
+                inBookSearchResults = emptyList()
+                inBookCurrentMatchIndex = 0
+            },
             onJumpToMatch = jumpToMatch,
+            searchQuery = inBookSearchQuery,
+            onSearchQueryChange = { inBookSearchQuery = it },
+            onSearchResultsUpdate = { results, idx ->
+                inBookSearchResults = results
+                inBookCurrentMatchIndex = idx
+            },
             modifier = Modifier.align(Alignment.TopCenter)
         )
 
@@ -3099,12 +3063,24 @@ fun ReaderScreen(
                     Text(
                         text = transientFontBadge ?: "",
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
+                        fontWeight = FontWeight.Normal,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                 }
             }
         }
-    }
+
+        if (activeLightboxBitmap != null) {
+            LightboxDialog(
+                previewBitmap = activeLightboxBitmap,
+                imagePath = activeLightboxPath,
+                onDismiss = {
+                    activeLightboxBitmap = null
+                    activeLightboxPath = null
+                }
+            )
+        }
 }
 }
+}
+

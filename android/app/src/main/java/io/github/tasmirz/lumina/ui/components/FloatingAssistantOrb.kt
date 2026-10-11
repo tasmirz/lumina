@@ -794,7 +794,7 @@ fun FloatingAssistantOrb(
                             Text(
                                 text = "Lumina Companion",
                                 fontFamily = FontFamily.SansSerif,
-                                fontWeight = FontWeight.SemiBold,
+                                fontWeight = FontWeight.Normal,
                                 fontSize = 15.sp,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
@@ -839,7 +839,7 @@ fun FloatingAssistantOrb(
                                 AssistantVoiceState.IDLE -> ""
                             },
                             fontFamily = FontFamily.SansSerif,
-                            fontWeight = FontWeight.Medium,
+                            fontWeight = FontWeight.Normal,
                             fontSize = 15.sp,
                             color = MaterialTheme.colorScheme.onSurface
                         )

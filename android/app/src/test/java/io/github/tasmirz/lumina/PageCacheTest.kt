@@ -442,7 +442,7 @@ class PageCacheTest {
             screenWidthDp = 392,
             screenHeightDp = 828
         )
-        assertTrue("Tall phone max lines in range 25..30, got: ${tallMetrics.maxLines}", tallMetrics.maxLines in 25..30)
+        assertTrue("Tall phone max lines in range 24..30, got: ${tallMetrics.maxLines}", tallMetrics.maxLines in 24..30)
         assertTrue("Tall phone chars per line in range 46..54", tallMetrics.charsPerLine in 46..54)
 
         // Large 10-inch Tablet (800x1280 dp)
@@ -705,7 +705,6 @@ class PageCacheTest {
                 paraIdx = 7,
                 topSnippet = touchedSnippet
             )
-
             assertTrue("Found page index must be within range for fontSize $fontSize", foundPage in pages.indices)
             val pageText = pages[foundPage].second
             val cleanedPage = cleanAlpha(pageText)
@@ -716,5 +715,212 @@ class PageCacheTest {
             )
         }
     }
+
+    @Test
+    fun testTableInlinedOnSamePageWhenFittingBudget() {
+        val intro = "From where Winston stood it was just possible to read, picked out on its white face in elegant lettering, the three slogans of the Party:"
+        val table = "[TABLE:{\"headers\":[],\"rows\":[[\"WAR IS PEACE\"],[\"FREEDOM IS SLAVERY\"],[\"IGNORANCE IS STRENGTH\"]]}]"
+        val following = "The Ministry of Truth — Minitrue, in Newspeak — was startlingly different from any other object in sight."
+
+        val chapter = Chapter("Chapter 1", "", "5 min", listOf(intro, table, following))
+        val pages = PageCache.getOrCompute(
+            bookId = "test_1984_slogans_table",
+            chapters = listOf(chapter),
+            fontSize = 16,
+            isStrictPaged = true
+        )
+
+        assertTrue("Should have at least 1 page", pages.isNotEmpty())
+        val firstPageContent = pages[0].second
+
+        // The introductory text and table MUST be on the same page, NOT severed onto an isolated table page
+        assertTrue("First page must contain intro text", firstPageContent.contains("the three slogans of the Party"))
+        assertTrue("First page must contain inlined table", firstPageContent.contains("[TABLE:"))
+    }
+
+    @Test
+    fun testCalculateDeviceMetricsSafetyBufferPreventsChoppedBottomLines() {
+        val metricsPortrait = PageCache.calculateDeviceMetrics(
+            fontSize = 18,
+            isLandscape = false,
+            screenWidthDp = 360,
+            screenHeightDp = 720
+        )
+        // Ensure max lines is comfortably bounded and safe
+        assertTrue("Max lines must be positive and safe", metricsPortrait.maxLines in 10..22)
+
+        val tableToken = "[TABLE:{\"headers\":[],\"rows\":[[\"WAR IS PEACE\"],[\"FREEDOM IS SLAVERY\"],[\"IGNORANCE IS STRENGTH\"]]}]"
+        val estimatedLines = PageCache.estimateTableLines(tableToken)
+        assertTrue("3-row table should estimate around 6 lines, actual: $estimatedLines", estimatedLines in 5.5f..7.5f)
+    }
+
+    @Test
+    fun testDuplicateChapterTitlesDisambiguationInFindPageForLocation() {
+        val part1Chap1 = Chapter("Chapter 1", "Part One", "5 min", listOf("It was a bright cold day in April, and the clocks were striking thirteen."))
+        val part1Chap2 = Chapter("Chapter 2", "Part One", "5 min", listOf("As he put his hand to the door-knob Winston saw that he had left the diary open on the table."))
+        val part2Chap1 = Chapter("Chapter 1", "Part Two", "5 min", listOf("It was the middle of the morning, and Winston had left his cubicle to go to the lavatory."))
+
+        val chapters = listOf(part1Chap1, part1Chap2, part2Chap1)
+        val pages = PageCache.getOrCompute(
+            bookId = "test_1984_multipart",
+            chapters = chapters,
+            fontSize = 16,
+            isStrictPaged = true
+        )
+
+        // Chapter 1 (Part Two) is index 2 in chapters
+        val foundPagePart2 = findPageForLocation(
+            pages = pages,
+            chapterIdx = 2,
+            chapters = chapters,
+            paraIdx = 0,
+            topSnippet = "It was the middle of the morning"
+        )
+
+        val foundPagePart1 = findPageForLocation(
+            pages = pages,
+            chapterIdx = 0,
+            chapters = chapters,
+            paraIdx = 0,
+            topSnippet = "It was a bright cold day in April"
+        )
+
+        assertTrue("Part Two Chapter 1 must be strictly after Part One Chapter 1", foundPagePart2 > foundPagePart1)
+        assertTrue("Part Two page must contain Part Two text", pages[foundPagePart2].second.contains("It was the middle of the morning"))
+        assertTrue("Part One page must contain Part One text", pages[foundPagePart1].second.contains("bright cold day in April"))
+    }
+
+    @Test
+    fun testChapterStartMarkerPerChapterPreservesExactOrder() {
+        val chaps = (1..5).map { i ->
+            Chapter("Chapter $i", "Subtitle $i", "5 min", listOf("Paragraph in chapter $i"))
+        }
+        val pages = PageCache.getOrCompute(
+            bookId = "test_chaps_order",
+            chapters = chaps,
+            fontSize = 16,
+            isStrictPaged = true
+        )
+
+        val starts = mutableListOf<Int>()
+        pages.forEachIndexed { idx, (_, content) ->
+            if (content.startsWith("CHAPTER_START:::")) starts.add(idx)
+        }
+
+        assertEquals("Must have exactly 5 chapter start markers for 5 chapters", 5, starts.size)
+        for (i in 0 until starts.size - 1) {
+            assertTrue("Chapter start pages must be strictly monotonically increasing", starts[i] < starts[i + 1])
+        }
+    }
+
+    @Test
+    fun testHeadingAndTableKeptTogetherInsteadOfOrphaned() {
+        val chapter = Chapter(
+            title = "Declickbait: Detecting and Correcting",
+            subtitle = "Executive Summary & Master Architectural Matrix",
+            readTime = "10 min",
+            paragraphs = listOf(
+                "In low-resource Bengali NLP, neural architectures must balance representational capacity with execution efficiency, routing sensational headlines to factual pointer-generator remediation without distorting underlying factual semantic content.",
+                "Keywords: Clickbait Detection, Pointer-Generator Networks, Sub-35M Compact Models, Multi-Head Systems, Cross-Attention, Multilingual NLP, Bengali, Banglish, Edge Inference.",
+                "⁂",
+                "Active Model Registry & Master Benchmark Matrix",
+                "[TABLE:{\"headers\":[\"Codename\",\"Legacy\",\"Architecture\"],\"rows\":[[\"cls_2t_bpe\",\"02_v3\",\"Byte-BPE Two-Tower\"],[\"joint_2t_wp\",\"11v2\",\"Decoupled Multi-Head\"],[\"gen_ptr_best\",\"08\",\"BiLSTM Pointer\"],[\"gen_ptr_cov\",\"08-cov\",\"Pointer-Coverage\"]]}]",
+                "⁂",
+                "Production Portfolio & Architectural Selection Rationale",
+                "[TABLE:{\"headers\":[\"System Codename\",\"Latency (ms)\",\"Memory (MB)\"],\"rows\":[[\"deploy_edge_v1\",\"14.2\",\"24.1\"],[\"deploy_server_v2\",\"48.5\",\"112.4\"]]}]"
+            )
+        )
+
+        val pages = PageCache.getOrCompute(
+            bookId = "test_declickbait_tables",
+            chapters = listOf(chapter),
+            fontSize = 16,
+            isStrictPaged = true,
+            screenWidthDp = 392,
+            screenHeightDp = 820
+        )
+
+        assertTrue("Should produce multiple pages", pages.size >= 2)
+
+        // Find the page containing "Active Model Registry & Master Benchmark Matrix"
+        val pageIdxHeading1 = pages.indexOfFirst { it.second.contains("Active Model Registry & Master Benchmark Matrix") }
+        val pageIdxTable1 = pages.indexOfFirst { it.second.contains("[TABLE:{\"headers\":[\"Codename\"") }
+
+        assertTrue("Heading 1 must be present in pages", pageIdxHeading1 >= 0)
+        assertTrue("Table 1 must be present in pages", pageIdxTable1 >= 0)
+
+        // Heading 1 and Table 1 must be on the EXACT SAME PAGE, never split across pages!
+        assertEquals(
+            "Heading 1 and Table 1 must be kept together on the same page instead of heading being orphaned on previous page",
+            pageIdxTable1,
+            pageIdxHeading1
+        )
+
+        // Find the page containing "Production Portfolio & Architectural Selection Rationale"
+        val pageIdxHeading2 = pages.indexOfFirst { it.second.contains("Production Portfolio & Architectural Selection Rationale") }
+        val pageIdxTable2 = pages.indexOfFirst { it.second.contains("[TABLE:{\"headers\":[\"System Codename\"") }
+
+        assertTrue("Heading 2 must be present in pages", pageIdxHeading2 >= 0)
+        assertTrue("Table 2 must be present in pages", pageIdxTable2 >= 0)
+
+        // Heading 2 and Table 2 must also be on the EXACT SAME PAGE!
+        assertEquals(
+            "Heading 2 and Table 2 must be kept together on the same page instead of heading being orphaned on previous page",
+            pageIdxTable2,
+            pageIdxHeading2
+        )
+
+        // Page 1 must not contain the heading
+        assertFalse("Page 1 must not contain orphan heading 1", pages[0].second.contains("Active Model Registry & Master Benchmark Matrix"))
+    }
+
+    @Test
+    fun testIsHeadingCandidateAndIsDivider() {
+        assertTrue(PageCache.isHeadingCandidate("Active Model Registry & Master Benchmark Matrix"))
+        assertTrue(PageCache.isHeadingCandidate("Section 1.2: Empirical Baseline Performance:"))
+        assertFalse(PageCache.isHeadingCandidate("⁂"))
+        assertFalse(PageCache.isHeadingCandidate("[DIVIDER]"))
+        assertFalse(PageCache.isHeadingCandidate("[TABLE:{\"headers\":[]}]"))
+        assertFalse(PageCache.isHeadingCandidate("[IMG:/path/to/img.png]"))
+        assertFalse(PageCache.isHeadingCandidate("A".repeat(400))) // Too long to be a heading
+
+        assertTrue(PageCache.isDivider("⁂"))
+        assertTrue(PageCache.isDivider("[DIVIDER]"))
+        assertTrue(PageCache.isDivider("* * *"))
+        assertTrue(PageCache.isDivider("***"))
+        assertFalse(PageCache.isDivider("Normal text"))
+    }
+
+    @Test
+    fun testHeadingKeptWithTableWithoutDivider() {
+        val chapter = Chapter(
+            title = "Chapter Without Divider",
+            subtitle = "",
+            readTime = "5 min",
+            paragraphs = listOf(
+                "Paragraph 1 fills the upper portion of the page with sufficient background context and introductory prose.",
+                "Paragraph 2 adds further elaboration to ensure the page budget is nearly filled right up to the bottom margin.",
+                "Table 1: Benchmark Summary",
+                "[TABLE:{\"headers\":[\"Model\",\"Score\"],\"rows\":[[\"Model A\",\"95.2\"],[\"Model B\",\"92.1\"]]}]"
+            )
+        )
+
+        val pages = PageCache.getOrCompute(
+            bookId = "test_heading_no_divider",
+            chapters = listOf(chapter),
+            fontSize = 16,
+            isStrictPaged = true,
+            screenWidthDp = 392,
+            screenHeightDp = 820
+        )
+
+        val headingPage = pages.indexOfFirst { it.second.contains("Table 1: Benchmark Summary") }
+        val tablePage = pages.indexOfFirst { it.second.contains("[TABLE:{\"headers\":[\"Model\"") }
+
+        assertTrue("Heading must exist", headingPage >= 0)
+        assertTrue("Table must exist", tablePage >= 0)
+        assertEquals("Heading and Table must be on the exact same page", tablePage, headingPage)
+    }
 }
+
 

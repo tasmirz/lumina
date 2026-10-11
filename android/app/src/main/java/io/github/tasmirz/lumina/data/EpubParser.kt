@@ -10,7 +10,10 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
 import java.net.URLDecoder
+import java.net.URLEncoder
 import java.util.zip.ZipInputStream
+import org.json.JSONArray
+import org.json.JSONObject
 
 object EpubParser {
 
@@ -267,18 +270,25 @@ object EpubParser {
      * Parses an EPUB InputStream into a Book domain model.
      * Robustly extracts OPF metadata, Table of Contents (EPUB 2 NCX & EPUB 3 Nav), covers, and inline images.
      */
-    fun parseEpub(file: File, context: Context? = null): Book {
+    fun parseEpub(file: File, context: Context? = null, bookId: String? = null): Book {
         return file.inputStream().use { stream ->
-            parseEpub(stream, file.name, context)
+            parseEpub(stream, file.name, context, bookId)
         }
     }
 
-    fun parseEpub(inputStream: InputStream, filename: String, context: Context? = null): Book {
-        val bookId = "custom-${System.currentTimeMillis()}"
+    fun parseEpub(inputStream: InputStream, filename: String, context: Context? = null, bookId: String? = null): Book {
+        val resolvedBookId = bookId ?: "custom-${System.currentTimeMillis()}"
         val entries = mutableMapOf<String, ByteArray>()
+        val extractedImages = mutableMapOf<String, String>() // normalized zip entry name -> absolute local file path
 
-        // 1. Memory-efficient entry streaming: selectively buffer text/structure & cover candidate entries
-        // Skips heavy binary assets (fonts, audio, video, non-cover media) to prevent memory allocation spikes
+        val imagesDir = if (context != null) {
+            File(context.filesDir, "books/$resolvedBookId/images").apply { mkdirs() }
+        } else {
+            File(System.getProperty("java.io.tmpdir", "/tmp"), "lumina_books/$resolvedBookId/images").apply { mkdirs() }
+        }
+
+        // 1. Memory-efficient entry streaming: selectively buffer text/structure in RAM & stream images directly to disk
+        // Prevents RAM blowup on graphic/image-rich EPUBs (e.g. hundreds of high-res formulas/diagrams)
         try {
             val zip = ZipInputStream(inputStream)
             var entry = zip.nextEntry
@@ -288,13 +298,24 @@ object EpubParser {
                     val lower = normalizedName.lowercase()
                     val isTextOrStructure = lower.endsWith(".xml") || lower.endsWith(".opf") || lower.endsWith(".ncx") ||
                             lower.endsWith(".xhtml") || lower.endsWith(".html") || lower.endsWith(".htm")
-                    val isCandidateCover = (lower.contains("cover") || lower.contains("title") || lower.contains("front") || lower.contains("jacket")) &&
-                            (lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") || lower.endsWith(".webp"))
-                    val isImageFallback = (lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") || lower.endsWith(".webp")) &&
-                            entries.none { it.key.endsWith(".jpg") || it.key.endsWith(".jpeg") || it.key.endsWith(".png") || it.key.endsWith(".webp") }
+                    val isImage = lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") ||
+                            lower.endsWith(".webp") || lower.endsWith(".gif") || lower.endsWith(".svg")
 
-                    if (isTextOrStructure || isCandidateCover || isImageFallback) {
+                    if (isTextOrStructure) {
                         entries[normalizedName] = zip.readBytes()
+                    } else if (isImage && imagesDir != null) {
+                        try {
+                            val safeFileName = normalizedName.replace('/', '_').replace('\\', '_').replace("[^a-zA-Z0-9._-]".toRegex(), "_")
+                            val localImgFile = File(imagesDir, "${resolvedBookId}_$safeFileName")
+                            FileOutputStream(localImgFile).use { out ->
+                                zip.copyTo(out)
+                            }
+                            if (localImgFile.exists() && localImgFile.length() > 0L) {
+                                extractedImages[normalizedName] = localImgFile.absolutePath
+                            }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
                     }
                 }
                 zip.closeEntry()
@@ -315,10 +336,15 @@ object EpubParser {
 
             // 1. Exact match
             entries.keys.firstOrNull { it.equals(clean, ignoreCase = true) }?.let { return it }
+            extractedImages.keys.firstOrNull { it.equals(clean, ignoreCase = true) }?.let { return it }
+
             // 2. Relative suffix match
             entries.keys.firstOrNull { it.endsWith("/$clean", ignoreCase = true) }?.let { return it }
+            extractedImages.keys.firstOrNull { it.endsWith("/$clean", ignoreCase = true) }?.let { return it }
+
             // 3. Filename match
             entries.keys.firstOrNull { it.substringAfterLast('/').equals(filenameOnly, ignoreCase = true) }?.let { return it }
+            extractedImages.keys.firstOrNull { it.substringAfterLast('/').equals(filenameOnly, ignoreCase = true) }?.let { return it }
             return null
         }
 
@@ -511,9 +537,11 @@ object EpubParser {
             }
         }
 
+        val allImageKeys = entries.keys + extractedImages.keys
+
         // Tier 6: Zip entry with "cover" in name
         if (coverEntryKey == null) {
-            coverEntryKey = entries.keys.firstOrNull { key ->
+            coverEntryKey = allImageKeys.firstOrNull { key ->
                 val lower = key.lowercase()
                 lower.contains("cover") && (lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") || lower.endsWith(".webp"))
             }
@@ -521,7 +549,7 @@ object EpubParser {
 
         // Tier 7: Zip entry with "title", "front", or "jacket"
         if (coverEntryKey == null) {
-            coverEntryKey = entries.keys.firstOrNull { key ->
+            coverEntryKey = allImageKeys.firstOrNull { key ->
                 val lower = key.lowercase()
                 (lower.contains("title") || lower.contains("front") || lower.contains("jacket")) &&
                 (lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") || lower.endsWith(".webp"))
@@ -531,20 +559,21 @@ object EpubParser {
         // Tier 8: First image found in manifest or zip
         if (coverEntryKey == null) {
             coverEntryKey = manifestItems.values.firstOrNull { it.mediaType.startsWith("image/") }?.let { resolveZipEntry(opfDir, it.href) }
-                ?: entries.keys.firstOrNull { key ->
+                ?: allImageKeys.firstOrNull { key ->
                     val lower = key.lowercase()
                     lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") || lower.endsWith(".webp")
                 }
         }
 
         // Extract and persist cover image to app storage
-        if (coverEntryKey != null && context != null) {
+        if (coverEntryKey != null) {
             val coverBytes = entries[coverEntryKey]
-            if (coverBytes != null && coverBytes.isNotEmpty()) {
+                ?: extractedImages[coverEntryKey]?.let { File(it).takeIf { f -> f.exists() }?.readBytes() }
+            if (coverBytes != null && coverBytes.isNotEmpty() && context != null) {
                 try {
                     val coversDir = File(context.filesDir, "covers").apply { mkdirs() }
                     val ext = if (coverEntryKey.endsWith(".png", ignoreCase = true)) "png" else "jpg"
-                    val coverFile = File(coversDir, "${bookId}_cover.$ext")
+                    val coverFile = File(coversDir, "${resolvedBookId}_cover.$ext")
                     compressAndSaveCover(coverBytes, coverFile, maxDimension = 640, quality = 82)
                     if (coverFile.exists() && coverFile.length() > 0L) {
                         coverUrl = coverFile.absolutePath
@@ -552,6 +581,8 @@ object EpubParser {
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
+            } else if (coverUrl.isBlank() && coverEntryKey != null) {
+                coverUrl = extractedImages[coverEntryKey] ?: ""
             }
         }
 
@@ -666,7 +697,6 @@ object EpubParser {
         }
 
         // 8. Extract Content & Inline Images per Chapter
-        val imagesDir = if (context != null) File(context.filesDir, "books/$bookId/images").apply { mkdirs() } else null
         val extractedChapters = mutableListOf<Chapter>()
         var currentPart = ""
 
@@ -713,29 +743,32 @@ object EpubParser {
                     chapterTitle = "Chapter ${chapIdx + 1}"
                 }
 
-                // Process inline images: replace <img ...> and <image ...> with [IMG:path]
+                // Process inline images: replace <img ...> and <image ...> with image tokens
                 var processedHtml = rawHtml
-                if (imagesDir != null) {
-                    val imgRegex = "<(?:img|image)\\s+[^>]*(?:xlink:href|src|href)=[\"']([^\"']+)[\"'][^>]*>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
-                    processedHtml = imgRegex.replace(rawHtml) { m ->
-                        val imgSrc = m.groupValues[1]
-                        val imgEntryKey = resolveZipEntry(currentFileDir, imgSrc)
-                        if (imgEntryKey != null) {
+                val imgRegex = "<(?:img|image)\\s+[^>]*(?:xlink:href|src|href)=[\"']([^\"']+)[\"'][^>]*>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+                processedHtml = imgRegex.replace(rawHtml) { m ->
+                    val imgSrc = m.groupValues[1]
+                    val imgEntryKey = resolveZipEntry(currentFileDir, imgSrc)
+                    if (imgEntryKey != null) {
+                        val localPath = extractedImages[imgEntryKey]
+                        if (localPath != null && File(localPath).exists()) {
+                            "__IMG_TOKEN_START__${localPath}__IMG_TOKEN_END__"
+                        } else {
                             val imgBytes = entries[imgEntryKey]
-                            if (imgBytes != null && imgBytes.isNotEmpty()) {
+                            if (imgBytes != null && imgBytes.isNotEmpty() && imagesDir != null) {
                                 try {
                                     val safeFileName = imgEntryKey.substringAfterLast('/').replace("[^a-zA-Z0-9._-]".toRegex(), "_")
-                                    val localImgFile = File(imagesDir, "${bookId}_$safeFileName")
+                                    val localImgFile = File(imagesDir, "${resolvedBookId}_$safeFileName")
                                     if (!localImgFile.exists()) {
                                         FileOutputStream(localImgFile).use { it.write(imgBytes) }
                                     }
-                                    "\n\n__IMG_TOKEN_START__${localImgFile.absolutePath}__IMG_TOKEN_END__\n\n"
+                                    "__IMG_TOKEN_START__${localImgFile.absolutePath}__IMG_TOKEN_END__"
                                 } catch (_: Exception) {
                                     ""
                                 }
                             } else ""
-                        } else ""
-                    }
+                        }
+                    } else ""
                 }
 
                 // Convert HTML to clean readable paragraphs with isolated images
@@ -770,19 +803,50 @@ object EpubParser {
                 }
 
                 if (cleanedParas.isNotEmpty()) {
-                    val wordCount = cleanedParas.filterNot { it.startsWith("[IMG:") }.joinToString(" ").split("\\s+".toRegex()).size
+                    val wordCount = cleanedParas
+                        .filterNot { it.startsWith("[IMG:") || it.startsWith("[TABLE:") || it == "[DIVIDER]" }
+                        .map {
+                            var p = it
+                            if (p.startsWith("[VERSE:") && p.endsWith("]")) p = p.removePrefix("[VERSE:").removeSuffix("]")
+                            else if (p.startsWith("[QUOTE:") && p.endsWith("]")) p = p.removePrefix("[QUOTE:").removeSuffix("]")
+                            p.replace("\\[/?(sub|sup)\\]".toRegex(), "")
+                        }
+                        .joinToString(" ")
+                        .split("\\s+".toRegex()).size
                     val readTimeMins = maxOf(wordCount / 200, 1)
 
                     val subtitleText = if (currentPart.isNotBlank()) currentPart else "Section ${extractedChapters.size + 1}"
 
-                    extractedChapters.add(
-                        Chapter(
-                            title = chapterTitle,
-                            subtitle = subtitleText,
-                            readTime = "$readTimeMins mins",
-                            paragraphs = cleanedParas
+                    if (extractedChapters.isNotEmpty() &&
+                        extractedChapters.last().title.equals(chapterTitle, ignoreCase = true) &&
+                        extractedChapters.last().subtitle.equals(subtitleText, ignoreCase = true)) {
+                        val prev = extractedChapters.last()
+                        val combinedParas = prev.paragraphs + cleanedParas
+                        val wordCount = combinedParas
+                            .filterNot { it.startsWith("[IMG:") || it.startsWith("[TABLE:") || it == "[DIVIDER]" }
+                            .map {
+                                var p = it
+                                if (p.startsWith("[VERSE:") && p.endsWith("]")) p = p.removePrefix("[VERSE:").removeSuffix("]")
+                                else if (p.startsWith("[QUOTE:") && p.endsWith("]")) p = p.removePrefix("[QUOTE:").removeSuffix("]")
+                                p.replace("\\[/?(sub|sup)\\]".toRegex(), "")
+                            }
+                            .joinToString(" ")
+                            .split("\\s+".toRegex()).size
+                        val readTimeMins = maxOf(wordCount / 200, 1)
+                        extractedChapters[extractedChapters.size - 1] = prev.copy(
+                            paragraphs = combinedParas,
+                            readTime = "$readTimeMins mins"
                         )
-                    )
+                    } else {
+                        extractedChapters.add(
+                            Chapter(
+                                title = chapterTitle,
+                                subtitle = subtitleText,
+                                readTime = "$readTimeMins mins",
+                                paragraphs = cleanedParas
+                            )
+                        )
+                    }
                 }
             }
         }
@@ -801,7 +865,7 @@ object EpubParser {
         }
 
         return Book(
-            id = bookId,
+            id = resolvedBookId,
             title = title,
             author = author,
             coverUrl = coverUrl,
@@ -830,52 +894,263 @@ object EpubParser {
         return resolved.joinToString("/")
     }
 
+    private fun parseHtmlTable(tableHtml: String): String? {
+        return try {
+            val headers = mutableListOf<String>()
+            val rows = mutableListOf<List<String>>()
+
+            val thRegex = "<th\\b[^>]*>(.*?)</th>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+            val trRegex = "<tr\\b[^>]*>(.*?)</tr>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+            val tdRegex = "<td\\b[^>]*>(.*?)</td>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+
+            val allRows = trRegex.findAll(tableHtml).map { it.groupValues[1] }.toList()
+            if (allRows.isEmpty()) return null
+
+            var firstRowIsHeader = false
+            val firstThs = thRegex.findAll(allRows[0]).map { cleanCellText(it.groupValues[1]) }.toList()
+            if (firstThs.isNotEmpty()) {
+                headers.addAll(firstThs)
+                firstRowIsHeader = true
+            }
+
+            for (i in (if (firstRowIsHeader) 1 else 0) until allRows.size) {
+                val rowHtml = allRows[i]
+                val cells = tdRegex.findAll(rowHtml).map { cleanCellText(it.groupValues[1]) }.toList()
+                if (cells.isNotEmpty()) {
+                    rows.add(cells)
+                } else {
+                    val rowThs = thRegex.findAll(rowHtml).map { cleanCellText(it.groupValues[1]) }.toList()
+                    if (rowThs.isNotEmpty()) {
+                        rows.add(rowThs)
+                    }
+                }
+            }
+
+            if (headers.isEmpty() && rows.isEmpty()) return null
+
+            val json = JSONObject()
+            val headerArray = JSONArray()
+            headers.forEach { headerArray.put(it) }
+            json.put("headers", headerArray)
+
+            val rowsArray = JSONArray()
+            rows.forEach { row ->
+                val rowArr = JSONArray()
+                row.forEach { rowArr.put(it) }
+                rowsArray.put(rowArr)
+            }
+            json.put("rows", rowsArray)
+
+            json.toString()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun cleanCellText(cellHtml: String): String {
+        val mathRegex = "<math\\b[^>]*>(.*?)</math>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+        val mathProcessed = mathRegex.replace(cellHtml) { match ->
+            transformMathML(match.value)
+        }
+        val text = mathProcessed
+            .replace("<br\\s*/?>".toRegex(RegexOption.IGNORE_CASE), " ")
+            .replace("<[^>]+>".toRegex(), " ")
+        return decodeHtmlEntities(text).replace("\\s+".toRegex(), " ").trim()
+    }
+
     private fun cleanHtmlToParagraphs(html: String): List<String> {
-        val text = html
+        // 0. Drop cap / Initial letter un-wrapping to prevent word fragmentation (e.g. "T o", "I T")
+        val dropcapRegex = "(?i)<span\\b[^>]*class=[\"'][^\"']*(?:dropcap|letra|initial)[^\"']*[\"'][^>]*>\\s*([^<]+?)\\s*</span>\\s*".toRegex()
+        val dropcapCleaned = dropcapRegex.replace(html) { match ->
+            match.groupValues[1].trim()
+        }
+
+        // 1. Strip ebook page-number markers (<span class="x-ebookmaker-pageno">, epub:type="pagebreak")
+        val pagenoRegex = "(?i)<(span|div|a)\\b[^>]*(?:class=[\"'][^\"']*(?:pageno|page-number|pagebreak)[^\"']*|epub:type=[\"'][^\"']*pagebreak[\"'])[^>]*>.*?</\\1>".toRegex(RegexOption.DOT_MATCHES_ALL)
+        val pagenoCleaned = pagenoRegex.replace(dropcapCleaned, "")
+        val emptyPageAnchorRegex = "(?i)<(span|div|a)\\b[^>]*(?:class=[\"'][^\"']*(?:pageno|page-number|pagebreak)[^\"']*|epub:type=[\"'][^\"']*pagebreak[\"'])[^>]*/>".toRegex()
+        val pagesPurged = emptyPageAnchorRegex.replace(pagenoCleaned, "")
+
+        // 2. Transform MathML tags into clean readable text before stripping general HTML tags
+        val mathRegex = "<math\\b[^>]*>(.*?)</math>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+        val mathProcessed = mathRegex.replace(pagesPurged) { match ->
+            val fullTag = match.value
+            val isBlock = fullTag.contains("display=[\"']block[\"']".toRegex(RegexOption.IGNORE_CASE))
+            val transformed = transformMathML(fullTag)
+            if (isBlock) "\n\n$transformed\n\n" else " $transformed "
+        }
+
+        // 3. Convert HTML superscripts (<sup>) and subscripts (<sub>) to clean markup
+        val supRegex = "(?i)<sup\\b[^>]*>(.*?)</sup>".toRegex(RegexOption.DOT_MATCHES_ALL)
+        val subRegex = "(?i)<sub\\b[^>]*>(.*?)</sub>".toRegex(RegexOption.DOT_MATCHES_ALL)
+        val supProcessed = supRegex.replace(mathProcessed) { match ->
+            val inner = match.groupValues[1].replace("<[^>]+>".toRegex(), "").trim()
+            val unicode = if (inner.length <= 3) toUnicodeSuperscript(inner) else null
+            unicode ?: "[sup]$inner[/sup]"
+        }
+        val subSupProcessed = subRegex.replace(supProcessed) { match ->
+            val inner = match.groupValues[1].replace("<[^>]+>".toRegex(), "").trim()
+            val unicode = if (inner.length == 1) toUnicodeSubscript(inner) else null
+            unicode ?: "[sub]$inner[/sub]"
+        }
+
+        // 4. Parse HTML tables into structured JSON tokens
+        val tableRegex = "<table\\b[^>]*>(.*?)</table>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+        val tableProcessed = tableRegex.replace(subSupProcessed) { match ->
+            val json = parseHtmlTable(match.value)
+            if (json != null) {
+                val encoded = try { URLEncoder.encode(json, "UTF-8") } catch (_: Exception) { json }
+                "\n\n__TABLE_TOKEN_START__${encoded}__TABLE_TOKEN_END__\n\n"
+            } else {
+                match.value
+            }
+        }
+
+        // 5. Scene Dividers / Thematic breaks (<hr>, asterisms, thoughtbreaks)
+        val dividerRegex = "(?i)(?:<hr\\b[^>]*>|<(?:p|div)\\b[^>]*class=[\"'][^\"']*(?:asterism|thoughtbreak|scene-break)[^\"']*[^>]*>.*?</(?:p|div)>)".toRegex(RegexOption.DOT_MATCHES_ALL)
+        val dividerProcessed = dividerRegex.replace(tableProcessed, "\n\n__DIVIDER_TOKEN__\n\n")
+
+        // 6. Verse / Drama / Poetry / Preformatted text (<pre>, .drama, .poem, .verse, .stanza)
+        val verseRegex = "(?i)<(pre|div|p|blockquote)\\b[^>]*(?:class=[\"'][^\"']*(?:drama|poem|verse|stanza)[^\"']*|pre)[^>]*>(.*?)</\\1>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+        val verseProcessed = verseRegex.replace(dividerProcessed) { match ->
+            val rawInner = match.groupValues[2]
+            val brToNewline = rawInner.replace("<br\\s*/?>".toRegex(RegexOption.IGNORE_CASE), "\n")
+            val stripped = brToNewline.replace("<[^>]+>".toRegex(), "")
+            val decoded = decodeHtmlEntities(stripped)
+            val verseLines = decoded.lines()
+                .map { it.trimEnd() }
+                .filter { it.isNotBlank() }
+            if (verseLines.isNotEmpty()) {
+                val encoded = try { URLEncoder.encode(verseLines.joinToString("\n"), "UTF-8") } catch (_: Exception) { verseLines.joinToString("\n") }
+                "\n\n__VERSE_TOKEN_START__${encoded}__VERSE_TOKEN_END__\n\n"
+            } else ""
+        }
+
+        // 7. Epistolary Letters & Blockquotes (<blockquote>, .letter, .blockquot, .epistle)
+        val quoteRegex = "(?i)<(blockquote|div|p)\\b[^>]*(?:class=[\"'][^\"']*(?:letter|blockquot|epistle|telegram)[^\"']*|blockquote)[^>]*>(.*?)</\\1>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+        val quoteProcessed = quoteRegex.replace(verseProcessed) { match ->
+            val rawInner = match.groupValues[2]
+            val brToNewline = rawInner.replace("<br\\s*/?>".toRegex(RegexOption.IGNORE_CASE), "\n")
+            val stripped = brToNewline.replace("<[^>]+>".toRegex(), " ")
+            val decoded = decodeHtmlEntities(stripped)
+            val quoteLines = decoded.lines()
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+            if (quoteLines.isNotEmpty()) {
+                val encoded = try { URLEncoder.encode(quoteLines.joinToString("\n"), "UTF-8") } catch (_: Exception) { quoteLines.joinToString("\n") }
+                "\n\n__QUOTE_TOKEN_START__${encoded}__QUOTE_TOKEN_END__\n\n"
+            } else ""
+        }
+
+        // 8. Format ordered (<ol>) and unordered (<ul>) lists with bullets/numbering
+        var listsProcessed = quoteProcessed
+        val olRegex = "<ol\\b[^>]*>(.*?)</ol>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+        listsProcessed = olRegex.replace(listsProcessed) { olMatch ->
+            var idx = 1
+            val liRegex = "<li\\b[^>]*>(.*?)</li>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+            liRegex.replace(olMatch.groupValues[1]) { liMatch ->
+                "\n\n${idx++}. " + liMatch.groupValues[1] + "\n\n"
+            }
+        }
+        val ulRegex = "<ul\\b[^>]*>(.*?)</ul>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+        listsProcessed = ulRegex.replace(listsProcessed) { ulMatch ->
+            val liRegex = "<li\\b[^>]*>(.*?)</li>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+            liRegex.replace(ulMatch.groupValues[1]) { liMatch ->
+                "\n\n• " + liMatch.groupValues[1] + "\n\n"
+            }
+        }
+        val standaloneLiRegex = "<li\\b[^>]*>(.*?)</li>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+        listsProcessed = standaloneLiRegex.replace(listsProcessed) { liMatch ->
+            "\n\n• " + liMatch.groupValues[1] + "\n\n"
+        }
+
+        // 9. Strip scripts, styles, heads, and convert block containers to paragraph breaks
+        val text = listsProcessed
             .replace("(?i)<script.*?>.*?</script>".toRegex(RegexOption.DOT_MATCHES_ALL), "")
             .replace("(?i)<style.*?>.*?</style>".toRegex(RegexOption.DOT_MATCHES_ALL), "")
             .replace("(?i)<head.*?>.*?</head>".toRegex(RegexOption.DOT_MATCHES_ALL), "")
             .replace("<br\\s*/?>".toRegex(RegexOption.IGNORE_CASE), "\n")
-            .replace("(?i)</?(p|div|h[1-6]|section|article|blockquote|li|ol|ul|tr|td|th|header|footer|nav|title|table)>".toRegex(), "\n\n")
-            .replace("(?i)</(a|span|em|i|b|strong)>".toRegex(), " ")
+            .replace("(?i)</?(p|div|h[1-6]|section|article|blockquote|li|ol|ul|tr|td|th|header|footer|nav|title|table|figure|figcaption|hr)>".toRegex(), "\n\n")
+            .replace("(?i)</(a|span|em|i|b|strong|code)>(?=[\\p{L}\\p{N}])".toRegex(), " ")
+            .replace("(?i)</(a|span|em|i|b|strong|code)>".toRegex(), "")
             .replace("<[^>]+>".toRegex(), " ")
 
-        val tokenRegex = "__IMG_TOKEN_START__(.*?)__IMG_TOKEN_END__".toRegex()
-        val textWithImgs = tokenRegex.replace(text) { m -> "\n\n[IMG:${m.groupValues[1]}]\n\n" }
+        val tokenImgRegex = "__IMG_TOKEN_START__(.*?)__IMG_TOKEN_END__".toRegex(RegexOption.DOT_MATCHES_ALL)
+        val tokenTableRegex = "__TABLE_TOKEN_START__(.*?)__TABLE_TOKEN_END__".toRegex(RegexOption.DOT_MATCHES_ALL)
+        val tokenDividerRegex = "__DIVIDER_TOKEN__".toRegex()
+        val tokenVerseRegex = "__VERSE_TOKEN_START__(.*?)__VERSE_TOKEN_END__".toRegex(RegexOption.DOT_MATCHES_ALL)
+        val tokenQuoteRegex = "__QUOTE_TOKEN_START__(.*?)__QUOTE_TOKEN_END__".toRegex(RegexOption.DOT_MATCHES_ALL)
 
-        val rawBlocks = textWithImgs.split("\n\n")
+        val textWithImgs = tokenImgRegex.replace(text) { m -> "__IMG_TOKEN_START__${m.groupValues[1]}__IMG_TOKEN_END__" }
+        val textWithTables = tokenTableRegex.replace(textWithImgs) { m ->
+            val decoded = try { URLDecoder.decode(m.groupValues[1], "UTF-8") } catch (_: Exception) { m.groupValues[1] }
+            "\n\n[TABLE:$decoded]\n\n"
+        }
+        val textWithDividers = tokenDividerRegex.replace(textWithTables) { "\n\n[DIVIDER]\n\n" }
+        val textWithVerses = tokenVerseRegex.replace(textWithDividers) { m ->
+            val decoded = try { URLDecoder.decode(m.groupValues[1], "UTF-8") } catch (_: Exception) { m.groupValues[1] }
+            "\n\n[VERSE:$decoded]\n\n"
+        }
+        val textWithTokens = tokenQuoteRegex.replace(textWithVerses) { m ->
+            val decoded = try { URLDecoder.decode(m.groupValues[1], "UTF-8") } catch (_: Exception) { m.groupValues[1] }
+            "\n\n[QUOTE:$decoded]\n\n"
+        }
+
+        val rawBlocks = textWithTokens.split("\n\n")
         val result = mutableListOf<String>()
 
         val imgExtractRegex = "\\[IMG:([^\\]]+)\\]".toRegex()
+        val tokenImgExtractRegex = "__IMG_TOKEN_START__(.*?)__IMG_TOKEN_END__".toRegex()
 
         for (raw in rawBlocks) {
             val trimmed = raw.trim()
             if (trimmed.isBlank()) continue
 
-            if (trimmed.contains("[IMG:")) {
-                var lastIdx = 0
-                imgExtractRegex.findAll(trimmed).forEach { match ->
-                    val before = trimmed.substring(lastIdx, match.range.first).trim()
-                    if (before.isNotBlank()) {
-                        val norm = decodeHtmlEntities(before).replace("\\s+".toRegex(), " ").trim()
-                        val dedup = deduplicateRepeatedHeading(norm)
-                        if (dedup.length > 1) result.add(dedup)
-                    }
-                    result.add("[IMG:${match.groupValues[1]}]")
-                    lastIdx = match.range.last + 1
-                }
-                val after = trimmed.substring(lastIdx).trim()
-                if (after.isNotBlank()) {
-                    val norm = decodeHtmlEntities(after).replace("\\s+".toRegex(), " ").trim()
-                    val dedup = deduplicateRepeatedHeading(norm)
-                    if (dedup.length > 1) result.add(dedup)
+            if (trimmed.startsWith("[TABLE:") && trimmed.endsWith("]")) {
+                result.add(trimmed)
+            } else if (trimmed == "[DIVIDER]" || isSceneDividerGlyph(trimmed)) {
+                result.add("[DIVIDER]")
+            } else if (trimmed.startsWith("[VERSE:") && trimmed.endsWith("]")) {
+                result.add(trimmed)
+            } else if (trimmed.startsWith("[QUOTE:") && trimmed.endsWith("]")) {
+                result.add(trimmed)
+            } else if (trimmed.startsWith("__IMG_TOKEN_START__") && trimmed.endsWith("__IMG_TOKEN_END__") &&
+                !trimmed.removePrefix("__IMG_TOKEN_START__").removeSuffix("__IMG_TOKEN_END__").contains("__IMG_TOKEN_START__")
+            ) {
+                // Isolated block image (figure, illustration, full equation)
+                val path = trimmed.removePrefix("__IMG_TOKEN_START__").removeSuffix("__IMG_TOKEN_END__")
+                result.add("[IMG:$path]")
+            } else if (trimmed.startsWith("[IMG:") && trimmed.endsWith("]") &&
+                !trimmed.removePrefix("[IMG:").removeSuffix("]").contains("[IMG:")
+            ) {
+                result.add(trimmed)
+            } else if (trimmed.contains("__IMG_TOKEN_START__") || trimmed.contains("[IMG:")) {
+                // Paragraph containing inline images or math symbols: preserve entire paragraph flow
+                var processedPara = tokenImgExtractRegex.replace(trimmed) { m -> "[INLINE_IMG:${m.groupValues[1]}]" }
+                processedPara = imgExtractRegex.replace(processedPara) { m -> "[INLINE_IMG:${m.groupValues[1]}]" }
+                val lines = decodeHtmlEntities(processedPara)
+                    .lines()
+                    .map { it.replace("[ \t]+".toRegex(), " ").trim() }
+                    .filter { it.isNotBlank() }
+                val normalized = lines.joinToString(" ")
+                var cleanPara = normalized.replace("[ \t]+".toRegex(), " ")
+                cleanPara = cleanPara.replace("\\[INLINE_IMG:([^\\]]+)\\]\\s+([,.:;?!)\\]])".toRegex(), "[INLINE_IMG:$1]$2")
+                cleanPara = cleanPara.replace("([(\\[])\\s+\\[INLINE_IMG:([^\\]]+)\\]".toRegex(), "$1[INLINE_IMG:$2]")
+                cleanPara = cleanPara.replace("([\\p{L}\\p{N}])\\[INLINE_IMG:".toRegex(), "$1 [INLINE_IMG:")
+                cleanPara = cleanPara.replace("\\]([\\p{L}\\p{N}])".toRegex(), "] $1")
+                val normalizedBengali = normalizeBengaliVowels(cleanPara)
+                val dedup = deduplicateRepeatedHeading(normalizedBengali)
+                if (dedup.isNotBlank()) {
+                    result.add(dedup)
                 }
             } else {
-                val normalized = decodeHtmlEntities(trimmed)
-                    .replace("\\s+".toRegex(), " ")
-                    .trim()
-
-                val dedup = deduplicateRepeatedHeading(normalized)
+                val lines = decodeHtmlEntities(trimmed)
+                    .lines()
+                    .map { it.replace("[ \t]+".toRegex(), " ").trim() }
+                    .filter { it.isNotBlank() }
+                val normalized = lines.joinToString(" ")
+                val normalizedBengali = normalizeBengaliVowels(normalized)
+                val dedup = deduplicateRepeatedHeading(normalizedBengali)
                 if (dedup.isNotBlank() && dedup.length > 1) {
                     result.add(dedup)
                 }
@@ -884,10 +1159,32 @@ object EpubParser {
         return result
     }
 
+    fun normalizeBengaliVowels(text: String): String {
+        if (text.isEmpty()) return text
+        // Swaps visual-order misplaced vowels: ি (U+09BF), ে (U+09C7), ৈ (U+09C8) followed by a consonant or conjunct
+        val pattern = "([\\u09BF\\u09C7\\u09C8])([\\u0985-\\u09B9](?:\\u09CD[\\u0985-\\u09B9])?)".toRegex()
+        var res = pattern.replace(text) { m ->
+            m.groupValues[2] + m.groupValues[1]
+        }
+        // Fix trailing reph তর্ -> র্ত, ডর্ -> র্ড
+        val trailingReph = "([\\u0985-\\u09B9])(\\u09B0\\u09CD)".toRegex()
+        res = trailingReph.replace(res) { m ->
+            m.groupValues[2] + m.groupValues[1]
+        }
+        return res
+    }
+
+    fun isSceneDividerGlyph(text: String): Boolean {
+        val t = text.trim()
+        if (t == "⁂" || t == "* * *" || t == "***" || t == "---" || t == "— — —" || t == "• • •" || t == "~ ~ ~" || t == "*  *  *") return true
+        if (t.length in 3..20 && "^(?:[\\*⁂•~\\-—]\\s*){3,7}$".toRegex().matches(t)) return true
+        return false
+    }
+
     fun isHeadingOnly(para: String, chapterTitle: String, bookTitle: String, currentPart: String = ""): Boolean {
         val trimmed = para.trim()
         if (trimmed.isBlank()) return true
-        if (trimmed.length > 80) return false
+        if (trimmed.startsWith("[IMG:") || trimmed.startsWith("[TABLE:")) return false
         val normPara = trimmed.replace("[^a-zA-Z0-9]".toRegex(), "").lowercase()
         val normChap = chapterTitle.replace("[^a-zA-Z0-9]".toRegex(), "").lowercase()
         val normBook = bookTitle.replace("[^a-zA-Z0-9]".toRegex(), "").lowercase()
@@ -899,6 +1196,8 @@ object EpubParser {
         if (normPart.isNotEmpty() && normPara.replace(normPart, "").isEmpty()) return true
         if (normBook.isNotEmpty() && normPara.replace(normBook, "").isEmpty()) return true
         if (normPart.isNotEmpty() && normChap.isNotEmpty() && (normPara == normPart + normChap || normPara == normChap + normPart)) return true
+
+        if (trimmed.length > 80) return false
 
         val chapterPattern = "^(?i)(chapter|part|section|book|canto)\\s+([0-9ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)[.:\\s—–-]*$".toRegex()
         if (chapterPattern.matches(trimmed)) return true
@@ -933,15 +1232,22 @@ object EpubParser {
         return trimmed
     }
 
-    private fun decodeHtmlEntities(input: String): String {
-        return input
+    fun decodeHtmlEntities(input: String): String {
+        if (input.isEmpty()) return input
+        var text = input.replace("\r", "")
+        if (text.contains("&amp;#")) {
+            text = text.replace("&amp;#", "&#")
+        }
+
+        // 1. Standard named entities
+        text = text
             .replace("&nbsp;", " ")
             .replace("&amp;", "&")
             .replace("&lt;", "<")
             .replace("&gt;", ">")
             .replace("&quot;", "\"")
-            .replace("&#39;", "'")
             .replace("&apos;", "'")
+            .replace("&#39;", "'")
             .replace("&mdash;", "—")
             .replace("&#8212;", "—")
             .replace("&ndash;", "–")
@@ -956,6 +1262,353 @@ object EpubParser {
             .replace("&#8220;", "“")
             .replace("&rdquo;", "”")
             .replace("&#8221;", "”")
-            .replace("\r", "")
+            .replace("&times;", "×")
+            .replace("&divide;", "÷")
+            .replace("&plusmn;", "±")
+            .replace("&minus;", "−")
+            .replace("&middot;", "·")
+            .replace("&bull;", "•")
+            .replace("&radic;", "√")
+            .replace("&infin;", "∞")
+            .replace("&ne;", "≠")
+            .replace("&le;", "≤")
+            .replace("&ge;", "≥")
+            .replace("&sum;", "∑")
+            .replace("&prod;", "∏")
+            .replace("&alpha;", "α")
+            .replace("&beta;", "β")
+            .replace("&gamma;", "γ")
+            .replace("&theta;", "θ")
+            .replace("&pi;", "π")
+            .replace("&sigma;", "σ")
+            .replace("&omega;", "ω")
+
+        // 2. Hexadecimal numeric entities: &#x...; or &#X...;
+        val hexRegex = "&#[xX]([0-9a-fA-F]{1,6});".toRegex()
+        text = hexRegex.replace(text) { match ->
+            try {
+                val cp = match.groupValues[1].toInt(16)
+                if (Character.isValidCodePoint(cp)) {
+                    String(Character.toChars(cp))
+                } else match.value
+            } catch (_: Exception) { match.value }
+        }
+
+        // 3. Decimal numeric entities: &#...;
+        val decRegex = "&#([0-9]{1,7});".toRegex()
+        text = decRegex.replace(text) { match ->
+            try {
+                val cp = match.groupValues[1].toInt(10)
+                if (Character.isValidCodePoint(cp)) {
+                    String(Character.toChars(cp))
+                } else match.value
+            } catch (_: Exception) { match.value }
+        }
+
+        return text
+    }
+
+    internal data class MathNode(
+        val tag: String,
+        val attributes: Map<String, String> = emptyMap(),
+        val text: String = "",
+        val children: List<MathNode> = emptyList()
+    )
+
+    fun transformMathML(mathXml: String): String {
+        return try {
+            val root = parseMathXml(mathXml)
+            var evaluated = evalMathNode(root)
+            if (evaluated.contains("_{")) {
+                evaluated = "(?<=\\S)_\\{([^}]+)\\}".toRegex().replace(evaluated) { m ->
+                    formatSubscript("", m.groupValues[1])
+                }
+            }
+            if (evaluated.contains("^{")) {
+                evaluated = "(?<=\\S)\\^\\{([^}]+)\\}".toRegex().replace(evaluated) { m ->
+                    formatSuperscript("", m.groupValues[1])
+                }
+            }
+            if (evaluated.contains("_")) {
+                val mathSubRegex = "([ℒℓ𝔼𝕍ℝα-ωΑ-Ω∇∂λg]|[a-zA-Z]{1,6})_([a-zA-Z0-9]{1,6})\\b".toRegex()
+                evaluated = mathSubRegex.replace(evaluated) { m ->
+                    formatSubscript(m.groupValues[1], m.groupValues[2])
+                }
+            }
+            evaluated
+                .replace("[ \t]+".toRegex(), " ")
+                .replace("( ", "(")
+                .replace(" )", ")")
+                .replace("[ ", "[")
+                .replace(" ]", "]")
+                .replace("{ ", "{")
+                .replace(" }", "}")
+                .replace(" ,", ",")
+                .replace(" ;", ";")
+                .replace("(- ", "(-")
+                .replace("(-", "(-")
+                .replace("(− ", "(−")
+                .replace("(−", "(−")
+                .replace("[- ", "[-")
+                .replace("[-", "[-")
+                .replace("[− ", "[−")
+                .replace("[−", "[−")
+                .replace(", - ", ", -")
+                .replace(", − ", ", −")
+                .replace("; - ", "; -")
+                .replace("; − ", "; −")
+                .replace("\u00A0", " ")
+                .trim()
+        } catch (_: Exception) {
+            // Safe fallback
+            decodeHtmlEntities(mathXml.replace("<[^>]+>".toRegex(), " ")).replace("\\s+".toRegex(), " ").trim()
+        }
+    }
+
+    private fun parseMathXml(xml: String): MathNode {
+        val tagRegex = "<(/?)(\\w+)([^>]*?)(\\s*/?)>".toRegex()
+        class Frame(val tag: String, val attrs: Map<String, String>, val children: MutableList<MathNode>)
+        val rootFrame = Frame("root", emptyMap(), mutableListOf())
+        val stack = ArrayDeque<Frame>()
+        stack.addLast(rootFrame)
+
+        var lastIndex = 0
+        tagRegex.findAll(xml).forEach { match ->
+            val textBetween = xml.substring(lastIndex, match.range.first)
+            if (textBetween.isNotBlank()) {
+                stack.last().children.add(MathNode("#text", text = textBetween))
+            }
+            lastIndex = match.range.last + 1
+
+            val isClosing = match.groupValues[1] == "/"
+            val tagName = match.groupValues[2].lowercase()
+            val rawAttrs = match.groupValues[3]
+            val isSelfClosing = match.groupValues[4].endsWith("/")
+
+            if (isClosing) {
+                if (stack.size > 1) {
+                    var popIdx = stack.size - 1
+                    while (popIdx > 0 && stack[popIdx].tag != tagName) {
+                        popIdx--
+                    }
+                    if (popIdx > 0) {
+                        while (stack.size - 1 > popIdx) {
+                            val unclosed = stack.removeLast()
+                            stack.last().children.add(MathNode(unclosed.tag, unclosed.attrs, children = unclosed.children))
+                        }
+                        val matched = stack.removeLast()
+                        stack.last().children.add(MathNode(matched.tag, matched.attrs, children = matched.children))
+                    }
+                }
+            } else {
+                val attrMap = mutableMapOf<String, String>()
+                val attrRegex = "(\\w+)=[\"']([^\"']*)[\"']".toRegex()
+                attrRegex.findAll(rawAttrs).forEach {
+                    attrMap[it.groupValues[1].lowercase()] = it.groupValues[2]
+                }
+                val node = MathNode(tagName, attrMap)
+                if (isSelfClosing) {
+                    stack.last().children.add(node)
+                } else {
+                    stack.addLast(Frame(tagName, attrMap, mutableListOf()))
+                }
+            }
+        }
+        val remainingText = xml.substring(lastIndex)
+        if (remainingText.isNotBlank()) {
+            stack.last().children.add(MathNode("#text", text = remainingText))
+        }
+        while (stack.size > 1) {
+            val unclosed = stack.removeLast()
+            stack.last().children.add(MathNode(unclosed.tag, unclosed.attrs, children = unclosed.children))
+        }
+        return rootFrame.children.firstOrNull { it.tag == "math" } ?: MathNode("math", children = rootFrame.children)
+    }
+
+    private fun formatMathOp(op: String): String {
+        return when (op) {
+            "(", "[", "{", "⟨" -> op
+            ")", "]", "}", "⟩" -> op
+            ",", ";" -> "$op "
+            "′", "″", "‴", "'", "\"" -> op
+            "|", "‖" -> op
+            "!", "¬" -> op
+            "^" -> "^"
+            "=", "+", "−", "-", "±", "∓", "·", "×", "*", "/", "÷" -> " $op "
+            "≠", "≈", "≡", "<", ">", "≤", "≥", "≪", "≫" -> " $op "
+            "→", "←", "↔", "⇒", "⇔", "⟹", "⟺" -> " $op "
+            "∈", "∉", "⊂", "⊆", "∪", "∩" -> " $op "
+            else -> " $op "
+        }
+    }
+
+    private fun toUnicodeSubscript(s: String): String? {
+        val map = mapOf(
+            '0' to '₀', '1' to '₁', '2' to '₂', '3' to '₃', '4' to '₄',
+            '5' to '₅', '6' to '₆', '7' to '₇', '8' to '₈', '9' to '₉',
+            '+' to '₊', '-' to '₋', '−' to '₋', '=' to '₌', '(' to '₍', ')' to '₎',
+            'a' to 'ₐ', 'e' to 'ₑ', 'h' to 'ₕ', 'i' to 'ᵢ', 'j' to 'ⱼ', 'k' to 'ₖ',
+            'l' to 'ₗ', 'm' to 'ₘ', 'n' to 'ₙ', 'o' to 'ₒ', 'p' to 'ₚ', 'r' to 'ᵣ',
+            's' to 'ₛ', 't' to 'ₜ', 'u' to 'ᵤ', 'v' to 'ᵥ', 'x' to 'ₓ',
+            'T' to 'ₜ'
+        )
+        val sb = StringBuilder()
+        for (c in s) {
+            val sub = map[c] ?: return null
+            sb.append(sub)
+        }
+        return sb.toString()
+    }
+
+    private fun formatSubscript(base: String, sub: String): String {
+        val cleanSub = sub.replace(" ", "").removeSurrounding("{", "}")
+        if (cleanSub.isBlank()) return base
+        if (cleanSub.length == 1) {
+            val unicode = toUnicodeSubscript(cleanSub)
+            if (unicode != null) return "$base$unicode"
+        }
+        return "$base[sub]$cleanSub[/sub]"
+    }
+
+    private fun toUnicodeSuperscript(s: String): String? {
+        val map = mapOf(
+            '0' to '⁰', '1' to '¹', '2' to '²', '3' to '³', '4' to '⁴',
+            '5' to '⁵', '6' to '⁶', '7' to '⁷', '8' to '⁸', '9' to '⁹',
+            '+' to '⁺', '-' to '⁻', '−' to '⁻', '=' to '⁼', '(' to '⁽', ')' to '⁾',
+            'n' to 'ⁿ', 'i' to 'ⁱ', 'T' to 'ᵀ', 't' to 'ᵗ', '*' to '٭',
+            'a' to 'ᵃ', 'b' to 'ᵇ', 'c' to 'ᶜ', 'd' to 'ᵈ', 'e' to 'ᵉ', 'f' to 'ᶠ',
+            'g' to 'ᵍ', 'h' to 'ʰ', 'j' to 'ʲ', 'k' to 'ᵏ', 'l' to 'ˡ', 'm' to 'ᵐ',
+            'o' to 'ᵒ', 'p' to 'ᵖ', 'r' to 'ʳ', 's' to 'ˢ', 'u' to 'ᵘ', 'v' to 'ᵛ',
+            'w' to 'ʷ', 'x' to 'ˣ', 'y' to 'ʸ', 'z' to 'ᶻ'
+        )
+        val sb = StringBuilder()
+        for (c in s) {
+            val sup = map[c] ?: return null
+            sb.append(sup)
+        }
+        return sb.toString()
+    }
+
+    private fun formatSuperscript(base: String, sup: String): String {
+        if (sup == "′" || sup == "'") return "$base′"
+        val cleanSup = sup.replace(" ", "").removeSurrounding("{", "}")
+        if (cleanSup.isBlank()) return base
+        val unicode = toUnicodeSuperscript(cleanSup)
+        return if (unicode != null && cleanSup.length <= 3) {
+            "$base$unicode"
+        } else {
+            "$base[sup]$cleanSup[/sup]"
+        }
+    }
+
+    private fun evalMathNode(node: MathNode): String {
+        return when (node.tag) {
+            "#text" -> decodeHtmlEntities(node.text)
+            "mi", "mn", "mtext" -> {
+                val raw = if (node.children.isNotEmpty()) {
+                    node.children.joinToString("") { evalMathNode(it) }
+                } else {
+                    decodeHtmlEntities(node.text)
+                }.trim()
+                val txt = raw.removePrefix("\\")
+                if (txt in listOf("cos", "sin", "tan", "log", "ln", "det", "min", "max", "exp", "arg", "argmax", "argmin")) {
+                    "$txt "
+                } else {
+                    txt
+                }
+            }
+            "mo" -> {
+                val txt = if (node.children.isNotEmpty()) {
+                    node.children.joinToString("") { evalMathNode(it) }
+                } else {
+                    decodeHtmlEntities(node.text)
+                }.trim()
+                formatMathOp(txt)
+            }
+            "mrow", "mstyle", "mpadded", "mphantom", "merror", "semantics", "math" -> {
+                node.children.filterNot { it.tag in listOf("annotation", "annotation-xml") }
+                    .joinToString("") { evalMathNode(it) }
+            }
+            "mspace" -> {
+                if (node.attributes["linebreak"] == "newline") "\n" else " "
+            }
+            "msub" -> {
+                val base = evalMathNode(node.children.getOrNull(0) ?: MathNode("#text")).trim()
+                val sub = evalMathNode(node.children.getOrNull(1) ?: MathNode("#text")).trim()
+                formatSubscript(base, sub)
+            }
+            "msup" -> {
+                val base = evalMathNode(node.children.getOrNull(0) ?: MathNode("#text")).trim()
+                val sup = evalMathNode(node.children.getOrNull(1) ?: MathNode("#text")).trim()
+                formatSuperscript(base, sup)
+            }
+            "msubsup" -> {
+                val base = evalMathNode(node.children.getOrNull(0) ?: MathNode("#text")).trim()
+                val sub = evalMathNode(node.children.getOrNull(1) ?: MathNode("#text")).trim()
+                val sup = evalMathNode(node.children.getOrNull(2) ?: MathNode("#text")).trim()
+                formatSubscript(base, sub) + formatSuperscript("", sup)
+            }
+            "mfrac" -> {
+                val num = evalMathNode(node.children.getOrNull(0) ?: MathNode("#text")).trim()
+                val den = evalMathNode(node.children.getOrNull(1) ?: MathNode("#text")).trim()
+                if (num.length <= 3 && den.length <= 3 && !num.contains(" ") && !den.contains(" ")) {
+                    "$num/$den"
+                } else {
+                    val cleanNum = if (num.contains(" ") && !num.startsWith("(") && !num.endsWith(")")) "($num)" else num
+                    val cleanDen = if (den.contains(" ") && !den.startsWith("(") && !den.endsWith(")")) "($den)" else den
+                    "$cleanNum / $cleanDen"
+                }
+            }
+            "msqrt" -> {
+                val inner = node.children.joinToString("") { evalMathNode(it) }.trim()
+                "√($inner)"
+            }
+            "mroot" -> {
+                val base = evalMathNode(node.children.getOrNull(0) ?: MathNode("#text")).trim()
+                val idx = evalMathNode(node.children.getOrNull(1) ?: MathNode("#text")).trim()
+                "${idx}√($base)"
+            }
+            "mfenced" -> {
+                val open = node.attributes["open"] ?: "("
+                val close = node.attributes["close"] ?: ")"
+                val sep = node.attributes["separators"] ?: ","
+                val inner = node.children.joinToString("$sep ") { evalMathNode(it).trim() }
+                "$open$inner$close"
+            }
+            "mtable" -> {
+                val rows = node.children.filter { it.tag == "mtr" }.map { tr ->
+                    tr.children.filter { it.tag == "mtd" }.map { td ->
+                        evalMathNode(td).trim()
+                    }
+                }
+                if (rows.isEmpty()) ""
+                else if (rows.size == 1) rows[0].joinToString("   ")
+                else rows.joinToString("\n") { row -> row.joinToString("   ") }
+            }
+            "mover", "munder", "munderover" -> {
+                val base = evalMathNode(node.children.getOrNull(0) ?: MathNode("#text")).trim()
+                val overOrUnder = evalMathNode(node.children.getOrNull(1) ?: MathNode("#text")).trim()
+                val third = node.children.getOrNull(2)?.let { evalMathNode(it).trim() }
+                if (node.tag == "mover") {
+                    when (overOrUnder) {
+                        "^", "̂", "\u0302", "\u02C6" -> "$basê"
+                        "→", "\u2192" -> "$base⃗"
+                        "¯", "-", "_" -> "$basē"
+                        else -> "$base ($overOrUnder)"
+                    }
+                } else if (third != null) {
+                    if (base in listOf("∏", "∑", "∫")) {
+                        "${base}_{$overOrUnder}^{$third}"
+                    } else {
+                        "$base ($overOrUnder to $third)"
+                    }
+                } else {
+                    "$base ($overOrUnder)"
+                }
+            }
+            else -> {
+                node.children.joinToString("") { evalMathNode(it) }
+            }
+        }
     }
 }
