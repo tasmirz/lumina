@@ -451,8 +451,8 @@ fun ReaderScreen(
     val adaptiveVerticalSpacing = adaptiveVerticalSpacingState?.value ?: false
     val goldenRatioChapterOpenersState = repository?.goldenRatioChapterOpeners?.collectAsState(initial = false)
     val goldenRatioChapterOpeners = goldenRatioChapterOpenersState?.value ?: false
-    val pagedSwipeThresholdState = repository?.pagedSwipeThreshold?.collectAsState(initial = 0.18f)
-    val pagedSwipeThreshold = pagedSwipeThresholdState?.value ?: 0.18f
+    val pagedSwipeThresholdState = repository?.pagedSwipeThreshold?.collectAsState(initial = 0.08f)
+    val pagedSwipeThreshold = pagedSwipeThresholdState?.value ?: 0.08f
     val paragraphSpacingState = repository?.paragraphSpacingMultiplier?.collectAsState(initial = 1.2f)
     val paragraphSpacingMultiplier = paragraphSpacingState?.value ?: 1.2f
     val assistantOrbStyleState = repository?.assistantOrbStyle?.collectAsState(initial = "DOCK_DOT")
@@ -1764,26 +1764,23 @@ fun ReaderScreen(
         }
 
         // Dynamic Rolling Texture Computation across SCROLL, PAGED, and PAGED_SCROLL
-        val textureScrollOffsetX by remember(dynamicRollingTexture, readingMode) {
-            derivedStateOf {
-                if (!dynamicRollingTexture) 0
-                else if (readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL) {
-                    ((pagerState.currentPage * 240) + (pagerState.currentPageOffsetFraction * 240)).toInt()
-                } else {
-                    0
-                }
+        // Lambda providers defer state reads strictly into the Draw phase, preventing composition storms during swiping
+        val getTextureScrollOffsetX: () -> Int = {
+            if (!dynamicRollingTexture) 0
+            else if (readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL) {
+                ((pagerState.currentPage * 240) + (pagerState.currentPageOffsetFraction * 240)).toInt()
+            } else {
+                0
             }
         }
-        val textureScrollOffsetY by remember(dynamicRollingTexture, readingMode) {
-            derivedStateOf {
-                if (!dynamicRollingTexture) 0
-                else if (readingMode == ReadingMode.SCROLL) {
-                    listState.firstVisibleItemIndex * 400 + listState.firstVisibleItemScrollOffset
-                } else if (readingMode == ReadingMode.PAGED_SCROLL) {
-                    ((pagerState.currentPage * 160) + (pagerState.currentPageOffsetFraction * 160)).toInt()
-                } else {
-                    ((pagerState.currentPage * 120) + (pagerState.currentPageOffsetFraction * 120)).toInt()
-                }
+        val getTextureScrollOffsetY: () -> Int = {
+            if (!dynamicRollingTexture) 0
+            else if (readingMode == ReadingMode.SCROLL) {
+                listState.firstVisibleItemIndex * 400 + listState.firstVisibleItemScrollOffset
+            } else if (readingMode == ReadingMode.PAGED_SCROLL) {
+                ((pagerState.currentPage * 160) + (pagerState.currentPageOffsetFraction * 160)).toInt()
+            } else {
+                ((pagerState.currentPage * 120) + (pagerState.currentPageOffsetFraction * 120)).toInt()
             }
         }
 
@@ -1814,8 +1811,8 @@ fun ReaderScreen(
                     android.graphics.BitmapShader(tile, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
                 }
                 Canvas(modifier = Modifier.fillMaxSize()) {
-                    val rollX = if (dynamicRollingTexture) (((textureScrollOffsetX % 128) + 128) % 128).toFloat() else 0f
-                    val rollY = if (dynamicRollingTexture) (((textureScrollOffsetY % 128) + 128) % 128).toFloat() else 0f
+                    val rollX = if (dynamicRollingTexture) (((getTextureScrollOffsetX() % 128) + 128) % 128).toFloat() else 0f
+                    val rollY = if (dynamicRollingTexture) (((getTextureScrollOffsetY() % 128) + 128) % 128).toFloat() else 0f
                     withTransform({
                         translate(left = -rollX, top = -rollY)
                     }) {
@@ -1865,8 +1862,8 @@ fun ReaderScreen(
                         )
                 ) {
                     Canvas(modifier = Modifier.fillMaxSize()) {
-                        val rollX = if (dynamicRollingTexture) (((textureScrollOffsetX % 128) + 128) % 128).toFloat() else 0f
-                        val rollY = if (dynamicRollingTexture) (((textureScrollOffsetY % 128) + 128) % 128).toFloat() else 0f
+                        val rollX = if (dynamicRollingTexture) (((getTextureScrollOffsetX() % 128) + 128) % 128).toFloat() else 0f
+                        val rollY = if (dynamicRollingTexture) (((getTextureScrollOffsetY() % 128) + 128) % 128).toFloat() else 0f
                         withTransform({
                             translate(left = -rollX, top = -rollY)
                         }) {
@@ -1906,8 +1903,8 @@ fun ReaderScreen(
                     android.graphics.BitmapShader(tile, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
                 }
                 Canvas(modifier = Modifier.fillMaxSize()) {
-                    val rollX = if (dynamicRollingTexture) (((textureScrollOffsetX % 48) + 48) % 48).toFloat() else 0f
-                    val rollY = if (dynamicRollingTexture) (((textureScrollOffsetY % 48) + 48) % 48).toFloat() else 0f
+                    val rollX = if (dynamicRollingTexture) (((getTextureScrollOffsetX() % 48) + 48) % 48).toFloat() else 0f
+                    val rollY = if (dynamicRollingTexture) (((getTextureScrollOffsetY() % 48) + 48) % 48).toFloat() else 0f
                     withTransform({
                         translate(left = -rollX, top = -rollY)
                     }) {
@@ -1947,8 +1944,8 @@ fun ReaderScreen(
                     android.graphics.BitmapShader(tile, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
                 }
                 Canvas(modifier = Modifier.fillMaxSize()) {
-                    val rollX = if (dynamicRollingTexture) (((textureScrollOffsetX % 36) + 36) % 36).toFloat() else 0f
-                    val rollY = if (dynamicRollingTexture) (((textureScrollOffsetY % 36) + 36) % 36).toFloat() else 0f
+                    val rollX = if (dynamicRollingTexture) (((getTextureScrollOffsetX() % 36) + 36) % 36).toFloat() else 0f
+                    val rollY = if (dynamicRollingTexture) (((getTextureScrollOffsetY() % 36) + 36) % 36).toFloat() else 0f
                     withTransform({
                         translate(left = -rollX, top = -rollY)
                     }) {
@@ -1988,8 +1985,8 @@ fun ReaderScreen(
                         .background((if (isDark) Color(0xFF382A1C) else Color(0xFFB88C56)).copy(alpha = 0.10f))
                 ) {
                     Canvas(modifier = Modifier.fillMaxSize()) {
-                        val rollX = if (dynamicRollingTexture) (((textureScrollOffsetX % 128) + 128) % 128).toFloat() else 0f
-                        val rollY = if (dynamicRollingTexture) (((textureScrollOffsetY % 128) + 128) % 128).toFloat() else 0f
+                        val rollX = if (dynamicRollingTexture) (((getTextureScrollOffsetX() % 128) + 128) % 128).toFloat() else 0f
+                        val rollY = if (dynamicRollingTexture) (((getTextureScrollOffsetY() % 128) + 128) % 128).toFloat() else 0f
                         withTransform({
                             translate(left = -rollX, top = -rollY)
                         }) {
@@ -2018,7 +2015,7 @@ fun ReaderScreen(
                     android.graphics.BitmapShader(tile, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
                 }
                 Canvas(modifier = Modifier.fillMaxSize()) {
-                    val rollY = if (dynamicRollingTexture) (((textureScrollOffsetY % 72) + 72) % 72).toFloat() else 0f
+                    val rollY = if (dynamicRollingTexture) (((getTextureScrollOffsetY() % 72) + 72) % 72).toFloat() else 0f
                     withTransform({
                         translate(left = 0f, top = -rollY)
                     }) {
@@ -2046,7 +2043,7 @@ fun ReaderScreen(
                     android.graphics.BitmapShader(tile, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
                 }
                 Canvas(modifier = Modifier.fillMaxSize()) {
-                    val rollY = if (dynamicRollingTexture) (((textureScrollOffsetY % 112) + 112) % 112).toFloat() else 0f
+                    val rollY = if (dynamicRollingTexture) (((getTextureScrollOffsetY() % 112) + 112) % 112).toFloat() else 0f
                     withTransform({
                         translate(left = 0f, top = -rollY)
                     }) {
@@ -2074,8 +2071,8 @@ fun ReaderScreen(
                     android.graphics.BitmapShader(tile, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
                 }
                 Canvas(modifier = Modifier.fillMaxSize()) {
-                    val rollX = if (dynamicRollingTexture) (((textureScrollOffsetX % 64) + 64) % 64).toFloat() else 0f
-                    val rollY = if (dynamicRollingTexture) (((textureScrollOffsetY % 64) + 64) % 64).toFloat() else 0f
+                    val rollX = if (dynamicRollingTexture) (((getTextureScrollOffsetX() % 64) + 64) % 64).toFloat() else 0f
+                    val rollY = if (dynamicRollingTexture) (((getTextureScrollOffsetY() % 64) + 64) % 64).toFloat() else 0f
                     withTransform({
                         translate(left = -rollX, top = -rollY)
                     }) {
@@ -2111,8 +2108,8 @@ fun ReaderScreen(
                             Canvas(modifier = Modifier.fillMaxSize()) {
                                 val tileW = customBitmap.width.coerceAtLeast(1)
                                 val tileH = customBitmap.height.coerceAtLeast(1)
-                                val rollX = if (dynamicRollingTexture) (((textureScrollOffsetX % tileW) + tileW) % tileW).toFloat() else 0f
-                                val rollY = if (dynamicRollingTexture) (((textureScrollOffsetY % tileH) + tileH) % tileH).toFloat() else 0f
+                                val rollX = if (dynamicRollingTexture) (((getTextureScrollOffsetX() % tileW) + tileW) % tileW).toFloat() else 0f
+                                val rollY = if (dynamicRollingTexture) (((getTextureScrollOffsetY() % tileH) + tileH) % tileH).toFloat() else 0f
                                 withTransform({
                                     translate(left = -rollX, top = -rollY)
                                 }) {

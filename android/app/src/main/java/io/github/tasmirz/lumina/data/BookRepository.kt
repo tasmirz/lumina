@@ -125,7 +125,7 @@ class BookRepository private constructor(private val context: Context) {
     private val _goldenRatioChapterOpeners = MutableStateFlow(prefs.getBoolean("golden_ratio_chapter_openers", false))
     val goldenRatioChapterOpeners: StateFlow<Boolean> = _goldenRatioChapterOpeners.asStateFlow()
 
-    private val _pagedSwipeThreshold = MutableStateFlow(prefs.getFloat("paged_swipe_threshold", 0.18f))
+    private val _pagedSwipeThreshold = MutableStateFlow(prefs.getFloat("paged_swipe_threshold", 0.08f))
     val pagedSwipeThreshold: StateFlow<Float> = _pagedSwipeThreshold.asStateFlow()
 
     private val _showStartupLoadingScreen = MutableStateFlow(prefs.getBoolean("show_startup_loading_screen", false))
@@ -414,7 +414,7 @@ class BookRepository private constructor(private val context: Context) {
             fillPageToBottom = prefs.getBoolean("fill_page_to_bottom", true),
             adaptiveVerticalSpacing = prefs.getBoolean("adaptive_vertical_spacing", false),
             goldenRatioChapterOpeners = prefs.getBoolean("golden_ratio_chapter_openers", false),
-            pagedSwipeThreshold = prefs.getFloat("paged_swipe_threshold", 0.18f),
+            pagedSwipeThreshold = prefs.getFloat("paged_swipe_threshold", 0.08f),
             showStartupLoadingScreen = prefs.getBoolean("show_startup_loading_screen", false),
             uncachedBookOpenMode = try { UncachedBookOpenMode.valueOf(prefs.getString("uncached_book_open_mode", UncachedBookOpenMode.INSTANT_ACTIVE_FIRST.name) ?: UncachedBookOpenMode.INSTANT_ACTIVE_FIRST.name) } catch (_: Exception) { UncachedBookOpenMode.INSTANT_ACTIVE_FIRST },
             inlineImageWidthPercent = prefs.getInt("inline_image_width_percent", 100),

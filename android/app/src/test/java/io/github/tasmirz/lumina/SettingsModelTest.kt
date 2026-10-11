@@ -440,9 +440,9 @@ class SettingsModelTest {
     }
 
     @Test
-    fun testPagedSwipeThresholdDefaultsToEighteenPercent() {
+    fun testPagedSwipeThresholdDefaultsToEightPercent() {
         val settings = io.github.tasmirz.lumina.model.ReaderSettings()
-        assertEquals(0.18f, settings.pagedSwipeThreshold, 0.001f)
+        assertEquals(0.08f, settings.pagedSwipeThreshold, 0.001f)
         val updated = settings.copy(pagedSwipeThreshold = 0.25f)
         assertEquals(0.25f, updated.pagedSwipeThreshold, 0.001f)
     }

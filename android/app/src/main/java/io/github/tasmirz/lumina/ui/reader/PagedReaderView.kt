@@ -101,7 +101,7 @@ fun PagedReaderView(
             beyondViewportPageCount = 1,
             flingBehavior = PagerDefaults.flingBehavior(
                 state = pagerState,
-                snapPositionalThreshold = pagedSwipeThreshold.coerceIn(0.05f, 0.60f)
+                snapPositionalThreshold = pagedSwipeThreshold.coerceIn(0.04f, 0.50f)
             ),
             pageSpacing = (horizontalPadding * 1.5f).dp.coerceAtLeast(32.dp),
             modifier = Modifier
@@ -147,7 +147,16 @@ fun PagedReaderView(
                         .pointerInput(gestureDoubleTap, gestureSingleTap) {
                             detectTapGestures(
                                 onDoubleTap = { onExecuteGesture(gestureDoubleTap) },
-                                onTap = { onToggleControls() }
+                                onTap = { offset ->
+                                    val pageWidth = size.width
+                                    if (offset.x < pageWidth * 0.20f) {
+                                        onPrevPage()
+                                    } else if (offset.x > pageWidth * 0.80f) {
+                                        onNextPage()
+                                    } else {
+                                        onToggleControls()
+                                    }
+                                }
                             )
                         },
                     verticalArrangement = Arrangement.Center,
@@ -312,11 +321,18 @@ fun PagedReaderView(
                                 onDoubleTap = if (gestureDoubleTap != GestureAction.NONE) {
                                     { onExecuteGesture(gestureDoubleTap) }
                                 } else null,
-                                onTap = {
+                                onTap = { offset ->
                                     if (isAutoScrolling) {
                                         onExecuteGesture(GestureAction.NONE)
                                     } else {
-                                        onExecuteGesture(gestureSingleTap)
+                                        val pageWidth = size.width
+                                        if (offset.x < pageWidth * 0.20f) {
+                                            onPrevPage()
+                                        } else if (offset.x > pageWidth * 0.80f) {
+                                            onNextPage()
+                                        } else {
+                                            onExecuteGesture(gestureSingleTap)
+                                        }
                                     }
                                 }
                             )
@@ -461,31 +477,5 @@ fun PagedReaderView(
                 }
             }
         }
-
-        // Page Navigation Tap Zones
-        Box(
-            modifier = Modifier
-                .fillMaxHeight()
-                .width(60.dp)
-                .align(Alignment.CenterStart)
-                .pointerInput(isAutoScrolling, gestureDoubleTap) {
-                    detectTapGestures(
-                        onDoubleTap = { onExecuteGesture(gestureDoubleTap) },
-                        onTap = { onPrevPage() }
-                    )
-                }
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxHeight()
-                .width(60.dp)
-                .align(Alignment.CenterEnd)
-                .pointerInput(isAutoScrolling, gestureDoubleTap) {
-                    detectTapGestures(
-                        onDoubleTap = { onExecuteGesture(gestureDoubleTap) },
-                        onTap = { onNextPage() }
-                    )
-                }
-        )
     }
 }

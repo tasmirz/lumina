@@ -261,8 +261,8 @@ fun AdvancedSettingsScreen(
     val goldenRatioChapterOpenersState = repository?.goldenRatioChapterOpeners?.collectAsState(initial = false)
     val goldenRatioChapterOpeners = goldenRatioChapterOpenersState?.value ?: false
 
-    val pagedSwipeThresholdState = repository?.pagedSwipeThreshold?.collectAsState(initial = 0.18f)
-    val pagedSwipeThreshold = pagedSwipeThresholdState?.value ?: 0.18f
+    val pagedSwipeThresholdState = repository?.pagedSwipeThreshold?.collectAsState(initial = 0.08f)
+    val pagedSwipeThreshold = pagedSwipeThresholdState?.value ?: 0.08f
 
     val showStartupLoadingScreenState = repository?.showStartupLoadingScreen?.collectAsState(initial = false)
     val showStartupLoadingScreen = showStartupLoadingScreenState?.value ?: false

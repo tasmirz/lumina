@@ -594,7 +594,7 @@ fun AppearanceSheet(
     onVerticalPaddingChange: (Int) -> Unit = {},
     verticallyCenterPages: Boolean = true,
     onToggleVerticallyCenterPages: (Boolean) -> Unit = {},
-    pagedSwipeThreshold: Float = 0.18f,
+    pagedSwipeThreshold: Float = 0.08f,
     onPagedSwipeThresholdChange: (Float) -> Unit = {},
     paragraphSpacing: Float = 1.2f,
     onParagraphSpacingChange: (Float) -> Unit = {},
