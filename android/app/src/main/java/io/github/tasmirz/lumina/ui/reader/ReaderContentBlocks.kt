@@ -13,6 +13,7 @@ import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateRotation
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
@@ -54,6 +55,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -71,17 +73,55 @@ fun splitPageIntoBlocks(rawText: String): List<PageBlock> {
         return listOf(PageBlock.Text(rawText))
     }
     val blocks = mutableListOf<PageBlock>()
-    val tableRegex = "\\[TABLE:[^\\]]+\\]".toRegex()
     var lastIdx = 0
-    tableRegex.findAll(rawText).forEach { match ->
-        if (match.range.first > lastIdx) {
-            val txt = rawText.substring(lastIdx, match.range.first).trim()
-            if (txt.isNotEmpty()) {
-                blocks.add(PageBlock.Text(txt))
+    var scanIdx = 0
+    while (scanIdx < rawText.length) {
+        val start = rawText.indexOf("[TABLE:", scanIdx)
+        if (start == -1) break
+
+        var depth = 0
+        var inString = false
+        var escape = false
+        var end = -1
+        for (i in start until rawText.length) {
+            val ch = rawText[i]
+            if (inString) {
+                if (escape) {
+                    escape = false
+                } else if (ch == '\\') {
+                    escape = true
+                } else if (ch == '"') {
+                    inString = false
+                }
+            } else {
+                if (ch == '"') {
+                    inString = true
+                } else if (ch == '[') {
+                    depth++
+                } else if (ch == ']') {
+                    depth--
+                    if (depth == 0) {
+                        end = i
+                        break
+                    }
+                }
             }
         }
-        blocks.add(PageBlock.Table(match.value))
-        lastIdx = match.range.last + 1
+
+        if (end != -1) {
+            if (start > lastIdx) {
+                val txt = rawText.substring(lastIdx, start).trim()
+                if (txt.isNotEmpty()) {
+                    blocks.add(PageBlock.Text(txt))
+                }
+            }
+            val tableToken = rawText.substring(start, end + 1)
+            blocks.add(PageBlock.Table(tableToken))
+            lastIdx = end + 1
+            scanIdx = end + 1
+        } else {
+            scanIdx = start + 7
+        }
     }
     if (lastIdx < rawText.length) {
         val txt = rawText.substring(lastIdx).trim()
@@ -137,6 +177,7 @@ fun ReaderTableCard(
         }
     }
 
+    val isSingleColCentered = headers.isEmpty() && totalCols == 1
     val outlineColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.40f)
 
     Card(
@@ -153,10 +194,14 @@ fun ReaderTableCard(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(hScrollState)
-                .padding(vertical = 6.dp, horizontal = 8.dp)
+                .then(if (isSingleColCentered) Modifier else Modifier.horizontalScroll(hScrollState))
+                .padding(vertical = 6.dp, horizontal = 8.dp),
+            contentAlignment = if (isSingleColCentered) Alignment.Center else Alignment.CenterStart
         ) {
-            Column(modifier = Modifier.width(IntrinsicSize.Max)) {
+            Column(
+                modifier = if (isSingleColCentered) Modifier.fillMaxWidth() else Modifier.width(IntrinsicSize.Max),
+                horizontalAlignment = if (isSingleColCentered) Alignment.CenterHorizontally else Alignment.Start
+            ) {
                 if (headers.isNotEmpty()) {
                     Row(
                         modifier = Modifier
@@ -197,7 +242,7 @@ fun ReaderTableCard(
                 }
 
                 rows.forEachIndexed { rowIdx, rowCells ->
-                    val rowBg = if (rowIdx % 2 == 1) {
+                    val rowBg = if (!isSingleColCentered && rowIdx % 2 == 1) {
                         MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f)
                     } else {
                         Color.Transparent
@@ -207,21 +252,25 @@ fun ReaderTableCard(
                             .fillMaxWidth()
                             .background(rowBg)
                             .height(IntrinsicSize.Min),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = if (isSingleColCentered) Arrangement.Center else Arrangement.Start
                     ) {
                         for (c in 0 until totalCols) {
                             val cellText = rowCells.getOrNull(c) ?: ""
                             Box(
                                 modifier = Modifier
-                                    .width(colWidths[c])
+                                    .then(if (isSingleColCentered) Modifier.fillMaxWidth() else Modifier.width(colWidths[c]))
                                     .padding(horizontal = 10.dp, vertical = 8.dp),
-                                contentAlignment = Alignment.CenterStart
+                                contentAlignment = if (isSingleColCentered) Alignment.Center else Alignment.CenterStart
                             ) {
                                 Text(
                                     text = cellText,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = FontWeight.Light,
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.92f)
+                                    style = if (isSingleColCentered) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Normal,
+                                    letterSpacing = if (isSingleColCentered) 1.5.sp else 0.sp,
+                                    textAlign = if (isSingleColCentered) TextAlign.Center else TextAlign.Start,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.92f),
+                                    modifier = if (isSingleColCentered) Modifier.fillMaxWidth() else Modifier
                                 )
                             }
                             if (c < totalCols - 1) {
@@ -234,7 +283,7 @@ fun ReaderTableCard(
                             }
                         }
                     }
-                    if (rowIdx < rows.size - 1) {
+                    if (!isSingleColCentered && rowIdx < rows.size - 1) {
                         HorizontalDivider(
                             thickness = 0.5.dp,
                             color = outlineColor.copy(alpha = 0.25f)

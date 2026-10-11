@@ -466,4 +466,28 @@ class SettingsModelTest {
         assertTrue(updated.goldenRatioChapterOpeners)
         assertFalse(updated.verticallyCenterPages)
     }
+
+    @Test
+    fun testSplitPageIntoBlocksWithTableTokens() {
+        val sample = """picked out on its white face in elegant lettering,
+the three slogans of the Party:
+
+[TABLE:{"headers":[],"rows":[["WAR  IS  PEACE"],["FREEDOM  IS  SLAVERY"],["IGNORANCE IS STRENGTH"]]}]
+
+The Ministry of Truth contained, it was said, three thousand rooms..."""
+
+        val blocks = io.github.tasmirz.lumina.ui.reader.splitPageIntoBlocks(sample)
+        assertEquals(3, blocks.size)
+        assertTrue(blocks[0] is io.github.tasmirz.lumina.ui.reader.PageBlock.Text)
+        assertTrue((blocks[0] as io.github.tasmirz.lumina.ui.reader.PageBlock.Text).text.contains("the three slogans of the Party:"))
+        assertFalse((blocks[0] as io.github.tasmirz.lumina.ui.reader.PageBlock.Text).text.contains("rows"))
+
+        assertTrue(blocks[1] is io.github.tasmirz.lumina.ui.reader.PageBlock.Table)
+        val tableToken = (blocks[1] as io.github.tasmirz.lumina.ui.reader.PageBlock.Table).token
+        assertEquals("""[TABLE:{"headers":[],"rows":[["WAR  IS  PEACE"],["FREEDOM  IS  SLAVERY"],["IGNORANCE IS STRENGTH"]]}]""", tableToken)
+
+        assertTrue(blocks[2] is io.github.tasmirz.lumina.ui.reader.PageBlock.Text)
+        assertTrue((blocks[2] as io.github.tasmirz.lumina.ui.reader.PageBlock.Text).text.startsWith("The Ministry of Truth"))
+        assertFalse((blocks[2] as io.github.tasmirz.lumina.ui.reader.PageBlock.Text).text.contains("rows"))
+    }
 }
