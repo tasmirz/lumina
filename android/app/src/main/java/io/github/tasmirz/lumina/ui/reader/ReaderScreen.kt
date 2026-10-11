@@ -454,6 +454,12 @@ fun ReaderScreen(
     val pagedSafeLinesToRemove = pagedSafeLinesToRemoveState?.value ?: 0
     val verticallyCenterPagesState = repository?.verticallyCenterPages?.collectAsState(initial = false)
     val verticallyCenterPages = verticallyCenterPagesState?.value ?: false
+    val fillPageToBottomState = repository?.fillPageToBottom?.collectAsState(initial = true)
+    val fillPageToBottom = fillPageToBottomState?.value ?: true
+    val adaptiveVerticalSpacingState = repository?.adaptiveVerticalSpacing?.collectAsState(initial = false)
+    val adaptiveVerticalSpacing = adaptiveVerticalSpacingState?.value ?: false
+    val goldenRatioChapterOpenersState = repository?.goldenRatioChapterOpeners?.collectAsState(initial = false)
+    val goldenRatioChapterOpeners = goldenRatioChapterOpenersState?.value ?: false
     val pagedSwipeThresholdState = repository?.pagedSwipeThreshold?.collectAsState(initial = 0.18f)
     val pagedSwipeThreshold = pagedSwipeThresholdState?.value ?: 0.18f
     val paragraphSpacingState = repository?.paragraphSpacingMultiplier?.collectAsState(initial = 1.2f)
@@ -861,12 +867,12 @@ fun ReaderScreen(
     val screenWidthDp = configuration.screenWidthDp
     val screenHeightDp = configuration.screenHeightDp
 
-    val currentConfigKey = "${book.id}_${fontSize}_${isLandscape}_${readingMode}_${screenWidthDp}_${screenHeightDp}_${horizontalPadding}_${verticalPadding}_${(lineHeightMultiplier * 100).toInt()}_${(paragraphSpacingMultiplier * 100).toInt()}_${pagedSafeLinesToRemove}"
+    val currentConfigKey = "${book.id}_${fontSize}_${isLandscape}_${readingMode}_${screenWidthDp}_${screenHeightDp}_${horizontalPadding}_${verticalPadding}_${(lineHeightMultiplier * 100).toInt()}_${(paragraphSpacingMultiplier * 100).toInt()}_${pagedSafeLinesToRemove}_${fillPageToBottom}"
     var pagesConfigKey by remember { mutableStateOf(currentConfigKey) }
 
     // Prepared pages for Paged Mode with smart character/sentence budgeting so text never overflows
     // Non-blocking in-memory cache lookup on composition; background precomputation via getOrComputeAsync
-    var pages by remember(book.id, book.chapters.size, fontSize, readingMode, isLandscape, screenWidthDp, screenHeightDp, horizontalPadding, verticalPadding, lineHeightMultiplier, paragraphSpacingMultiplier, pagedSafeLinesToRemove) {
+    var pages by remember(book.id, book.chapters.size, fontSize, readingMode, isLandscape, screenWidthDp, screenHeightDp, horizontalPadding, verticalPadding, lineHeightMultiplier, paragraphSpacingMultiplier, pagedSafeLinesToRemove, fillPageToBottom) {
         val cached = if (isPagedReading) {
             PageCache.getCached(
                 bookId = book.id,
@@ -880,6 +886,7 @@ fun ReaderScreen(
                 verticalPaddingDp = verticalPadding,
                 paragraphSpacingMultiplier = paragraphSpacingMultiplier,
                 safeLinesToRemove = pagedSafeLinesToRemove,
+                fillPageToBottom = fillPageToBottom,
                 context = context
             )
         } else null
@@ -889,7 +896,7 @@ fun ReaderScreen(
         mutableStateOf(cached ?: emptyList())
     }
 
-    LaunchedEffect(book.id, book.chapters.size, fontSize, readingMode, isLandscape, isPagedReading, screenWidthDp, screenHeightDp, horizontalPadding, verticalPadding, lineHeightMultiplier, paragraphSpacingMultiplier, pagedSafeLinesToRemove) {
+    LaunchedEffect(book.id, book.chapters.size, fontSize, readingMode, isLandscape, isPagedReading, screenWidthDp, screenHeightDp, horizontalPadding, verticalPadding, lineHeightMultiplier, paragraphSpacingMultiplier, pagedSafeLinesToRemove, fillPageToBottom) {
         if (isPagedReading && (pages.isEmpty() || pagesConfigKey != currentConfigKey) && book.chapters.isNotEmpty()) {
             val allPages = PageCache.getOrComputeAsync(
                 bookId = book.id,
@@ -904,6 +911,7 @@ fun ReaderScreen(
                 lineHeightMultiplier = lineHeightMultiplier,
                 paragraphSpacingMultiplier = paragraphSpacingMultiplier,
                 safeLinesToRemove = pagedSafeLinesToRemove,
+                fillPageToBottom = fillPageToBottom,
                 dbHelper = repository?.dbHelper,
                 context = context,
                 activeChapterIndex = book.currentChapter,
@@ -2133,270 +2141,63 @@ fun ReaderScreen(
                     val imeBottomInset = WindowInsets.ime.asPaddingValues().calculateBottomPadding()
                     val effectiveImePadding = if (showInBookSearchDialog) imeBottomInset else 0.dp
 
-                    SelectionContainer(modifier = Modifier.fillMaxSize()) {
-                        LazyColumn(
-                            state = listState,
-                            contentPadding = PaddingValues(
-                                top = (76 + verticalPadding).dp,
-                                bottom = 120.dp + progressBottomInset + effectiveImePadding + verticalPadding.dp,
-                                start = scrollHorizontalPaddingStart,
-                                end = scrollHorizontalPaddingEnd
-                            ),
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                        book.chapters.forEachIndexed { chapIdx, chapter ->
-                            val chapterBookmarks = bookmarksByChapter[chapter.title.trim().lowercase()] ?: emptyList()
-                            item(key = "chap-header-$chapIdx", contentType = "chap_header") {
-                                DisableSelection {
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(top = if (chapIdx == 0) 16.dp else 48.dp, bottom = 28.dp),
-                                        horizontalAlignment = Alignment.CenterHorizontally
-                                    ) {
-                                        if (chapIdx > 0) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .width(48.dp)
-                                                    .height(1.dp)
-                                                    .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                                            )
-                                            Spacer(modifier = Modifier.height(32.dp))
-                                        }
-                                        val isSameAsChap = chapter.title.equals(book.title, ignoreCase = true) ||
-                                                chapter.title.equals(chapter.subtitle, ignoreCase = true)
-                                        val showEyebrow = !isSameAsChap && (chapIdx > 0 || (chapter.subtitle.isNotBlank() && chapter.subtitle.startsWith("Part", ignoreCase = true)))
-                                        if (showEyebrow) {
-                                            val eyebrowText = if (chapter.subtitle.isNotBlank() && chapter.subtitle.startsWith("Part", ignoreCase = true)) {
-                                                chapter.subtitle.uppercase()
-                                            } else {
-                                                book.title.uppercase()
-                                            }
-                                            Text(
-                                                text = eyebrowText,
-                                                fontFamily = FontFamily.SansSerif,
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Normal,
-                                                letterSpacing = 2.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                            Spacer(modifier = Modifier.height(6.dp))
-                                        }
-                                        Text(
-                                            text = chapter.title,
-                                            fontFamily = FontFamily.Serif,
-                                            fontSize = 26.sp,
-                                            fontWeight = FontWeight.Normal,
-                                            textAlign = TextAlign.Center,
-                                            color = MaterialTheme.colorScheme.onBackground
-                                        )
-                                        if (chapter.subtitle.isNotBlank() && !chapter.subtitle.startsWith("Part", ignoreCase = true)) {
-                                            Spacer(modifier = Modifier.height(4.dp))
-                                            Text(
-                                                text = chapter.subtitle,
-                                                fontStyle = FontStyle.Italic,
-                                                fontSize = 14.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-
-                            itemsIndexed(
-                                items = chapter.paragraphs,
-                                key = { pIdx, _ -> "chap-${chapIdx}-para-${pIdx}" },
-                                contentType = { _, _ -> "paragraph" }
-                            ) { pIdx, para ->
-                                val matchingBookmarks = remember(para, chapterBookmarks) {
-                                    if (chapterBookmarks.isEmpty()) {
-                                        emptyList()
-                                    } else {
-                                        chapterBookmarks.filter { b ->
-                                            val q = b.quote.trim()
-                                            q.isNotBlank() && para.contains(q, ignoreCase = true)
-                                        }
-                                    }
-                                }
-                                val isBeingSpoken = if (isTtsSpeaking) speakingChapterIdx == chapIdx && speakingParaIdx == pIdx else false
-
-                                val isDuplicateTitlePara = pIdx == 0 && (
-                                    para.trim().equals(book.title.trim(), ignoreCase = true) ||
-                                    para.trim().equals(chapter.title.trim(), ignoreCase = true)
-                                )
-                                if (isDuplicateTitlePara) {
-                                    // Suppress redundant duplicated title in body paragraph
-                                } else if (para.startsWith("[TABLE:") && para.endsWith("]")) {
-                                    ReaderTableCard(tableToken = para)
-                                } else if (para.startsWith("[IMG:") && para.endsWith("]")) {
-                                    val imgPath = para.removePrefix("[IMG:").removeSuffix("]")
-                                    val bitmap = rememberBookImage(imgPath, isInlineImage = true)
-                                    InlineReaderImage(
-                                        bitmap = bitmap,
-                                        imgPath = imgPath,
-                                        widthFraction = inlineImageWidthFraction,
-                                        onOpenLightbox = { bmp, path ->
-                                            activeLightboxBitmap = bmp
-                                            activeLightboxPath = path
-                                        },
-                                        onTap = {
-                                            if (showSelectionMenu) showSelectionMenu = false else showControls = !showControls
-                                        }
-                                    )
-                                } else if (para == "[DIVIDER]" || para.trim() == "⁂" || para.trim() == "* * *" || para.trim() == "***") {
-                                    ReaderDivider()
-                                } else if (para.startsWith("[VERSE:") && para.endsWith("]")) {
-                                    val verseContent = para.removePrefix("[VERSE:").removeSuffix("]")
-                                    ReaderVerseCard(
-                                        verse = verseContent,
-                                        fontSize = fontSize.sp,
-                                        fontFamily = fontFamily,
-                                        textColor = MaterialTheme.colorScheme.onBackground
-                                    )
-                                } else if (para.startsWith("[QUOTE:") && para.endsWith("]")) {
-                                    val quoteContent = para.removePrefix("[QUOTE:").removeSuffix("]")
-                                    ReaderQuoteCard(
-                                        quote = quoteContent,
-                                        fontSize = fontSize.sp,
-                                        fontFamily = fontFamily,
-                                        textColor = MaterialTheme.colorScheme.onBackground
-                                    )
-                                } else {
-                                    val flowPara = remember(para) {
-                                        if (!para.startsWith("[TABLE:") && !para.startsWith("[IMG:") && !para.startsWith("[VERSE:") && !para.startsWith("[QUOTE:") && para != "[DIVIDER]" && para.contains("\n")) {
-                                            para.lines().map { it.trim() }.filter { it.isNotBlank() }.joinToString(" ")
-                                        } else {
-                                            para
-                                        }
-                                    }
-                                    val isDropCap = chapIdx == 0 && pIdx == 0 && flowPara.length > 40 && !flowPara.startsWith("[IMG:") && !flowPara.startsWith("[TABLE:") && !flowPara.startsWith("[VERSE:") && !flowPara.startsWith("[QUOTE:") && flowPara != "[DIVIDER]"
-                                    val onBgColor = MaterialTheme.colorScheme.onBackground
-                                    val secColor = MaterialTheme.colorScheme.secondary
-                                    val activeSearchQ = if (inBookSearchQuery.length >= 2) inBookSearchQuery else ""
-                                    val isActiveMatch = inBookSearchResults.getOrNull(inBookCurrentMatchIndex)?.let {
-                                        it.chapterIndex == chapIdx && it.paragraphIndex == pIdx
-                                    } ?: false
-                                    val hasFormatting = matchingBookmarks.isNotEmpty() || isDropCap || activeSearchQ.isNotEmpty() ||
-                                        flowPara.contains("[sub]") || flowPara.contains("[sup]") ||
-                                        flowPara.contains("[INLINE_IMG:")
-
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .then(
-                                                if (isBeingSpoken) {
-                                                    Modifier
-                                                        .background(
-                                                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f),
-                                                            shape = RoundedCornerShape(6.dp)
-                                                        )
-                                                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                                                } else {
-                                                    Modifier.padding(bottom = (fontSize * 0.45f).dp)
-                                                }
-                                            )
-                                            .then(
-                                                if (isTtsSpeaking) {
-                                                    Modifier.clickable {
-                                                        speakingChapterIdx = chapIdx
-                                                        speakingParaIdx = pIdx
-                                                        showTtsDock = true
-                                                        val chapterObj = book.chapters.getOrNull(chapIdx)
-                                                        if (chapterObj != null) {
-                                                            LuminaAudioService.startOrUpdate(
-                                                                context = context,
-                                                                bookId = book.id,
-                                                                bookTitle = book.title,
-                                                                chapterIndex = chapIdx,
-                                                                chapterTitle = chapterObj.title,
-                                                                paragraphIndex = pIdx,
-                                                                paragraphs = chapterObj.paragraphs,
-                                                                isEdgeTts = ttsEngine == "EDGE_NEURAL",
-                                                                voice = ttsEdgeVoice,
-                                                                speed = ttsSpeed
-                                                            )
-                                                        }
-                                                    }
-                                                } else Modifier
-                                            )
-                                    ) {
-                                        if (hasFormatting) {
-                                            val inlineImages = remember(flowPara) { extractInlineImages(flowPara) }
-                                            val inlineContentMap = rememberInlineContentMap(inlineImages, fontSize)
-                                            val annotatedText = remember(
-                                                flowPara, matchingBookmarks, isDropCap, fontSize, fontFamily, onBgColor,
-                                                activeSearchQ, isActiveMatch
-                                            ) {
-                                                buildHighlightedAnnotatedString(
-                                                    text = flowPara,
-                                                    matchingBookmarks = matchingBookmarks,
-                                                    onBookmarkClick = { bm ->
-                                                        selectedBookmarkForModal = bm
-                                                        showBookmarkDetailModal = true
-                                                    },
-                                                    isDropCap = isDropCap,
-                                                    dropCapFontFamily = FontFamily.Serif,
-                                                    dropCapFontSize = (fontSize * 2.2f).sp,
-                                                    dropCapColor = secColor,
-                                                    baseFontFamily = fontFamily,
-                                                    baseFontSize = fontSize.sp,
-                                                    baseTextColor = onBgColor,
-                                                    searchQuery = activeSearchQ,
-                                                    isActiveSearchMatch = isActiveMatch
-                                                )
-                                            }
-                                            Text(
-                                                text = annotatedText,
-                                                inlineContent = inlineContentMap,
-                                                lineHeight = (fontSize * lineHeightMultiplier).sp,
-                                                letterSpacing = letterSpacing.sp,
-                                                textAlign = contentTextAlign,
-                                                modifier = Modifier.fillMaxWidth()
-                                            )
-                                        } else {
-                                            Text(
-                                                text = flowPara,
-                                                fontFamily = fontFamily,
-                                                fontSize = fontSize.sp,
-                                                color = onBgColor,
-                                                lineHeight = (fontSize * lineHeightMultiplier).sp,
-                                                letterSpacing = letterSpacing.sp,
-                                                textAlign = contentTextAlign,
-                                                modifier = Modifier.fillMaxWidth()
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        item(key = "bottom-empty-space", contentType = "bottom_space") {
-                            DisableSelection {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(280.dp)
-                                        .pointerInput(gestureDoubleTap, gestureSingleTap) {
-                                            detectTapGestures(
-                                                onDoubleTap = {
-                                                    executeGestureAction(gestureDoubleTap)
-                                                },
-                                                onTap = {
-                                                    if (isAutoScrolling) {
-                                                        isAutoScrolling = false
-                                                    } else if (showSelectionMenu) {
-                                                        showSelectionMenu = false
-                                                        selectedText = ""
-                                                    } else {
-                                                        executeGestureAction(gestureSingleTap)
-                                                    }
-                                                }
-                                            )
-                                        }
+                    ScrollReaderView(
+                        listState = listState,
+                        book = book,
+                        readingMode = readingMode,
+                        fontSize = fontSize,
+                        fontFamily = fontFamily,
+                        lineHeightMultiplier = lineHeightMultiplier,
+                        letterSpacing = letterSpacing,
+                        contentTextAlign = contentTextAlign,
+                        verticalPadding = verticalPadding,
+                        progressBottomInset = progressBottomInset,
+                        effectiveImePadding = effectiveImePadding,
+                        scrollHorizontalPaddingStart = scrollHorizontalPaddingStart,
+                        scrollHorizontalPaddingEnd = scrollHorizontalPaddingEnd,
+                        bookmarksByChapter = bookmarksByChapter,
+                        speakingChapterIdx = speakingChapterIdx,
+                        speakingParaIdx = speakingParaIdx,
+                        isTtsSpeaking = isTtsSpeaking,
+                        inlineImageWidthFraction = inlineImageWidthFraction,
+                        inBookSearchQuery = inBookSearchQuery,
+                        inBookSearchResults = inBookSearchResults,
+                        inBookCurrentMatchIndex = inBookCurrentMatchIndex,
+                        gestureDoubleTap = gestureDoubleTap,
+                        gestureSingleTap = gestureSingleTap,
+                        onExecuteGesture = { executeGestureAction(it) },
+                        onToggleControls = {
+                            if (showSelectionMenu) showSelectionMenu = false else showControls = !showControls
+                        },
+                        onOpenLightbox = { bmp, path ->
+                            activeLightboxBitmap = bmp
+                            activeLightboxPath = path
+                        },
+                        onBookmarkClick = { bm ->
+                            selectedBookmarkForModal = bm
+                            showBookmarkDetailModal = true
+                        },
+                        onTtsPlayFromParagraph = { chapIdx, pIdx ->
+                            speakingChapterIdx = chapIdx
+                            speakingParaIdx = pIdx
+                            showTtsDock = true
+                            val chapterObj = book.chapters.getOrNull(chapIdx)
+                            if (chapterObj != null) {
+                                LuminaAudioService.startOrUpdate(
+                                    context = context,
+                                    bookId = book.id,
+                                    bookTitle = book.title,
+                                    chapterIndex = chapIdx,
+                                    chapterTitle = chapterObj.title,
+                                    paragraphIndex = pIdx,
+                                    paragraphs = chapterObj.paragraphs,
+                                    isEdgeTts = ttsEngine == "EDGE_NEURAL",
+                                    voice = ttsEdgeVoice,
+                                    speed = ttsSpeed
                                 )
                             }
                         }
-                    }
-                }
+                    )
             } else {
                 // ═════════════════════════════════════════════════════════════════════
                 // PAGED / PAGED_SCROLL MODE: Swipe horizontal pager
@@ -2511,375 +2312,71 @@ fun ReaderScreen(
                         }
                     }
 
-                    Box(
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        HorizontalPager(
-                            state = pagerState,
-                            key = { pageIdx -> "paged_page_$pageIdx" },
-                            beyondViewportPageCount = 1,
-                            flingBehavior = PagerDefaults.flingBehavior(
-                                state = pagerState,
-                                snapPositionalThreshold = pagedSwipeThreshold.coerceIn(0.05f, 0.60f)
-                            ),
-                            pageSpacing = (horizontalPadding * 1.5f).dp.coerceAtLeast(32.dp),
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(
-                                    top = if (isLandscape) {
-                                        statusBarTopInset + 36.dp + (verticalPadding * 0.25f).dp
-                                    } else {
-                                        if (readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL) statusBarTopInset + 66.dp + (verticalPadding * 0.5f).dp
-                                        else if (isUiVisible) statusBarTopInset + 66.dp + (verticalPadding * 0.5f).dp
-                                        else (verticalPadding * 0.5f).dp
-                                    },
-                                    bottom = if (isLandscape) {
-                                        progressBottomInset + 36.dp + (verticalPadding * 0.25f).dp
-                                    } else {
-                                        if (readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL) progressBottomInset + 48.dp + (verticalPadding * 0.35f).dp
-                                        else if (isUiVisible) progressBottomInset + 64.dp + (verticalPadding * 0.35f).dp
-                                        else progressBottomInset + 24.dp + (verticalPadding * 0.35f).dp
-                                    },
-                                    start = effectiveStartPadding,
-                                    end = effectiveEndPadding
-                                )
-                        ) { pageIdx ->
-                            val (chapTitle, content) = pages[pageIdx]
-                            val isChapterHeaderPage = content.startsWith("CHAPTER_START:::") || content.startsWith("TITLE:::")
-                            val (cTitle, cSub, bodyText) = if (isChapterHeaderPage) {
-                                val prefix = if (content.startsWith("CHAPTER_START:::")) "CHAPTER_START:::" else "TITLE:::"
-                                val rawParts = content.removePrefix(prefix).split(":::")
-                                Triple(
-                                    rawParts.getOrNull(0)?.ifBlank { chapTitle } ?: chapTitle,
-                                    rawParts.getOrNull(1) ?: "",
-                                    rawParts.getOrNull(2) ?: ""
-                                )
-                            } else {
-                                Triple("", "", "")
+                    PagedReaderView(
+                        pagerState = pagerState,
+                        pages = pages,
+                        book = book,
+                        readingMode = readingMode,
+                        isLandscape = isLandscape,
+                        fontSize = fontSize,
+                        fontFamily = fontFamily,
+                        lineHeightMultiplier = lineHeightMultiplier,
+                        letterSpacing = letterSpacing,
+                        contentTextAlign = contentTextAlign,
+                        pagedSwipeThreshold = pagedSwipeThreshold,
+                        horizontalPadding = horizontalPadding,
+                        verticalPadding = verticalPadding,
+                        statusBarTopInset = statusBarTopInset,
+                        progressBottomInset = progressBottomInset,
+                        effectiveStartPadding = effectiveStartPadding,
+                        effectiveEndPadding = effectiveEndPadding,
+                        isUiVisible = isUiVisible,
+                        isAutoScrolling = isAutoScrolling,
+                        verticallyCenterPages = verticallyCenterPages,
+                        adaptiveVerticalSpacing = adaptiveVerticalSpacing,
+                        goldenRatioChapterOpeners = goldenRatioChapterOpeners,
+                        bookmarksByChapter = bookmarksByChapter,
+                        showInBookSearchDialog = showInBookSearchDialog,
+                        inBookSearchQuery = inBookSearchQuery,
+                        inBookSearchResults = inBookSearchResults,
+                        inBookCurrentMatchIndex = inBookCurrentMatchIndex,
+                        currentImeOffsetPx = currentImeOffsetPx,
+                        showTtsDock = showTtsDock,
+                        isTtsSpeaking = isTtsSpeaking,
+                        inlineImageWidthFraction = inlineImageWidthFraction,
+                        gestureDoubleTap = gestureDoubleTap,
+                        gestureSingleTap = gestureSingleTap,
+                        onExecuteGesture = { executeGestureAction(it) },
+                        onToggleControls = { showControls = !showControls },
+                        onOpenLightbox = { bmp, path ->
+                            activeLightboxBitmap = bmp
+                            activeLightboxPath = path
+                        },
+                        onBookmarkClick = { bm ->
+                            selectedBookmarkForModal = bm
+                            showBookmarkDetailModal = true
+                        },
+                        onTtsPlayFromChapter = { pagedChapIdx ->
+                            speakingChapterIdx = pagedChapIdx
+                            speakingParaIdx = 0
+                            showTtsDock = true
+                            speakNextPara.value()
+                        },
+                        onPrevPage = {
+                            if (isAutoScrolling) {
+                                isAutoScrolling = false
+                            } else if (pagerState.currentPage > 0) {
+                                coroutineScope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
                             }
-
-                            if (isChapterHeaderPage && bodyText.isBlank()) {
-                                // Title-only page (e.g. part divider or section header without text)
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .pointerInput(gestureDoubleTap, gestureSingleTap) {
-                                            detectTapGestures(
-                                                onDoubleTap = { executeGestureAction(gestureDoubleTap) },
-                                                onTap = { showControls = !showControls }
-                                            )
-                                        },
-                                    verticalArrangement = Arrangement.Center,
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    val eyebrowText = if (cSub.isNotBlank() && cSub.startsWith("Part", ignoreCase = true)) {
-                                        cSub.uppercase()
-                                    } else {
-                                        book.title.uppercase()
-                                    }
-                                    Text(
-                                        text = eyebrowText,
-                                        fontFamily = FontFamily.SansSerif,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Normal,
-                                        letterSpacing = 2.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text(
-                                        text = cTitle,
-                                        fontFamily = FontFamily.Serif,
-                                        fontSize = 26.sp,
-                                        fontWeight = FontWeight.Normal,
-                                        textAlign = TextAlign.Center,
-                                        color = MaterialTheme.colorScheme.onBackground
-                                    )
-                                    if (cSub.isNotBlank() && !cSub.startsWith("Part", ignoreCase = true)) {
-                                        Spacer(modifier = Modifier.height(6.dp))
-                                        Text(
-                                            text = cSub,
-                                            fontStyle = FontStyle.Italic,
-                                            fontSize = 14.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-                            } else if (content.startsWith("[TABLE:") && content.endsWith("]")) {
-                                Box(
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    ReaderTableCard(tableToken = content)
-                                }
-                            } else if (content.startsWith("[IMG:") && content.endsWith("]")) {
-                                val imgPath = content.removePrefix("[IMG:").removeSuffix("]")
-                                val bitmap = rememberBookImage(imgPath, isInlineImage = true)
-                                Box(
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    InlineReaderImage(
-                                        bitmap = bitmap,
-                                        imgPath = imgPath,
-                                        widthFraction = inlineImageWidthFraction,
-                                        onOpenLightbox = { bmp, path ->
-                                            activeLightboxBitmap = bmp
-                                            activeLightboxPath = path
-                                        },
-                                        onTap = { showControls = !showControls }
-                                    )
-                                }
-                            } else if (content == "[DIVIDER]" || content.trim() == "⁂" || content.trim() == "* * *" || content.trim() == "***") {
-                                Box(
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    ReaderDivider()
-                                }
-                            } else if (content.startsWith("[VERSE:") && content.endsWith("]")) {
-                                val verseContent = content.removePrefix("[VERSE:").removeSuffix("]")
-                                Box(
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentAlignment = Alignment.CenterStart
-                                ) {
-                                    ReaderVerseCard(
-                                        verse = verseContent,
-                                        fontSize = fontSize.sp,
-                                        fontFamily = fontFamily,
-                                        textColor = MaterialTheme.colorScheme.onBackground
-                                    )
-                                }
-                            } else if (content.startsWith("[QUOTE:") && content.endsWith("]")) {
-                                val quoteContent = content.removePrefix("[QUOTE:").removeSuffix("]")
-                                Box(
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentAlignment = Alignment.CenterStart
-                                ) {
-                                    ReaderQuoteCard(
-                                        quote = quoteContent,
-                                        fontSize = fontSize.sp,
-                                        fontFamily = fontFamily,
-                                        textColor = MaterialTheme.colorScheme.onBackground
-                                    )
-                                }
-                            } else {
-                                val pageText = if (isChapterHeaderPage) bodyText else content
-                                val chapterBookmarks = remember(bookmarksByChapter, chapTitle) {
-                                    bookmarksByChapter[chapTitle.trim().lowercase()] ?: emptyList()
-                                }
-                                val matchingBookmarks = remember(pageText, chapterBookmarks) {
-                                    if (chapterBookmarks.isEmpty()) emptyList()
-                                    else chapterBookmarks.filter { b ->
-                                        val q = b.quote.trim()
-                                        q.isNotBlank() && pageText.contains(q, ignoreCase = true)
-                                    }
-                                }
-                                val onBgColor = MaterialTheme.colorScheme.onBackground
-                                val isDropCap = isChapterHeaderPage
-                                val currentMatch = inBookSearchResults.getOrNull(inBookCurrentMatchIndex)
-                                val isActiveMatch = showInBookSearchDialog && inBookSearchQuery.isNotBlank() &&
-                                    currentMatch != null && currentMatch.chapterTitle.equals(chapTitle, ignoreCase = true) &&
-                                    (pageText.contains(currentMatch.snippet.replace("...", "").trim().take(15), ignoreCase = true) ||
-                                     (inBookSearchQuery.isNotBlank() && pageText.contains(inBookSearchQuery.trim(), ignoreCase = true)))
-                                val activeSearchQ = if (showInBookSearchDialog) inBookSearchQuery.trim() else ""
-
-                                val pagedInlineImages = remember(pageText) { extractInlineImages(pageText) }
-                                val pagedInlineContentMap = rememberInlineContentMap(pagedInlineImages, fontSize)
-                                val pagedBlocks = remember(pageText) { splitPageIntoBlocks(pageText) }
-
-                                val isImeOpenInSearch = showInBookSearchDialog && currentImeOffsetPx > 0f
-                                val pagedScrollModifier = if (readingMode == ReadingMode.PAGED_SCROLL || isImeOpenInSearch) {
-                                    Modifier.verticalScroll(rememberScrollState())
-                                } else {
-                                    Modifier
-                                }
-
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .clipToBounds()
-                                        .then(pagedScrollModifier)
-                                        .padding(horizontal = 4.dp, vertical = 2.dp)
-                                        .pointerInput(gestureDoubleTap, gestureSingleTap) {
-                                            detectTapGestures(
-                                                onDoubleTap = if (gestureDoubleTap != GestureAction.NONE) {
-                                                    { executeGestureAction(gestureDoubleTap) }
-                                                } else null,
-                                                onTap = {
-                                                    if (isAutoScrolling) {
-                                                        isAutoScrolling = false
-                                                    } else if (showSelectionMenu) {
-                                                        showSelectionMenu = false
-                                                        selectedText = ""
-                                                    } else {
-                                                        executeGestureAction(gestureSingleTap)
-                                                    }
-                                                }
-                                            )
-                                        }
-                                        .then(
-                                            if (showTtsDock || isTtsSpeaking) {
-                                                val pagedChapIdx = book.chapters.indexOfFirst { it.title == chapTitle }.coerceAtLeast(0)
-                                                Modifier.clickable {
-                                                    speakingChapterIdx = pagedChapIdx
-                                                    speakingParaIdx = 0
-                                                    showTtsDock = true
-                                                    speakNextPara.value()
-                                                }
-                                            } else Modifier
-                                        )
-                                ) {
-                                    if (verticallyCenterPages && readingMode == ReadingMode.PAGED && isChapterHeaderPage && bodyText.isBlank()) {
-                                        Spacer(
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .fillMaxWidth()
-                                        )
-                                    }
-
-                                    if (isChapterHeaderPage) {
-                                        Column(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(top = 4.dp, bottom = 10.dp),
-                                            horizontalAlignment = Alignment.CenterHorizontally
-                                        ) {
-                                            val eyebrowText = if (cSub.isNotBlank() && cSub.startsWith("Part", ignoreCase = true)) {
-                                                cSub.uppercase()
-                                            } else {
-                                                book.title.uppercase()
-                                            }
-                                            Text(
-                                                text = eyebrowText,
-                                                fontFamily = FontFamily.SansSerif,
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Normal,
-                                                letterSpacing = 2.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                            Spacer(modifier = Modifier.height(6.dp))
-                                            Text(
-                                                text = cTitle,
-                                                fontFamily = FontFamily.Serif,
-                                                fontSize = 24.sp,
-                                                fontWeight = FontWeight.Normal,
-                                                textAlign = TextAlign.Center,
-                                                color = MaterialTheme.colorScheme.onBackground
-                                            )
-                                            if (cSub.isNotBlank() && !cSub.startsWith("Part", ignoreCase = true)) {
-                                                Spacer(modifier = Modifier.height(4.dp))
-                                                Text(
-                                                    text = cSub,
-                                                    fontStyle = FontStyle.Italic,
-                                                    fontSize = 13.sp,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
-                                            }
-                                        }
-                                    }
-
-                                    pagedBlocks.forEachIndexed { blockIdx, block ->
-                                        when (block) {
-                                            is PageBlock.Text -> {
-                                                val blockAnnotated = remember(block.text, matchingBookmarks, fontSize, fontFamily, onBgColor, isDropCap, activeSearchQ, isActiveMatch) {
-                                                    buildHighlightedAnnotatedString(
-                                                        text = block.text,
-                                                        matchingBookmarks = matchingBookmarks,
-                                                        onBookmarkClick = { bm ->
-                                                            selectedBookmarkForModal = bm
-                                                            showBookmarkDetailModal = true
-                                                        },
-                                                        isDropCap = isDropCap && blockIdx == 0,
-                                                        baseFontFamily = fontFamily,
-                                                        baseFontSize = fontSize.sp,
-                                                        baseTextColor = onBgColor,
-                                                        searchQuery = activeSearchQ,
-                                                        isActiveSearchMatch = isActiveMatch
-                                                    )
-                                                }
-                                                SelectionContainer(
-                                                    modifier = Modifier.fillMaxWidth()
-                                                ) {
-                                                    Text(
-                                                        text = blockAnnotated,
-                                                        inlineContent = pagedInlineContentMap,
-                                                        fontFamily = fontFamily,
-                                                        fontSize = fontSize.sp,
-                                                        lineHeight = (fontSize * lineHeightMultiplier).sp,
-                                                        letterSpacing = letterSpacing.sp,
-                                                        textAlign = contentTextAlign,
-                                                        color = MaterialTheme.colorScheme.onBackground,
-                                                        modifier = Modifier.fillMaxWidth()
-                                                    )
-                                                }
-                                            }
-                                            is PageBlock.Table -> {
-                                                ReaderTableCard(
-                                                    tableToken = block.token,
-                                                    modifier = Modifier.fillMaxWidth()
-                                                )
-                                            }
-                                        }
-                                    }
-                                    val tapSpacerModifier = if (readingMode == ReadingMode.PAGED_SCROLL) {
-                                        Modifier
-                                            .fillMaxWidth()
-                                            .heightIn(min = 40.dp)
-                                    } else {
-                                        Modifier
-                                            .weight(1f)
-                                            .fillMaxWidth()
-                                    }
-                                    Spacer(modifier = tapSpacerModifier)
-                                    if (readingMode == ReadingMode.PAGED_SCROLL) {
-                                        Spacer(modifier = Modifier.height(24.dp))
-                                    }
-                                }
+                        },
+                        onNextPage = {
+                            if (isAutoScrolling) {
+                                isAutoScrolling = false
+                            } else if (pagerState.currentPage < pages.size - 1) {
+                                coroutineScope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
                             }
                         }
-
-                        // Page Navigation Tap Zones
-                        Box(
-                            modifier = Modifier
-                                .fillMaxHeight()
-                                .width(60.dp)
-                                .align(Alignment.CenterStart)
-                                .pointerInput(isAutoScrolling, gestureDoubleTap) {
-                                    detectTapGestures(
-                                        onDoubleTap = {
-                                            executeGestureAction(gestureDoubleTap)
-                                        },
-                                        onTap = {
-                                            if (isAutoScrolling) {
-                                                isAutoScrolling = false
-                                            } else if (pagerState.currentPage > 0) {
-                                                coroutineScope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
-                                            }
-                                        }
-                                    )
-                                }
-                        )
-                        Box(
-                            modifier = Modifier
-                                .fillMaxHeight()
-                                .width(60.dp)
-                                .align(Alignment.CenterEnd)
-                                .pointerInput(isAutoScrolling, gestureDoubleTap) {
-                                    detectTapGestures(
-                                        onDoubleTap = {
-                                            executeGestureAction(gestureDoubleTap)
-                                        },
-                                        onTap = {
-                                            if (isAutoScrolling) {
-                                                isAutoScrolling = false
-                                            } else if (pagerState.currentPage < pages.size - 1) {
-                                                coroutineScope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
-                                            }
-                                        }
-                                    )
-                                }
-                        )
-                    }
+                    )
                 }
             }
 
@@ -3507,511 +3004,7 @@ fun ReaderScreen(
                 }
             )
         }
-    }
 }
 }
-
-sealed class PageBlock {
-    data class Text(val text: String) : PageBlock()
-    data class Table(val token: String) : PageBlock()
 }
 
-fun splitPageIntoBlocks(rawText: String): List<PageBlock> {
-    if (!rawText.contains("[TABLE:")) {
-        return listOf(PageBlock.Text(rawText))
-    }
-    val blocks = mutableListOf<PageBlock>()
-    val tableRegex = "\\[TABLE:[^\\]]+\\]".toRegex()
-    var lastIdx = 0
-    tableRegex.findAll(rawText).forEach { match ->
-        if (match.range.first > lastIdx) {
-            val txt = rawText.substring(lastIdx, match.range.first).trim()
-            if (txt.isNotEmpty()) {
-                blocks.add(PageBlock.Text(txt))
-            }
-        }
-        blocks.add(PageBlock.Table(match.value))
-        lastIdx = match.range.last + 1
-    }
-    if (lastIdx < rawText.length) {
-        val txt = rawText.substring(lastIdx).trim()
-        if (txt.isNotEmpty()) {
-            blocks.add(PageBlock.Text(txt))
-        }
-    }
-    return if (blocks.isEmpty()) listOf(PageBlock.Text(rawText)) else blocks
-}
-
-@Composable
-fun ReaderTableCard(
-    tableToken: String,
-    modifier: Modifier = Modifier
-) {
-    val jsonStr = tableToken.removePrefix("[TABLE:").removeSuffix("]")
-    val (headers, rows) = remember(jsonStr) {
-        try {
-            val obj = org.json.JSONObject(jsonStr)
-            val hArr = obj.optJSONArray("headers")
-            val hList = if (hArr != null) List(hArr.length()) { i -> hArr.getString(i) } else emptyList()
-            val rArr = obj.optJSONArray("rows")
-            val rList = if (rArr != null) {
-                List(rArr.length()) { r ->
-                    val rowArr = rArr.getJSONArray(r)
-                    List(rowArr.length()) { c -> rowArr.getString(c) }
-                }
-            } else emptyList()
-            hList to rList
-        } catch (_: Exception) {
-            emptyList<String>() to emptyList<List<String>>()
-        }
-    }
-
-    if (headers.isEmpty() && rows.isEmpty()) return
-
-    val totalCols = remember(headers, rows) {
-        maxOf(headers.size, rows.maxOfOrNull { it.size } ?: 0)
-    }
-    if (totalCols == 0) return
-
-    val colWidths = remember(headers, rows, totalCols) {
-        (0 until totalCols).map { c ->
-            val maxLen = maxOf(
-                headers.getOrNull(c)?.length ?: 0,
-                rows.maxOfOrNull { it.getOrNull(c)?.length ?: 0 } ?: 0
-            )
-            if (totalCols <= 2) {
-                // For 2-column tables, cap at 190.dp so both columns fit comfortably on typical 360-400dp mobile screens
-                maxOf(140.dp, minOf(190.dp, (maxLen * 6.0f).dp.coerceAtLeast(140.dp)))
-            } else {
-                maxOf(120.dp, minOf(240.dp, (maxLen * 6.5f).dp.coerceAtLeast(120.dp)))
-            }
-        }
-    }
-
-    val outlineColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.40f)
-
-    Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(vertical = 12.dp),
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
-        ),
-        border = BorderStroke(1.dp, outlineColor)
-    ) {
-        val hScrollState = rememberScrollState()
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(hScrollState)
-                .padding(vertical = 6.dp, horizontal = 8.dp)
-        ) {
-            Column(modifier = Modifier.width(IntrinsicSize.Max)) {
-                if (headers.isNotEmpty()) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.50f), shape = RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp))
-                            .height(IntrinsicSize.Min),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        for (c in 0 until totalCols) {
-                            val headerText = headers.getOrNull(c) ?: ""
-                            Box(
-                                modifier = Modifier
-                                    .width(colWidths[c])
-                                    .padding(horizontal = 10.dp, vertical = 9.dp),
-                                contentAlignment = Alignment.CenterStart
-                            ) {
-                                Text(
-                                    text = headerText,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Normal,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                            if (c < totalCols - 1) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxHeight()
-                                        .width(0.8.dp)
-                                        .background(outlineColor)
-                                )
-                            }
-                        }
-                    }
-                    HorizontalDivider(
-                        thickness = 1.dp,
-                        color = outlineColor
-                    )
-                }
-
-                rows.forEachIndexed { rowIdx, rowCells ->
-                    val rowBg = if (rowIdx % 2 == 1) {
-                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f)
-                    } else {
-                        Color.Transparent
-                    }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(rowBg)
-                            .height(IntrinsicSize.Min),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        for (c in 0 until totalCols) {
-                            val cellText = rowCells.getOrNull(c) ?: ""
-                            Box(
-                                modifier = Modifier
-                                    .width(colWidths[c])
-                                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                                contentAlignment = Alignment.CenterStart
-                            ) {
-                                Text(
-                                    text = cellText,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = FontWeight.Light,
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.92f)
-                                )
-                            }
-                            if (c < totalCols - 1) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxHeight()
-                                        .width(0.8.dp)
-                                        .background(outlineColor)
-                                )
-                            }
-                        }
-                    }
-                    if (rowIdx < rows.size - 1) {
-                        HorizontalDivider(
-                            thickness = 0.5.dp,
-                            color = outlineColor.copy(alpha = 0.25f)
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun ReaderDivider(
-    modifier: Modifier = Modifier
-) {
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(vertical = 18.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = "⁂",
-            fontSize = 18.sp,
-            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.45f),
-            fontWeight = FontWeight.Normal
-        )
-    }
-}
-
-@Composable
-fun ReaderVerseCard(
-    verse: String,
-    fontSize: TextUnit,
-    fontFamily: FontFamily,
-    textColor: Color,
-    modifier: Modifier = Modifier
-) {
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(start = 20.dp, end = 12.dp, top = 6.dp, bottom = 12.dp)
-    ) {
-        Text(
-            text = verse,
-            fontFamily = fontFamily,
-            fontSize = fontSize * 0.95f,
-            lineHeight = fontSize * 1.38f,
-            color = textColor,
-            fontWeight = FontWeight.Normal
-        )
-    }
-}
-
-@Composable
-fun ReaderQuoteCard(
-    quote: String,
-    fontSize: TextUnit,
-    fontFamily: FontFamily,
-    textColor: Color,
-    modifier: Modifier = Modifier
-) {
-    val borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 4.dp, vertical = 8.dp)
-            .background(
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.12f),
-                shape = RoundedCornerShape(topEnd = 8.dp, bottomEnd = 8.dp)
-            )
-            .drawBehind {
-                drawLine(
-                    color = borderColor,
-                    start = androidx.compose.ui.geometry.Offset(0f, 0f),
-                    end = androidx.compose.ui.geometry.Offset(0f, size.height),
-                    strokeWidth = 3.dp.toPx()
-                )
-            }
-            .padding(start = 16.dp, end = 12.dp, top = 8.dp, bottom = 8.dp)
-    ) {
-        Text(
-            text = quote,
-            fontFamily = fontFamily,
-            fontSize = fontSize * 0.95f,
-            fontStyle = FontStyle.Italic,
-            lineHeight = fontSize * 1.4f,
-            color = textColor,
-            fontWeight = FontWeight.Normal
-        )
-    }
-}
-
-@Composable
-fun InlineReaderImage(
-    bitmap: android.graphics.Bitmap?,
-    imgPath: String,
-    widthFraction: Float,
-    modifier: Modifier = Modifier,
-    onOpenLightbox: (android.graphics.Bitmap, String) -> Unit,
-    onTap: () -> Unit
-) {
-    var scale by remember { mutableFloatStateOf(1f) }
-    var rotation by remember { mutableFloatStateOf(0f) }
-    var offset by remember { mutableStateOf(Offset.Zero) }
-    val coroutineScope = rememberCoroutineScope()
-    var isPinching by remember { mutableStateOf(false) }
-
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .zIndex(if (isPinching || scale > 1.05f) 50f else 0f)
-            .padding(vertical = 16.dp)
-            .pointerInput(bitmap, imgPath) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    var zoom = 1f
-                    var rot = 0f
-                    var pan = Offset.Zero
-                    var transformed = false
-                    val touchSlop = viewConfiguration.touchSlop
-                    var totalDrag = Offset.Zero
-
-                    do {
-                        val event = awaitPointerEvent(PointerEventPass.Main)
-                        if (event.changes.size > 1) {
-                            transformed = true
-                            isPinching = true
-                            val zoomChange = event.calculateZoom()
-                            val rotChange = event.calculateRotation()
-                            val panChange = event.calculatePan()
-
-                            zoom = (zoom * zoomChange).coerceIn(0.5f, 6.0f)
-                            rot += rotChange
-                            pan += panChange
-
-                            scale = zoom
-                            rotation = rot
-                            offset = pan
-
-                            event.changes.forEach { it.consume() }
-                        } else if (transformed) {
-                            val panChange = event.calculatePan()
-                            pan += panChange
-                            offset = pan
-                            event.changes.forEach { it.consume() }
-                        } else {
-                            val change = event.changes.firstOrNull()
-                            if (change != null) {
-                                totalDrag += change.position - change.previousPosition
-                            }
-                        }
-                    } while (event.changes.any { it.pressed })
-
-                    if (transformed) {
-                        isPinching = false
-                        coroutineScope.launch {
-                            val springSpec = spring<Float>(
-                                dampingRatio = Spring.DampingRatioMediumBouncy,
-                                stiffness = Spring.StiffnessLow
-                            )
-                            val animScale = Animatable(scale)
-                            val animRot = Animatable(rotation)
-                            val animX = Animatable(offset.x)
-                            val animY = Animatable(offset.y)
-
-                            launch { animScale.animateTo(1f, springSpec) { scale = value } }
-                            launch { animRot.animateTo(0f, springSpec) { rotation = value } }
-                            launch { animX.animateTo(0f, springSpec) { offset = Offset(value, offset.y) } }
-                            launch { animY.animateTo(0f, springSpec) { offset = Offset(offset.x, value) } }
-                        }
-                    } else {
-                        if (totalDrag.getDistance() < touchSlop) {
-                            if (bitmap != null) {
-                                onOpenLightbox(bitmap, imgPath)
-                            } else {
-                                onTap()
-                            }
-                        }
-                    }
-                }
-            },
-        contentAlignment = Alignment.Center
-    ) {
-        if (bitmap != null) {
-            val isBlockDiagram = bitmap.width >= 500 && bitmap.height >= 200
-            val density = LocalDensity.current
-            val imageModifier = if (isBlockDiagram) {
-                Modifier
-                    .fillMaxWidth(widthFraction)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp))
-            } else {
-                val intrinsicWidthDp = with(density) { bitmap.width.toDp() }
-                val intrinsicHeightDp = with(density) { bitmap.height.toDp() }
-                Modifier
-                    .widthIn(max = intrinsicWidthDp.coerceAtMost(360.dp).coerceAtLeast(32.dp))
-                    .heightIn(max = intrinsicHeightDp.coerceAtMost(240.dp).coerceAtLeast(24.dp))
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(4.dp))
-            }
-            Image(
-                bitmap = bitmap.asImageBitmap(),
-                contentDescription = "Illustration",
-                contentScale = if (isBlockDiagram) ContentScale.FillWidth else ContentScale.Fit,
-                modifier = imageModifier
-                    .graphicsLayer {
-                        scaleX = scale
-                        scaleY = scale
-                        rotationZ = rotation
-                        translationX = offset.x
-                        translationY = offset.y
-                        shadowElevation = if (isPinching) 16f else 0f
-                    }
-            )
-        } else {
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-                modifier = Modifier
-                    .fillMaxWidth(widthFraction)
-                    .height(160.dp)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text(
-                        text = "Illustration",
-                        fontFamily = FontFamily.SansSerif,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Normal,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun LightboxDialog(
-    previewBitmap: android.graphics.Bitmap?,
-    imagePath: String? = null,
-    onDismiss: () -> Unit
-) {
-    if (previewBitmap == null) return
-
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            usePlatformDefaultWidth = false,
-            dismissOnBackPress = true,
-            dismissOnClickOutside = true
-        )
-    ) {
-        var scale by remember { mutableFloatStateOf(1f) }
-        var offset by remember { mutableStateOf(Offset.Zero) }
-        var fullResBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
-
-        LaunchedEffect(imagePath) {
-            if (!imagePath.isNullOrBlank()) {
-                withContext(Dispatchers.IO) {
-                    try {
-                        val cleanPath = imagePath.removePrefix("file://")
-                        val decodedPath = try { java.net.URLDecoder.decode(cleanPath, "UTF-8") } catch (_: Exception) { cleanPath }
-                        val file = if (File(cleanPath).exists()) File(cleanPath) else File(decodedPath)
-                        if (file.exists() && file.length() > 0) {
-                            val full = BitmapFactory.decodeFile(file.absolutePath)
-                            if (full != null) {
-                                withContext(Dispatchers.Main) {
-                                    fullResBitmap = full
-                                }
-                            }
-                        }
-                    } catch (_: Throwable) {}
-                }
-            }
-        }
-
-        DisposableEffect(Unit) {
-            onDispose {
-                fullResBitmap?.recycle()
-            }
-        }
-
-        val displayBitmap = fullResBitmap ?: previewBitmap
-        val bgColor = MaterialTheme.colorScheme.background.copy(alpha = 0.96f)
-
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(bgColor)
-                .pointerInput(Unit) {
-                    detectTransformGestures { _, pan, zoom, _ ->
-                        scale = (scale * zoom).coerceIn(0.8f, 6.0f)
-                        offset += pan
-                    }
-                }
-                .pointerInput(Unit) {
-                    detectTapGestures(
-                        onDoubleTap = {
-                            if (scale > 1.2f) {
-                                scale = 1f
-                                offset = Offset.Zero
-                            } else {
-                                scale = 2.5f
-                            }
-                        },
-                        onTap = {
-                            onDismiss()
-                        }
-                    )
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            Image(
-                bitmap = displayBitmap.asImageBitmap(),
-                contentDescription = "Full-Screen Illustration",
-                contentScale = ContentScale.Fit,
-                modifier = Modifier
-                    .fillMaxSize(0.96f)
-                    .graphicsLayer {
-                        scaleX = scale
-                        scaleY = scale
-                        translationX = offset.x
-                        translationY = offset.y
-                    }
-            )
-        }
-    }
-}

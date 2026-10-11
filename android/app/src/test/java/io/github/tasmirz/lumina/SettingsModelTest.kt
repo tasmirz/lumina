@@ -446,4 +446,24 @@ class SettingsModelTest {
         val updated = settings.copy(pagedSwipeThreshold = 0.25f)
         assertEquals(0.25f, updated.pagedSwipeThreshold, 0.001f)
     }
+
+    @Test
+    fun testPageBalanceSettingsDefaults() {
+        val settings = io.github.tasmirz.lumina.model.ReaderSettings()
+        assertTrue(settings.fillPageToBottom)
+        assertFalse(settings.adaptiveVerticalSpacing)
+        assertFalse(settings.goldenRatioChapterOpeners)
+        assertTrue(settings.verticallyCenterPages)
+
+        val updated = settings.copy(
+            fillPageToBottom = false,
+            adaptiveVerticalSpacing = true,
+            goldenRatioChapterOpeners = true,
+            verticallyCenterPages = false
+        )
+        assertFalse(updated.fillPageToBottom)
+        assertTrue(updated.adaptiveVerticalSpacing)
+        assertTrue(updated.goldenRatioChapterOpeners)
+        assertFalse(updated.verticallyCenterPages)
+    }
 }

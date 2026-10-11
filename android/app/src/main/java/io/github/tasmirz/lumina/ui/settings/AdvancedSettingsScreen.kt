@@ -249,8 +249,17 @@ fun AdvancedSettingsScreen(
     val pagedSafeLinesToRemoveState = repository?.pagedSafeLinesToRemove?.collectAsState(initial = 0)
     val pagedSafeLinesToRemove = pagedSafeLinesToRemoveState?.value ?: 0
 
-    val verticallyCenterPagesState = repository?.verticallyCenterPages?.collectAsState(initial = true)
-    val verticallyCenterPages = verticallyCenterPagesState?.value ?: true
+    val verticallyCenterPagesState = repository?.verticallyCenterPages?.collectAsState(initial = false)
+    val verticallyCenterPages = verticallyCenterPagesState?.value ?: false
+
+    val fillPageToBottomState = repository?.fillPageToBottom?.collectAsState(initial = true)
+    val fillPageToBottom = fillPageToBottomState?.value ?: true
+
+    val adaptiveVerticalSpacingState = repository?.adaptiveVerticalSpacing?.collectAsState(initial = false)
+    val adaptiveVerticalSpacing = adaptiveVerticalSpacingState?.value ?: false
+
+    val goldenRatioChapterOpenersState = repository?.goldenRatioChapterOpeners?.collectAsState(initial = false)
+    val goldenRatioChapterOpeners = goldenRatioChapterOpenersState?.value ?: false
 
     val pagedSwipeThresholdState = repository?.pagedSwipeThreshold?.collectAsState(initial = 0.18f)
     val pagedSwipeThreshold = pagedSwipeThresholdState?.value ?: 0.18f
@@ -1103,19 +1112,76 @@ fun AdvancedSettingsScreen(
 
                         Spacer(modifier = Modifier.height(10.dp))
 
-                        // Vertically Center Page Text
+                        // 1. Fill Page to Bottom (Option 1 - Enabled by default)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("Vertically Center Page Text", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text("Distributes unused vertical space evenly in Paged Mode", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                                Text("Fill Page to Bottom", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("Flows paragraphs down to the bottom margin rather than leaving empty gaps", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                            }
+                            Switch(
+                                checked = fillPageToBottom,
+                                onCheckedChange = { repository?.setFillPageToBottom(it) },
+                                modifier = Modifier.size(width = 48.dp, height = 28.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // 2. Vertically Center Short Pages (Option 2)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Vertically Center Short Pages", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("Centers content vertically on chapter openers and short pages", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
                             }
                             Switch(
                                 checked = verticallyCenterPages,
                                 onCheckedChange = { repository?.setVerticallyCenterPages(it) },
+                                modifier = Modifier.size(width = 48.dp, height = 28.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // 3. Adaptive Vertical Justification (Option 3)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Adaptive Vertical Justification", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("Distributes spacing evenly between paragraphs on under-filled pages", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                            }
+                            Switch(
+                                checked = adaptiveVerticalSpacing,
+                                onCheckedChange = { repository?.setAdaptiveVerticalSpacing(it) },
+                                modifier = Modifier.size(width = 48.dp, height = 28.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // 4. Golden Ratio Chapter Openers (Option 4)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Golden Ratio Chapter Openers", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("Positions chapter headers ~25% down the screen for classic book aesthetics", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                            }
+                            Switch(
+                                checked = goldenRatioChapterOpeners,
+                                onCheckedChange = { repository?.setGoldenRatioChapterOpeners(it) },
                                 modifier = Modifier.size(width = 48.dp, height = 28.dp)
                             )
                         }

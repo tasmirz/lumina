@@ -116,6 +116,15 @@ class BookRepository private constructor(private val context: Context) {
     private val _verticallyCenterPages = MutableStateFlow(prefs.getBoolean("vertically_center_pages", false))
     val verticallyCenterPages: StateFlow<Boolean> = _verticallyCenterPages.asStateFlow()
 
+    private val _fillPageToBottom = MutableStateFlow(prefs.getBoolean("fill_page_to_bottom", true))
+    val fillPageToBottom: StateFlow<Boolean> = _fillPageToBottom.asStateFlow()
+
+    private val _adaptiveVerticalSpacing = MutableStateFlow(prefs.getBoolean("adaptive_vertical_spacing", false))
+    val adaptiveVerticalSpacing: StateFlow<Boolean> = _adaptiveVerticalSpacing.asStateFlow()
+
+    private val _goldenRatioChapterOpeners = MutableStateFlow(prefs.getBoolean("golden_ratio_chapter_openers", false))
+    val goldenRatioChapterOpeners: StateFlow<Boolean> = _goldenRatioChapterOpeners.asStateFlow()
+
     private val _pagedSwipeThreshold = MutableStateFlow(prefs.getFloat("paged_swipe_threshold", 0.18f))
     val pagedSwipeThreshold: StateFlow<Float> = _pagedSwipeThreshold.asStateFlow()
 
@@ -402,6 +411,9 @@ class BookRepository private constructor(private val context: Context) {
             verticalPadding = prefs.getInt("vertical_padding", 16),
             pagedSafeLinesToRemove = prefs.getInt("paged_safe_lines_to_remove", 0),
             verticallyCenterPages = prefs.getBoolean("vertically_center_pages", false),
+            fillPageToBottom = prefs.getBoolean("fill_page_to_bottom", true),
+            adaptiveVerticalSpacing = prefs.getBoolean("adaptive_vertical_spacing", false),
+            goldenRatioChapterOpeners = prefs.getBoolean("golden_ratio_chapter_openers", false),
             pagedSwipeThreshold = prefs.getFloat("paged_swipe_threshold", 0.18f),
             showStartupLoadingScreen = prefs.getBoolean("show_startup_loading_screen", false),
             uncachedBookOpenMode = try { UncachedBookOpenMode.valueOf(prefs.getString("uncached_book_open_mode", UncachedBookOpenMode.INSTANT_ACTIVE_FIRST.name) ?: UncachedBookOpenMode.INSTANT_ACTIVE_FIRST.name) } catch (_: Exception) { UncachedBookOpenMode.INSTANT_ACTIVE_FIRST },
@@ -545,6 +557,7 @@ class BookRepository private constructor(private val context: Context) {
                 isStrictPaged = isStrictPaged,
                 screenWidthDp = sw,
                 screenHeightDp = sh,
+                fillPageToBottom = _fillPageToBottom.value,
                 dbHelper = dbHelper,
                 context = context,
                 activeChapterIndex = activeChapterIndex,
@@ -633,6 +646,7 @@ class BookRepository private constructor(private val context: Context) {
                         lineHeightMultiplier = _lineHeightMultiplier.value,
                         paragraphSpacingMultiplier = _paragraphSpacingMultiplier.value,
                         safeLinesToRemove = _pagedSafeLinesToRemove.value,
+                        fillPageToBottom = _fillPageToBottom.value,
                         dbHelper = dbHelper,
                         context = context
                     )
@@ -745,6 +759,28 @@ class BookRepository private constructor(private val context: Context) {
         updateReaderSettings { it.copy(verticallyCenterPages = enabled) }
         prefs.edit().putBoolean("vertically_center_pages", enabled).apply()
         persistSettingToDb("vertically_center_pages", enabled.toString())
+    }
+
+    fun setFillPageToBottom(enabled: Boolean) {
+        _fillPageToBottom.value = enabled
+        updateReaderSettings { it.copy(fillPageToBottom = enabled) }
+        prefs.edit().putBoolean("fill_page_to_bottom", enabled).apply()
+        persistSettingToDb("fill_page_to_bottom", enabled.toString())
+        PageCache.clear()
+    }
+
+    fun setAdaptiveVerticalSpacing(enabled: Boolean) {
+        _adaptiveVerticalSpacing.value = enabled
+        updateReaderSettings { it.copy(adaptiveVerticalSpacing = enabled) }
+        prefs.edit().putBoolean("adaptive_vertical_spacing", enabled).apply()
+        persistSettingToDb("adaptive_vertical_spacing", enabled.toString())
+    }
+
+    fun setGoldenRatioChapterOpeners(enabled: Boolean) {
+        _goldenRatioChapterOpeners.value = enabled
+        updateReaderSettings { it.copy(goldenRatioChapterOpeners = enabled) }
+        prefs.edit().putBoolean("golden_ratio_chapter_openers", enabled).apply()
+        persistSettingToDb("golden_ratio_chapter_openers", enabled.toString())
     }
 
     fun setPagedSwipeThreshold(threshold: Float) {
@@ -892,6 +928,9 @@ class BookRepository private constructor(private val context: Context) {
         settings.put("vertical_padding", _verticalPadding.value)
         settings.put("paged_safe_lines_to_remove", _pagedSafeLinesToRemove.value)
         settings.put("vertically_center_pages", _verticallyCenterPages.value)
+        settings.put("fill_page_to_bottom", _fillPageToBottom.value)
+        settings.put("adaptive_vertical_spacing", _adaptiveVerticalSpacing.value)
+        settings.put("golden_ratio_chapter_openers", _goldenRatioChapterOpeners.value)
         settings.put("paged_swipe_threshold", _pagedSwipeThreshold.value.toDouble())
         settings.put("show_startup_loading_screen", _showStartupLoadingScreen.value)
         settings.put("uncached_book_open_mode", _uncachedBookOpenMode.value.name)
@@ -1020,6 +1059,9 @@ class BookRepository private constructor(private val context: Context) {
                 if (s.has("vertical_padding")) setVerticalPadding(s.getInt("vertical_padding"))
                 if (s.has("paged_safe_lines_to_remove")) setPagedSafeLinesToRemove(s.getInt("paged_safe_lines_to_remove"))
                 if (s.has("vertically_center_pages")) setVerticallyCenterPages(s.getBoolean("vertically_center_pages"))
+                if (s.has("fill_page_to_bottom")) setFillPageToBottom(s.getBoolean("fill_page_to_bottom"))
+                if (s.has("adaptive_vertical_spacing")) setAdaptiveVerticalSpacing(s.getBoolean("adaptive_vertical_spacing"))
+                if (s.has("golden_ratio_chapter_openers")) setGoldenRatioChapterOpeners(s.getBoolean("golden_ratio_chapter_openers"))
                 if (s.has("paged_swipe_threshold")) setPagedSwipeThreshold(s.getDouble("paged_swipe_threshold").toFloat())
                 if (s.has("show_startup_loading_screen")) setShowStartupLoadingScreen(s.getBoolean("show_startup_loading_screen"))
                 if (s.has("uncached_book_open_mode")) {

@@ -85,8 +85,8 @@ object PageCache {
         } catch (_: Exception) { null }
     }
 
-    // Bumped to v47_ to dynamically budget multi-line chapter headers and prevent sliced bottom text
-    private const val CACHE_VERSION = "v47_"
+    // Bumped to v48_ to support configurable fillPageToBottom and vertical balance toggles
+    private const val CACHE_VERSION = "v48_"
 
     data class DeviceMetrics(
         val charsPerLine: Int,
@@ -227,11 +227,12 @@ object PageCache {
         horizontalPaddingDp: Int = 20,
         verticalPaddingDp: Int = 16,
         paragraphSpacingMultiplier: Float = 1.2f,
-        safeLinesToRemove: Int = 0
+        safeLinesToRemove: Int = 0,
+        fillPageToBottom: Boolean = true
     ): String {
         val orientation = if (isLandscape) "land" else "port"
         val mode = if (isStrictPaged) "strict" else "scroll"
-        val dims = if (screenWidthDp > 0 && screenHeightDp > 0) "_${screenWidthDp}x${screenHeightDp}_p${horizontalPaddingDp}_${verticalPaddingDp}_ps${(paragraphSpacingMultiplier * 10).toInt()}_sl${safeLinesToRemove}" else ""
+        val dims = if (screenWidthDp > 0 && screenHeightDp > 0) "_${screenWidthDp}x${screenHeightDp}_p${horizontalPaddingDp}_${verticalPaddingDp}_ps${(paragraphSpacingMultiplier * 10).toInt()}_sl${safeLinesToRemove}_fp${if (fillPageToBottom) 1 else 0}" else ""
         return "${CACHE_VERSION}${bookId}_${chaptersCount}_${fontSize}_${orientation}_${mode}${dims}"
     }
 
@@ -247,9 +248,10 @@ object PageCache {
         verticalPaddingDp: Int = 16,
         paragraphSpacingMultiplier: Float = 1.2f,
         safeLinesToRemove: Int = 0,
+        fillPageToBottom: Boolean = true,
         context: android.content.Context? = null
     ): List<Pair<String, String>>? {
-        val key = getCacheKey(bookId, chaptersCount, fontSize, isLandscape, isStrictPaged, screenWidthDp, screenHeightDp, horizontalPaddingDp, verticalPaddingDp, paragraphSpacingMultiplier, safeLinesToRemove)
+        val key = getCacheKey(bookId, chaptersCount, fontSize, isLandscape, isStrictPaged, screenWidthDp, screenHeightDp, horizontalPaddingDp, verticalPaddingDp, paragraphSpacingMultiplier, safeLinesToRemove, fillPageToBottom)
         val inMem = cache.get(key)
         if (inMem != null) return inMem
 
@@ -276,10 +278,11 @@ object PageCache {
         lineHeightMultiplier: Float = 1.45f,
         paragraphSpacingMultiplier: Float = 1.2f,
         safeLinesToRemove: Int = 0,
+        fillPageToBottom: Boolean = true,
         dbHelper: LuminaDatabaseHelper? = null,
         context: android.content.Context? = null
     ): List<Pair<String, String>> {
-        val key = getCacheKey(bookId, chapters.size, fontSize, isLandscape, isStrictPaged, screenWidthDp, screenHeightDp, horizontalPaddingDp, verticalPaddingDp, paragraphSpacingMultiplier, safeLinesToRemove)
+        val key = getCacheKey(bookId, chapters.size, fontSize, isLandscape, isStrictPaged, screenWidthDp, screenHeightDp, horizontalPaddingDp, verticalPaddingDp, paragraphSpacingMultiplier, safeLinesToRemove, fillPageToBottom)
         val cached = cache.get(key)
         if (cached != null) return cached
 
@@ -323,7 +326,8 @@ object PageCache {
             verticalPaddingDp = verticalPaddingDp,
             lineHeightMultiplier = lineHeightMultiplier,
             paragraphSpacingMultiplier = paragraphSpacingMultiplier,
-            safeLinesToRemove = safeLinesToRemove
+            safeLinesToRemove = safeLinesToRemove,
+            fillPageToBottom = fillPageToBottom
         )
         if (list.isNotEmpty()) {
             cache.put(key, list)
@@ -348,7 +352,8 @@ object PageCache {
         verticalPaddingDp: Int = 16,
         lineHeightMultiplier: Float = 1.45f,
         paragraphSpacingMultiplier: Float = 1.2f,
-        safeLinesToRemove: Int = 0
+        safeLinesToRemove: Int = 0,
+        fillPageToBottom: Boolean = true
     ): List<Pair<String, String>> {
         return computePages(
             chapters = listOf(chapter),
@@ -361,7 +366,8 @@ object PageCache {
             verticalPaddingDp = verticalPaddingDp,
             lineHeightMultiplier = lineHeightMultiplier,
             paragraphSpacingMultiplier = paragraphSpacingMultiplier,
-            safeLinesToRemove = safeLinesToRemove
+            safeLinesToRemove = safeLinesToRemove,
+            fillPageToBottom = fillPageToBottom
         )
     }
 
@@ -378,12 +384,13 @@ object PageCache {
         lineHeightMultiplier: Float = 1.45f,
         paragraphSpacingMultiplier: Float = 1.2f,
         safeLinesToRemove: Int = 0,
+        fillPageToBottom: Boolean = true,
         dbHelper: LuminaDatabaseHelper? = null,
         context: android.content.Context? = null,
         activeChapterIndex: Int = 0,
         onActiveChapterReady: ((List<Pair<String, String>>) -> Unit)? = null
     ): List<Pair<String, String>> = withContext(Dispatchers.Default) {
-        val key = getCacheKey(bookId, chapters.size, fontSize, isLandscape, isStrictPaged, screenWidthDp, screenHeightDp, horizontalPaddingDp, verticalPaddingDp, paragraphSpacingMultiplier, safeLinesToRemove)
+        val key = getCacheKey(bookId, chapters.size, fontSize, isLandscape, isStrictPaged, screenWidthDp, screenHeightDp, horizontalPaddingDp, verticalPaddingDp, paragraphSpacingMultiplier, safeLinesToRemove, fillPageToBottom)
         val cached = cache.get(key)
         if (cached != null) {
             onActiveChapterReady?.invoke(cached)
@@ -449,7 +456,8 @@ object PageCache {
                 verticalPaddingDp = verticalPaddingDp,
                 lineHeightMultiplier = lineHeightMultiplier,
                 paragraphSpacingMultiplier = paragraphSpacingMultiplier,
-                safeLinesToRemove = safeLinesToRemove
+                safeLinesToRemove = safeLinesToRemove,
+                fillPageToBottom = fillPageToBottom
             )
             if (activePages.isNotEmpty()) {
                 onActiveChapterReady(activePages)
@@ -467,7 +475,8 @@ object PageCache {
             verticalPaddingDp = verticalPaddingDp,
             lineHeightMultiplier = lineHeightMultiplier,
             paragraphSpacingMultiplier = paragraphSpacingMultiplier,
-            safeLinesToRemove = safeLinesToRemove
+            safeLinesToRemove = safeLinesToRemove,
+            fillPageToBottom = fillPageToBottom
         )
         if (list.isNotEmpty()) {
             cache.put(key, list)
@@ -492,7 +501,8 @@ object PageCache {
         verticalPaddingDp: Int = 16,
         lineHeightMultiplier: Float = 1.45f,
         paragraphSpacingMultiplier: Float = 1.2f,
-        safeLinesToRemove: Int = 0
+        safeLinesToRemove: Int = 0,
+        fillPageToBottom: Boolean = true
     ): List<Pair<String, String>> {
         val list = mutableListOf<Pair<String, String>>()
         val metrics = calculateDeviceMetrics(
@@ -648,7 +658,7 @@ object PageCache {
                         // It does not fit entirely.
                         val linesForThisText = availableLines - blankLinesBefore
 
-                        if (linesForThisText >= 1f) {
+                        if (fillPageToBottom && linesForThisText >= 1f) {
                             // Break text to fill remaining lines on current page
                             val maxCharsToFit = (linesForThisText * effectiveCharsPerLine).toInt()
                             if (maxCharsToFit < 35 && currentBatch.isNotEmpty()) {
