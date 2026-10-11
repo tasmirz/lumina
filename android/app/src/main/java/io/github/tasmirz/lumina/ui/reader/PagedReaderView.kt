@@ -186,11 +186,30 @@ fun PagedReaderView(
                     }
                 }
             } else if (content.startsWith("[TABLE:") && content.endsWith("]")) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 4.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
                 ) {
-                    ReaderTableCard(tableToken = content)
+                    // Generous top clear area for effortless horizontal page swiping
+                    Spacer(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(0.15f)
+                    )
+                    ReaderTableCard(
+                        tableToken = content,
+                        isPagedMode = (readingMode == ReadingMode.PAGED),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    // Generous bottom clear area for effortless horizontal page swiping
+                    Spacer(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(0.15f)
+                    )
                 }
             } else if (content.startsWith("[IMG:") && content.endsWith("]")) {
                 val imgPath = content.removePrefix("[IMG:").removeSuffix("]")
@@ -418,6 +437,7 @@ fun PagedReaderView(
                             is PageBlock.Table -> {
                                 ReaderTableCard(
                                     tableToken = block.token,
+                                    isPagedMode = (readingMode == ReadingMode.PAGED),
                                     modifier = Modifier.fillMaxWidth()
                                 )
                             }

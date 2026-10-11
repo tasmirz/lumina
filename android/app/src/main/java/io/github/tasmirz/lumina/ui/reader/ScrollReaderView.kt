@@ -171,7 +171,7 @@ fun ScrollReaderView(
                     if (isDuplicateTitlePara) {
                         // Suppress redundant duplicated title in body paragraph
                     } else if (para.startsWith("[TABLE:") && para.endsWith("]")) {
-                        ReaderTableCard(tableToken = para)
+                        ReaderTableCard(tableToken = para, isPagedMode = false)
                     } else if (para.startsWith("[IMG:") && para.endsWith("]")) {
                         val imgPath = para.removePrefix("[IMG:").removeSuffix("]")
                         val bitmap = rememberBookImage(imgPath, isInlineImage = true)

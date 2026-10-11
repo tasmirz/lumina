@@ -13,6 +13,7 @@ import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateRotation
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -51,6 +52,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -135,7 +137,8 @@ fun splitPageIntoBlocks(rawText: String): List<PageBlock> {
 @Composable
 fun ReaderTableCard(
     tableToken: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isPagedMode: Boolean = true
 ) {
     val jsonStr = tableToken.removePrefix("[TABLE:").removeSuffix("]")
     val (headers, rows) = remember(jsonStr) {
@@ -177,31 +180,44 @@ fun ReaderTableCard(
         }
     }
 
+    val configuration = LocalConfiguration.current
+    val screenHeight = configuration.screenHeightDp.dp
+    val maxTableHeight = if (isPagedMode) (screenHeight * 0.62f).coerceAtLeast(200.dp) else androidx.compose.ui.unit.Dp.Unspecified
+
     val isSingleColCentered = headers.isEmpty() && totalCols == 1
     val outlineColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.40f)
 
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = 12.dp),
+            .padding(vertical = 10.dp),
         shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
         ),
         border = BorderStroke(1.dp, outlineColor)
     ) {
+        val vScrollState = rememberScrollState()
         val hScrollState = rememberScrollState()
+
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .then(if (isSingleColCentered) Modifier else Modifier.horizontalScroll(hScrollState))
+                .then(if (isPagedMode) Modifier.heightIn(max = maxTableHeight) else Modifier)
+                .verticalScroll(vScrollState)
                 .padding(vertical = 6.dp, horizontal = 8.dp),
             contentAlignment = if (isSingleColCentered) Alignment.Center else Alignment.CenterStart
         ) {
-            Column(
-                modifier = if (isSingleColCentered) Modifier.fillMaxWidth() else Modifier.width(IntrinsicSize.Max),
-                horizontalAlignment = if (isSingleColCentered) Alignment.CenterHorizontally else Alignment.Start
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(if (isSingleColCentered) Modifier else Modifier.horizontalScroll(hScrollState)),
+                contentAlignment = if (isSingleColCentered) Alignment.Center else Alignment.CenterStart
             ) {
+                Column(
+                    modifier = if (isSingleColCentered) Modifier.fillMaxWidth() else Modifier.width(IntrinsicSize.Max),
+                    horizontalAlignment = if (isSingleColCentered) Alignment.CenterHorizontally else Alignment.Start
+                ) {
                 if (headers.isNotEmpty()) {
                     Row(
                         modifier = Modifier
@@ -293,6 +309,7 @@ fun ReaderTableCard(
             }
         }
     }
+}
 }
 
 @Composable
