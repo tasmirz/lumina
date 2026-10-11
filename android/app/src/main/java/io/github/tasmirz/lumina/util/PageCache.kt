@@ -32,7 +32,7 @@ class SimpleLruCache<K, V>(private val maxEntries: Int) {
     fun snapshot(): Map<K, V> = synchronized(map) { HashMap(map) }
 }
 
-private data class PageQueueItem(val text: String, val isContinuation: Boolean)
+private data class PageQueueItem(val text: String, val isContinuation: Boolean = false)
 private val INLINE_IMG_REGEX = Regex("\\[INLINE_IMG:[^\\]]+\\]")
 
 object PageCache {
@@ -85,8 +85,8 @@ object PageCache {
         } catch (_: Exception) { null }
     }
 
-    // Bumped to v49_ to ensure full-book page integrity and eliminate single-chapter index shifts
-    private const val CACHE_VERSION = "v49_"
+    // Bumped to v50_ to ensure keep-with-next table heading pagination and eliminate orphan table headers
+    private const val CACHE_VERSION = "v50_"
 
     data class DeviceMetrics(
         val charsPerLine: Int,
@@ -147,6 +147,23 @@ object PageCache {
         } catch (_: Exception) {
             6f
         }
+    }
+
+    fun isHeadingCandidate(text: String): Boolean {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty() || trimmed.startsWith("[TABLE:") || trimmed.startsWith("[IMG:") || trimmed.startsWith("[VERSE:") || trimmed.startsWith("[QUOTE:")) {
+            return false
+        }
+        if (trimmed.contains("\n\n")) return false
+        if (isDivider(trimmed)) return false
+        if (trimmed.length <= 220) return true
+        if (trimmed.endsWith(":") && trimmed.length <= 320) return true
+        return false
+    }
+
+    fun isDivider(text: String): Boolean {
+        val trimmed = text.trim()
+        return trimmed == "⁂" || trimmed == "[DIVIDER]" || trimmed == "* * *" || trimmed == "***"
     }
 
     fun calculateDeviceMetrics(
@@ -582,6 +599,43 @@ object PageCache {
                             continue
                         } else {
                             if (currentBatch.isNotEmpty()) {
+                                // Reactive Pullback: Check if currentBatch ends with an orphan heading / divider
+                                val batchStr = currentBatch.toString().trimEnd()
+                                val lastSep = batchStr.lastIndexOf("\n\n")
+                                if (lastSep >= 0) {
+                                    val candidateHeading = batchStr.substring(lastSep + 2).trim()
+                                    if (isHeadingCandidate(candidateHeading)) {
+                                        val textBeforeHeading = batchStr.substring(0, lastSep).trimEnd()
+                                        val prevSep = textBeforeHeading.lastIndexOf("\n\n")
+                                        val prevPara = (if (prevSep >= 0) textBeforeHeading.substring(prevSep + 2) else textBeforeHeading).trim()
+                                        if (isDivider(prevPara) && prevSep >= 0) {
+                                            // Preceded by substantive text + divider + heading.
+                                            // Pull back both the divider and the heading so they accompany the table to the next page!
+                                            currentBatch.setLength(prevSep)
+                                            queue.addFirst(item)
+                                            queue.addFirst(PageQueueItem(candidateHeading, isContinuation = false))
+                                            queue.addFirst(PageQueueItem(prevPara, isContinuation = false))
+                                            flushBatch()
+                                            continue
+                                        } else {
+                                            // Pull back the heading so it accompanies the table to the next page!
+                                            currentBatch.setLength(lastSep)
+                                            queue.addFirst(item)
+                                            queue.addFirst(PageQueueItem(candidateHeading, isContinuation = false))
+                                            flushBatch()
+                                            continue
+                                        }
+                                    }
+                                }
+
+                                // If heading was already at top of page (lastSep == -1) and table is oversized,
+                                // keep them together on this page with vertical scrolling so the heading is preserved!
+                                if (tableLines > pageLineBudget) {
+                                    currentBatch.append("\n\n").append(p)
+                                    flushBatch()
+                                    continue
+                                }
+
                                 flushBatch()
                                 queue.addFirst(item)
                                 continue
@@ -625,6 +679,58 @@ object PageCache {
                     val cleanPForLen = if (effectiveP.contains("[INLINE_IMG:")) effectiveP.replace(INLINE_IMG_REGEX, "    ") else effectiveP
                     val textLines = kotlin.math.ceil(cleanPForLen.length.toFloat() / effectiveCharsPerLine).coerceAtLeast(1f)
                     val totalLinesNeeded = blankLinesBefore + textLines
+
+                    // ── Proactive Keep-With-Next Lookahead ──
+                    if (currentBatch.isNotEmpty() && !item.isContinuation) {
+                        // 1. Heading followed immediately by a table or subsequent text
+                        if (isHeadingCandidate(effectiveP) && queue.isNotEmpty()) {
+                            val nextItem = queue.first()
+                            if (nextItem.text.startsWith("[TABLE:") && nextItem.text.endsWith("]")) {
+                                val nextTableLines = paragraphGapLines + estimateTableLines(nextItem.text)
+                                if (totalLinesNeeded + nextTableLines > availableLines) {
+                                    // Heading and table cannot fit together on this page.
+                                    // Flush current page so heading and table start together on the next page.
+                                    flushBatch()
+                                    queue.addFirst(item)
+                                    continue
+                                }
+                            } else if (!nextItem.text.startsWith("[IMG:")) {
+                                // Heading followed by regular text: require at least 2 lines of next text on the same page
+                                val minNextTextLines = paragraphGapLines + 2f
+                                if (totalLinesNeeded + minNextTextLines > availableLines) {
+                                    flushBatch()
+                                    queue.addFirst(item)
+                                    continue
+                                }
+                            }
+                        }
+
+                        // 2. Divider followed by heading & table, or divider followed by table
+                        if (isDivider(effectiveP) && queue.isNotEmpty()) {
+                            val next1 = queue.first().text
+                            if (next1.startsWith("[TABLE:") && next1.endsWith("]")) {
+                                val nextTableLines = paragraphGapLines + estimateTableLines(next1)
+                                if (totalLinesNeeded + nextTableLines > availableLines) {
+                                    flushBatch()
+                                    queue.addFirst(item)
+                                    continue
+                                }
+                            } else if (isHeadingCandidate(next1)) {
+                                val nextHeadingLines = paragraphGapLines + kotlin.math.ceil(next1.length.toFloat() / effectiveCharsPerLine).coerceAtLeast(1f)
+                                val next2 = queue.elementAtOrNull(1)?.text
+                                val subsequentLines = if (next2 != null && next2.startsWith("[TABLE:") && next2.endsWith("]")) {
+                                    paragraphGapLines + estimateTableLines(next2)
+                                } else {
+                                    paragraphGapLines + 2f
+                                }
+                                if (totalLinesNeeded + nextHeadingLines + subsequentLines > availableLines) {
+                                    flushBatch()
+                                    queue.addFirst(item)
+                                    continue
+                                }
+                            }
+                        }
+                    }
 
                     if (totalLinesNeeded <= availableLines) {
                         // Entire item fits on the current page!
@@ -750,6 +856,30 @@ object PageCache {
                             currentBatch.append(p)
                             return@forEach
                         } else {
+                            val batchStr = currentBatch.toString().trimEnd()
+                            val lastSep = batchStr.lastIndexOf("\n\n")
+                            if (lastSep >= 0) {
+                                val candidateHeading = batchStr.substring(lastSep + 2).trim()
+                                if (isHeadingCandidate(candidateHeading)) {
+                                    val textBefore = batchStr.substring(0, lastSep).trimEnd()
+                                    val prevSep = textBefore.lastIndexOf("\n\n")
+                                    val prevPara = (if (prevSep >= 0) textBefore.substring(prevSep + 2) else textBefore).trim()
+                                    if (isDivider(prevPara) && prevSep >= 0) {
+                                        currentBatch.setLength(prevSep)
+                                        flushBatch(isChapterHeader = isFirstPageOfChapter)
+                                        isFirstPageOfChapter = false
+                                        currentBatch.append(prevPara).append("\n\n").append(candidateHeading).append("\n\n").append(p)
+                                        return@forEach
+                                    } else {
+                                        currentBatch.setLength(lastSep)
+                                        flushBatch(isChapterHeader = isFirstPageOfChapter)
+                                        isFirstPageOfChapter = false
+                                        currentBatch.append(candidateHeading).append("\n\n").append(p)
+                                        return@forEach
+                                    }
+                                }
+                            }
+
                             flushBatch(isChapterHeader = isFirstPageOfChapter)
                             isFirstPageOfChapter = false
                             if (tableChars <= targetCharsPerPage) {
