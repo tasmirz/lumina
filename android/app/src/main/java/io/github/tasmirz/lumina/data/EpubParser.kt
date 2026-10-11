@@ -247,7 +247,7 @@ object EpubParser {
             }
         } catch (_: Exception) {}
 
-        if (title.isBlank() || title.startsWith("Document:", ignoreCase = true)) {
+        if (title.isBlank() || title.startsWith("Document:", ignoreCase = true) || title.equals("Unnamed", ignoreCase = true) || title.equals("Untitled", ignoreCase = true)) {
             val rawName = filename.replace(Regex("^\\d{10,14}_"), "").removeSuffix(".epub")
             title = rawName.replace("-", " ").replace("_", " ")
                 .split(" ").filter { it.isNotBlank() }.joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
@@ -424,7 +424,7 @@ object EpubParser {
             }
         }
 
-        if (title.isBlank() || title.startsWith("Document:", ignoreCase = true)) {
+        if (title.isBlank() || title.startsWith("Document:", ignoreCase = true) || title.equals("Unnamed", ignoreCase = true) || title.equals("Untitled", ignoreCase = true)) {
             val rawName = filename.replace(Regex("^\\d{10,14}_"), "").removeSuffix(".epub")
             title = rawName.replace("-", " ").replace("_", " ")
                 .split(" ").filter { it.isNotBlank() }.joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
@@ -928,7 +928,14 @@ object EpubParser {
 
             if (headers.isEmpty() && rows.isEmpty()) return null
 
+            val captionRegex = "<caption\\b[^>]*>(.*?)</caption>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+            val captionMatch = captionRegex.find(tableHtml)
+            val captionText = captionMatch?.let { cleanCellText(it.groupValues[1]) } ?: ""
+
             val json = JSONObject()
+            if (captionText.isNotBlank()) {
+                json.put("caption", captionText)
+            }
             val headerArray = JSONArray()
             headers.forEach { headerArray.put(it) }
             json.put("headers", headerArray)
@@ -947,15 +954,163 @@ object EpubParser {
         }
     }
 
+    fun cleanLatexMath(raw: String): String {
+        if (!raw.contains("\\") && !raw.contains("_{") && !raw.contains("^{") && !raw.contains("$")) {
+            return raw
+        }
+
+        var s = raw
+        // Strip surrounding math delimiters $...$ or $$...$$ or \(...\)
+        s = s.replace(Regex("^\\s*\\$\\$?(.*?)\\$\\$?\\s*$"), "$1")
+        s = s.replace(Regex("\\\\\\((.*?)\\\\\\)"), "$1")
+        s = s.replace(Regex("\\\\\\[(.*?)\\\\\\]"), "$1")
+
+        // Clean common font wrappers \text{...}, \mathrm{...}, \mathbf{...}, \mathit{...}
+        s = s.replace(Regex("\\\\(?:text|mathrm|mathbf|mathit|textbf|textit)\\{([^}]+)\\}"), "$1")
+
+        // Greek letters & math symbols
+        s = s.replace("\\lambda", "λ")
+            .replace("\\alpha", "α")
+            .replace("\\beta", "β")
+            .replace("\\gamma", "γ")
+            .replace("\\delta", "δ")
+            .replace("\\epsilon", "ε")
+            .replace("\\varepsilon", "ε")
+            .replace("\\zeta", "ζ")
+            .replace("\\eta", "η")
+            .replace("\\theta", "θ")
+            .replace("\\iota", "ι")
+            .replace("\\kappa", "κ")
+            .replace("\\mu", "μ")
+            .replace("\\nu", "ν")
+            .replace("\\xi", "ξ")
+            .replace("\\pi", "π")
+            .replace("\\rho", "ρ")
+            .replace("\\sigma", "σ")
+            .replace("\\tau", "τ")
+            .replace("\\phi", "φ")
+            .replace("\\chi", "χ")
+            .replace("\\psi", "ψ")
+            .replace("\\omega", "ω")
+            .replace("\\Gamma", "Γ")
+            .replace("\\Delta", "Δ")
+            .replace("\\Theta", "Θ")
+            .replace("\\Lambda", "Λ")
+            .replace("\\Xi", "Ξ")
+            .replace("\\Pi", "Π")
+            .replace("\\Sigma", "Σ")
+            .replace("\\Phi", "Φ")
+            .replace("\\Psi", "Ψ")
+            .replace("\\Omega", "Ω")
+            .replace("\\ell", "ℓ")
+            .replace("\\nabla", "∇")
+            .replace("\\partial", "∂")
+            .replace("\\infty", "∞")
+            .replace("\\times", "×")
+            .replace("\\cdot", "·")
+            .replace("\\pm", "±")
+            .replace("\\mp", "∓")
+            .replace(Regex("\\\\(?:le|leq)\\b"), "≤")
+            .replace(Regex("\\\\(?:ge|geq)\\b"), "≥")
+            .replace(Regex("\\\\(?:ne|neq)\\b"), "≠")
+            .replace("\\approx", "≈")
+            .replace("\\sum", "∑")
+            .replace("\\prod", "∏")
+            .replace("\\int", "∫")
+            .replace("\\in", "∈")
+            .replace("\\notin", "∉")
+            .replace("\\subset", "⊂")
+            .replace("\\cup", "∪")
+            .replace("\\cap", "∩")
+            .replace(Regex("\\\\(?:to|rightarrow)\\b"), "→")
+            .replace(Regex("\\\\(?:gets|leftarrow)\\b"), "←")
+            .replace("\\Rightarrow", "⇒")
+            .replace("\\Leftarrow", "⇐")
+            .replace("\\iff", "⇔")
+
+        // Blackboard bold: \mathbb{R} -> ℝ, etc.
+        s = s.replace(Regex("\\\\mathbb\\{([A-Z])\\}")) { m ->
+            when (m.groupValues[1]) {
+                "R" -> "ℝ"
+                "C" -> "ℂ"
+                "N" -> "ℕ"
+                "Z" -> "ℤ"
+                "Q" -> "ℚ"
+                "E" -> "𝔼"
+                "P" -> "ℙ"
+                else -> m.groupValues[1]
+            }
+        }
+
+        // Caligraphic letters: \mathcal{P} -> 𝒫, etc.
+        s = s.replace(Regex("\\\\mathcal\\{([A-Z])\\}")) { m ->
+            when (m.groupValues[1]) {
+                "L" -> "ℒ"
+                "P" -> "𝒫"
+                "C" -> "𝒞"
+                "D" -> "𝒟"
+                "N" -> "𝒩"
+                "M" -> "ℳ"
+                "H" -> "ℋ"
+                "F" -> "ℱ"
+                "B" -> "ℬ"
+                "R" -> "ℛ"
+                else -> m.groupValues[1]
+            }
+        }
+
+        // Subscripts: _{...} and _[a-zA-Z0-9]
+        if (s.contains("_{")) {
+            s = s.replace(Regex("(?<=\\S)_\\{([^}]+)\\}")) { m ->
+                formatSubscript("", m.groupValues[1])
+            }
+        }
+        if (s.contains("^{")) {
+            s = s.replace(Regex("(?<=\\S)\\^\\{([^}]+)\\}")) { m ->
+                formatSuperscript("", m.groupValues[1])
+            }
+        }
+        if (s.contains("_")) {
+            val mathSubRegex = "([ℒℓ𝔼𝕍ℝα-ωΑ-Ω∇∂λg]|[a-zA-Z]{1,6})_([a-zA-Z0-9]{1,6})\\b".toRegex()
+            s = mathSubRegex.replace(s) { m ->
+                formatSubscript(m.groupValues[1], m.groupValues[2])
+            }
+        }
+        if (s.contains("^")) {
+            val mathSupRegex = "([ℒℓ𝔼𝕍ℝα-ωΑ-Ω∇∂λg]|[a-zA-Z0-9]{1,6})\\^([a-zA-Z0-9]{1,4})\\b".toRegex()
+            s = mathSupRegex.replace(s) { m ->
+                formatSuperscript(m.groupValues[1], m.groupValues[2])
+            }
+        }
+
+        // Clean up remaining lone backslashes before plain words (e.g. \min -> min, \max -> max)
+        s = s.replace(Regex("\\\\([a-zA-Z]+)"), "$1")
+
+        return s.trim()
+    }
+
     private fun cleanCellText(cellHtml: String): String {
         val mathRegex = "<math\\b[^>]*>(.*?)</math>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
         val mathProcessed = mathRegex.replace(cellHtml) { match ->
             transformMathML(match.value)
         }
-        val text = mathProcessed
+        val supRegex = "(?i)<sup\\b[^>]*>(.*?)</sup>".toRegex(RegexOption.DOT_MATCHES_ALL)
+        val subRegex = "(?i)<sub\\b[^>]*>(.*?)</sub>".toRegex(RegexOption.DOT_MATCHES_ALL)
+        val supProcessed = supRegex.replace(mathProcessed) { match ->
+            val inner = match.groupValues[1].replace("<[^>]+>".toRegex(), "").trim()
+            val unicode = if (inner.length <= 3) toUnicodeSuperscript(inner) else null
+            unicode ?: "[sup]$inner[/sup]"
+        }
+        val subSupProcessed = subRegex.replace(supProcessed) { match ->
+            val inner = match.groupValues[1].replace("<[^>]+>".toRegex(), "").trim()
+            val unicode = if (inner.length == 1) toUnicodeSubscript(inner) else null
+            unicode ?: "[sub]$inner[/sub]"
+        }
+        val text = subSupProcessed
             .replace("<br\\s*/?>".toRegex(RegexOption.IGNORE_CASE), " ")
             .replace("<[^>]+>".toRegex(), " ")
-        return decodeHtmlEntities(text).replace("\\s+".toRegex(), " ").trim()
+        val decoded = decodeHtmlEntities(text).replace("\\s+".toRegex(), " ").trim()
+        return cleanLatexMath(decoded)
     }
 
     private fun cleanHtmlToParagraphs(html: String): List<String> {

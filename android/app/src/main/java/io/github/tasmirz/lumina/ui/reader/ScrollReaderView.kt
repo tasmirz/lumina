@@ -150,7 +150,16 @@ fun ScrollReaderView(
                 itemsIndexed(
                     items = chapter.paragraphs,
                     key = { pIdx, _ -> "chap-${chapIdx}-para-${pIdx}" },
-                    contentType = { _, _ -> "paragraph" }
+                    contentType = { _, para ->
+                        when {
+                            para.startsWith("[TABLE:") -> "table"
+                            para.startsWith("[IMG:") -> "image"
+                            para == "[DIVIDER]" || para.trim() == "⁂" || para.trim() == "* * *" || para.trim() == "***" -> "divider"
+                            para.startsWith("[VERSE:") -> "verse"
+                            para.startsWith("[QUOTE:") -> "quote"
+                            else -> "text"
+                        }
+                    }
                 ) { pIdx, para ->
                     val matchingBookmarks = remember(para, chapterBookmarks) {
                         if (chapterBookmarks.isEmpty()) {

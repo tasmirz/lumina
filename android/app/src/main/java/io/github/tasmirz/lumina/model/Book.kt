@@ -282,6 +282,7 @@ data class ReaderSettings(
     val adaptiveVerticalSpacing: Boolean = false,
     val goldenRatioChapterOpeners: Boolean = false,
     val pagedSwipeThreshold: Float = 0.08f,
+    val allowTableSplitting: Boolean = true,
     val showStartupLoadingScreen: Boolean = false,
     val uncachedBookOpenMode: UncachedBookOpenMode = UncachedBookOpenMode.INSTANT_ACTIVE_FIRST,
     val inlineImageWidthPercent: Int = 100,

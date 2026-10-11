@@ -264,6 +264,9 @@ fun AdvancedSettingsScreen(
     val pagedSwipeThresholdState = repository?.pagedSwipeThreshold?.collectAsState(initial = 0.08f)
     val pagedSwipeThreshold = pagedSwipeThresholdState?.value ?: 0.08f
 
+    val allowTableSplittingState = repository?.allowTableSplitting?.collectAsState(initial = true)
+    val allowTableSplitting = allowTableSplittingState?.value ?: true
+
     val showStartupLoadingScreenState = repository?.showStartupLoadingScreen?.collectAsState(initial = false)
     val showStartupLoadingScreen = showStartupLoadingScreenState?.value ?: false
 
@@ -1188,6 +1191,25 @@ fun AdvancedSettingsScreen(
 
                         Spacer(modifier = Modifier.height(8.dp))
 
+                        // Allow Table Splitting Across Pages
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Allow Table Splitting Across Pages", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("Splits multi-row tables across page breaks with repeated column headers", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                            }
+                            Switch(
+                                checked = allowTableSplitting,
+                                onCheckedChange = { repository?.setAllowTableSplitting(it) },
+                                modifier = Modifier.size(width = 48.dp, height = 28.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
                         // Page Turn Swipe Effort
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -1215,8 +1237,8 @@ fun AdvancedSettingsScreen(
                         Slider(
                             value = pagedSwipeThreshold,
                             onValueChange = { repository?.setPagedSwipeThreshold(it) },
-                            valueRange = 0.08f..0.50f,
-                            steps = 6,
+                            valueRange = 0.03f..0.50f,
+                            steps = 8,
                             modifier = Modifier.fillMaxWidth()
                         )
 
@@ -2723,8 +2745,8 @@ fun AdvancedSettingsScreen(
                         Slider(
                             value = pagedSwipeThreshold,
                             onValueChange = { repository?.setPagedSwipeThreshold(it) },
-                            valueRange = 0.08f..0.50f,
-                            steps = 6,
+                            valueRange = 0.03f..0.50f,
+                            steps = 8,
                             modifier = Modifier.fillMaxWidth()
                         )
 
