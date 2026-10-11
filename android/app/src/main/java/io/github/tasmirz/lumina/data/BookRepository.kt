@@ -128,6 +128,9 @@ class BookRepository private constructor(private val context: Context) {
     private val _pagedSwipeThreshold = MutableStateFlow(prefs.getFloat("paged_swipe_threshold", 0.08f))
     val pagedSwipeThreshold: StateFlow<Float> = _pagedSwipeThreshold.asStateFlow()
 
+    private val _allowTableSplitting = MutableStateFlow(prefs.getBoolean("allow_table_splitting", true))
+    val allowTableSplitting: StateFlow<Boolean> = _allowTableSplitting.asStateFlow()
+
     private val _showStartupLoadingScreen = MutableStateFlow(prefs.getBoolean("show_startup_loading_screen", false))
     val showStartupLoadingScreen: StateFlow<Boolean> = _showStartupLoadingScreen.asStateFlow()
 
@@ -415,6 +418,7 @@ class BookRepository private constructor(private val context: Context) {
             adaptiveVerticalSpacing = prefs.getBoolean("adaptive_vertical_spacing", false),
             goldenRatioChapterOpeners = prefs.getBoolean("golden_ratio_chapter_openers", false),
             pagedSwipeThreshold = prefs.getFloat("paged_swipe_threshold", 0.08f),
+            allowTableSplitting = prefs.getBoolean("allow_table_splitting", true),
             showStartupLoadingScreen = prefs.getBoolean("show_startup_loading_screen", false),
             uncachedBookOpenMode = try { UncachedBookOpenMode.valueOf(prefs.getString("uncached_book_open_mode", UncachedBookOpenMode.INSTANT_ACTIVE_FIRST.name) ?: UncachedBookOpenMode.INSTANT_ACTIVE_FIRST.name) } catch (_: Exception) { UncachedBookOpenMode.INSTANT_ACTIVE_FIRST },
             inlineImageWidthPercent = prefs.getInt("inline_image_width_percent", 100),
@@ -558,6 +562,7 @@ class BookRepository private constructor(private val context: Context) {
                 screenWidthDp = sw,
                 screenHeightDp = sh,
                 fillPageToBottom = _fillPageToBottom.value,
+                allowTableSplitting = _allowTableSplitting.value,
                 dbHelper = dbHelper,
                 context = context,
                 activeChapterIndex = activeChapterIndex,
@@ -647,6 +652,7 @@ class BookRepository private constructor(private val context: Context) {
                         paragraphSpacingMultiplier = _paragraphSpacingMultiplier.value,
                         safeLinesToRemove = _pagedSafeLinesToRemove.value,
                         fillPageToBottom = _fillPageToBottom.value,
+                        allowTableSplitting = _allowTableSplitting.value,
                         dbHelper = dbHelper,
                         context = context
                     )
@@ -784,11 +790,18 @@ class BookRepository private constructor(private val context: Context) {
     }
 
     fun setPagedSwipeThreshold(threshold: Float) {
-        val clamped = threshold.coerceIn(0.05f, 0.60f)
+        val clamped = threshold.coerceIn(0.03f, 0.60f)
         _pagedSwipeThreshold.value = clamped
         updateReaderSettings { it.copy(pagedSwipeThreshold = clamped) }
         prefs.edit().putFloat("paged_swipe_threshold", clamped).apply()
         persistSettingToDb("paged_swipe_threshold", clamped.toString())
+    }
+
+    fun setAllowTableSplitting(enabled: Boolean) {
+        _allowTableSplitting.value = enabled
+        updateReaderSettings { it.copy(allowTableSplitting = enabled) }
+        prefs.edit().putBoolean("allow_table_splitting", enabled).apply()
+        persistSettingToDb("allow_table_splitting", enabled.toString())
     }
 
     fun setShowStartupLoadingScreen(enabled: Boolean) {

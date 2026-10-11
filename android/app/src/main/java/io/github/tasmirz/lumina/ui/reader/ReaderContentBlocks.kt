@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
@@ -57,9 +58,14 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.BaselineShift
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import kotlinx.coroutines.launch
@@ -68,61 +74,84 @@ import org.json.JSONObject
 sealed class PageBlock {
     data class Text(val text: String) : PageBlock()
     data class Table(val token: String) : PageBlock()
+    data class Image(val path: String) : PageBlock()
 }
 
 fun splitPageIntoBlocks(rawText: String): List<PageBlock> {
-    if (!rawText.contains("[TABLE:")) {
+    if (!rawText.contains("[TABLE:") && !rawText.contains("[IMG:")) {
         return listOf(PageBlock.Text(rawText))
     }
     val blocks = mutableListOf<PageBlock>()
     var lastIdx = 0
     var scanIdx = 0
     while (scanIdx < rawText.length) {
-        val start = rawText.indexOf("[TABLE:", scanIdx)
-        if (start == -1) break
+        val nextTable = rawText.indexOf("[TABLE:", scanIdx)
+        val nextImg = rawText.indexOf("[IMG:", scanIdx)
 
-        var depth = 0
-        var inString = false
-        var escape = false
-        var end = -1
-        for (i in start until rawText.length) {
-            val ch = rawText[i]
-            if (inString) {
-                if (escape) {
-                    escape = false
-                } else if (ch == '\\') {
-                    escape = true
-                } else if (ch == '"') {
-                    inString = false
+        if (nextTable == -1 && nextImg == -1) break
+
+        if (nextImg != -1 && (nextTable == -1 || nextImg < nextTable)) {
+            val end = rawText.indexOf(']', nextImg)
+            if (end != -1) {
+                if (nextImg > lastIdx) {
+                    val txt = rawText.substring(lastIdx, nextImg).trim()
+                    if (txt.isNotEmpty()) {
+                        blocks.add(PageBlock.Text(txt))
+                    }
                 }
+                val imgToken = rawText.substring(nextImg, end + 1)
+                val imgPath = imgToken.removePrefix("[IMG:").removeSuffix("]")
+                blocks.add(PageBlock.Image(imgPath))
+                lastIdx = end + 1
+                scanIdx = end + 1
             } else {
-                if (ch == '"') {
-                    inString = true
-                } else if (ch == '[') {
-                    depth++
-                } else if (ch == ']') {
-                    depth--
-                    if (depth == 0) {
-                        end = i
-                        break
+                scanIdx = nextImg + 5
+            }
+        } else {
+            val start = nextTable
+            var depth = 0
+            var inString = false
+            var escape = false
+            var end = -1
+            for (i in start until rawText.length) {
+                val ch = rawText[i]
+                if (inString) {
+                    if (escape) {
+                        escape = false
+                    } else if (ch == '\\') {
+                        escape = true
+                    } else if (ch == '"') {
+                        inString = false
+                    }
+                } else {
+                    if (ch == '"') {
+                        inString = true
+                    } else if (ch == '[') {
+                        depth++
+                    } else if (ch == ']') {
+                        depth--
+                        if (depth == 0) {
+                            end = i
+                            break
+                        }
                     }
                 }
             }
-        }
 
-        if (end != -1) {
-            if (start > lastIdx) {
-                val txt = rawText.substring(lastIdx, start).trim()
-                if (txt.isNotEmpty()) {
-                    blocks.add(PageBlock.Text(txt))
+            if (end != -1) {
+                if (start > lastIdx) {
+                    val txt = rawText.substring(lastIdx, start).trim()
+                    if (txt.isNotEmpty()) {
+                        blocks.add(PageBlock.Text(txt))
+                    }
                 }
+                val tableToken = rawText.substring(start, end + 1)
+                blocks.add(PageBlock.Table(tableToken))
+                lastIdx = end + 1
+                scanIdx = end + 1
+            } else {
+                scanIdx = start + 7
             }
-            val tableToken = rawText.substring(start, end + 1)
-            blocks.add(PageBlock.Table(tableToken))
-            lastIdx = end + 1
-            scanIdx = end + 1
-        } else {
-            scanIdx = start + 7
         }
     }
     if (lastIdx < rawText.length) {
@@ -134,6 +163,13 @@ fun splitPageIntoBlocks(rawText: String): List<PageBlock> {
     return if (blocks.isEmpty()) listOf(PageBlock.Text(rawText)) else blocks
 }
 
+data class TableParsedInfo(
+    val headers: List<String>,
+    val rows: List<List<String>>,
+    val caption: String,
+    val isContinuation: Boolean
+)
+
 @Composable
 fun ReaderTableCard(
     tableToken: String,
@@ -141,9 +177,11 @@ fun ReaderTableCard(
     isPagedMode: Boolean = true
 ) {
     val jsonStr = tableToken.removePrefix("[TABLE:").removeSuffix("]")
-    val (headers, rows) = remember(jsonStr) {
+    val parsedData = remember(jsonStr) {
         try {
             val obj = JSONObject(jsonStr)
+            val cap = obj.optString("caption").ifBlank { obj.optString("title") }
+            val cont = obj.optBoolean("isContinuation", false)
             val hArr = obj.optJSONArray("headers")
             val hList = if (hArr != null) List(hArr.length()) { i -> hArr.getString(i) } else emptyList()
             val rArr = obj.optJSONArray("rows")
@@ -153,11 +191,16 @@ fun ReaderTableCard(
                     List(rowArr.length()) { c -> rowArr.getString(c) }
                 }
             } else emptyList()
-            hList to rList
+            TableParsedInfo(hList, rList, cap, cont)
         } catch (_: Exception) {
-            emptyList<String>() to emptyList<List<String>>()
+            TableParsedInfo(emptyList(), emptyList(), "", false)
         }
     }
+
+    val headers = parsedData.headers
+    val rows = parsedData.rows
+    val caption = parsedData.caption
+    val isContinuation = parsedData.isContinuation
 
     if (headers.isEmpty() && rows.isEmpty()) return
 
@@ -187,16 +230,33 @@ fun ReaderTableCard(
     val isSingleColCentered = headers.isEmpty() && totalCols == 1
     val outlineColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.40f)
 
-    Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(vertical = 10.dp),
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
-        ),
-        border = BorderStroke(1.dp, outlineColor)
-    ) {
+    val titleText = when {
+        caption.isNotBlank() && isContinuation -> "$caption (cont.)"
+        caption.isNotBlank() -> caption
+        isContinuation -> "Table (cont.)"
+        else -> ""
+    }
+
+    Column(modifier = modifier.fillMaxWidth().padding(vertical = 10.dp)) {
+        if (titleText.isNotBlank()) {
+            Text(
+                text = titleText,
+                fontFamily = FontFamily.SansSerif,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Normal,
+                letterSpacing = 0.5.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 6.dp, start = 4.dp)
+            )
+        }
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(8.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+            ),
+            border = BorderStroke(1.dp, outlineColor)
+        ) {
         val vScrollState = rememberScrollState()
         val hScrollState = rememberScrollState()
 
@@ -222,101 +282,171 @@ fun ReaderTableCard(
                 contentAlignment = if (isSingleColCentered) Alignment.Center else Alignment.CenterStart
             ) {
                 Column(
-                    modifier = if (isSingleColCentered) Modifier.fillMaxWidth() else Modifier.width(IntrinsicSize.Max),
+                    modifier = if (isSingleColCentered) Modifier.fillMaxWidth() else Modifier.wrapContentWidth(),
                     horizontalAlignment = if (isSingleColCentered) Alignment.CenterHorizontally else Alignment.Start
                 ) {
-                if (headers.isNotEmpty()) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.50f), shape = RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp))
-                            .height(IntrinsicSize.Min),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        for (c in 0 until totalCols) {
-                            val headerText = headers.getOrNull(c) ?: ""
-                            Box(
-                                modifier = Modifier
-                                    .width(colWidths[c])
-                                    .padding(horizontal = 10.dp, vertical = 9.dp),
-                                contentAlignment = Alignment.CenterStart
-                            ) {
-                                Text(
-                                    text = headerText,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Normal,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                            if (c < totalCols - 1) {
+                    if (headers.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.50f), shape = RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp)),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            for (c in 0 until totalCols) {
+                                val headerText = headers.getOrNull(c) ?: ""
+                                val isLastCol = c == totalCols - 1
                                 Box(
                                     modifier = Modifier
-                                        .fillMaxHeight()
-                                        .width(0.8.dp)
-                                        .background(outlineColor)
-                                )
+                                        .width(colWidths[c])
+                                        .then(
+                                            if (!isLastCol) {
+                                                Modifier.drawBehind {
+                                                    drawLine(
+                                                        color = outlineColor,
+                                                        start = Offset(size.width, 0f),
+                                                        end = Offset(size.width, size.height),
+                                                        strokeWidth = 0.8.dp.toPx()
+                                                    )
+                                                }
+                                            } else Modifier
+                                        )
+                                        .padding(horizontal = 10.dp, vertical = 9.dp),
+                                    contentAlignment = Alignment.CenterStart
+                                ) {
+                                    TableCellContent(
+                                        text = headerText,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Normal,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
                             }
                         }
-                    }
-                    HorizontalDivider(
-                        thickness = 1.dp,
-                        color = outlineColor
-                    )
-                }
-
-                rows.forEachIndexed { rowIdx, rowCells ->
-                    val rowBg = if (!isSingleColCentered && rowIdx % 2 == 1) {
-                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f)
-                    } else {
-                        Color.Transparent
-                    }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(rowBg)
-                            .height(IntrinsicSize.Min),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = if (isSingleColCentered) Arrangement.Center else Arrangement.Start
-                    ) {
-                        for (c in 0 until totalCols) {
-                            val cellText = rowCells.getOrNull(c) ?: ""
-                            Box(
-                                modifier = Modifier
-                                    .then(if (isSingleColCentered) Modifier.fillMaxWidth() else Modifier.width(colWidths[c]))
-                                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                                contentAlignment = if (isSingleColCentered) Alignment.Center else Alignment.CenterStart
-                            ) {
-                                Text(
-                                    text = cellText,
-                                    style = if (isSingleColCentered) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
-                                    fontWeight = FontWeight.Normal,
-                                    letterSpacing = if (isSingleColCentered) 1.5.sp else 0.sp,
-                                    textAlign = if (isSingleColCentered) TextAlign.Center else TextAlign.Start,
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.92f),
-                                    modifier = if (isSingleColCentered) Modifier.fillMaxWidth() else Modifier
-                                )
-                            }
-                            if (c < totalCols - 1) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxHeight()
-                                        .width(0.8.dp)
-                                        .background(outlineColor)
-                                )
-                            }
-                        }
-                    }
-                    if (!isSingleColCentered && rowIdx < rows.size - 1) {
                         HorizontalDivider(
-                            thickness = 0.5.dp,
-                            color = outlineColor.copy(alpha = 0.25f)
+                            thickness = 1.dp,
+                            color = outlineColor
                         )
+                    }
+
+                    rows.forEachIndexed { rowIdx, rowCells ->
+                        val rowBg = if (!isSingleColCentered && rowIdx % 2 == 1) {
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f)
+                        } else {
+                            Color.Transparent
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(rowBg),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = if (isSingleColCentered) Arrangement.Center else Arrangement.Start
+                        ) {
+                            for (c in 0 until totalCols) {
+                                val cellText = rowCells.getOrNull(c) ?: ""
+                                val isLastCol = c == totalCols - 1
+                                Box(
+                                    modifier = Modifier
+                                        .then(if (isSingleColCentered) Modifier.fillMaxWidth() else Modifier.width(colWidths[c]))
+                                        .then(
+                                            if (!isSingleColCentered && !isLastCol) {
+                                                Modifier.drawBehind {
+                                                    drawLine(
+                                                        color = outlineColor,
+                                                        start = Offset(size.width, 0f),
+                                                        end = Offset(size.width, size.height),
+                                                        strokeWidth = 0.8.dp.toPx()
+                                                    )
+                                                }
+                                            } else Modifier
+                                        )
+                                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                                    contentAlignment = if (isSingleColCentered) Alignment.Center else Alignment.CenterStart
+                                ) {
+                                    TableCellContent(
+                                        text = cellText,
+                                        style = if (isSingleColCentered) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.Normal,
+                                        letterSpacing = if (isSingleColCentered) 1.5.sp else 0.sp,
+                                        textAlign = if (isSingleColCentered) TextAlign.Center else TextAlign.Start,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.92f),
+                                        modifier = if (isSingleColCentered) Modifier.fillMaxWidth() else Modifier
+                                    )
+                                }
+                            }
+                        }
+                        if (!isSingleColCentered && rowIdx < rows.size - 1) {
+                            HorizontalDivider(
+                                thickness = 0.5.dp,
+                                color = outlineColor.copy(alpha = 0.25f)
+                            )
+                        }
                     }
                 }
             }
         }
     }
 }
+}
+
+@Composable
+private fun TableCellContent(
+    text: String,
+    style: TextStyle,
+    fontWeight: FontWeight = FontWeight.Normal,
+    letterSpacing: TextUnit = 0.sp,
+    textAlign: TextAlign = TextAlign.Start,
+    color: Color = MaterialTheme.colorScheme.onSurface,
+    modifier: Modifier = Modifier
+) {
+    val parsed = remember(text) { parseTextFormatting(text) }
+    if (parsed.spans.isNotEmpty()) {
+        val baseFontSize = style.fontSize
+        val annotated = remember(parsed, baseFontSize) {
+            buildAnnotatedString {
+                append(parsed.plainText)
+                parsed.spans.forEach { span ->
+                    if (span.isSubscript) {
+                        addStyle(
+                            SpanStyle(
+                                baselineShift = BaselineShift.Subscript,
+                                fontSize = if (baseFontSize.isSpecified) baseFontSize * 0.75f else 9.5.sp
+                            ),
+                            span.start,
+                            span.end
+                        )
+                    } else if (span.isSuperscript) {
+                        addStyle(
+                            SpanStyle(
+                                baselineShift = BaselineShift.Superscript,
+                                fontSize = if (baseFontSize.isSpecified) baseFontSize * 0.75f else 9.5.sp
+                            ),
+                            span.start,
+                            span.end
+                        )
+                    }
+                }
+            }
+        }
+        Text(
+            text = annotated,
+            style = style,
+            fontWeight = fontWeight,
+            letterSpacing = letterSpacing,
+            textAlign = textAlign,
+            color = color,
+            modifier = modifier
+        )
+    } else {
+        Text(
+            text = text,
+            style = style,
+            fontWeight = fontWeight,
+            letterSpacing = letterSpacing,
+            textAlign = textAlign,
+            color = color,
+            modifier = modifier
+        )
+    }
 }
 
 @Composable
@@ -419,8 +549,8 @@ fun InlineReaderImage(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .zIndex(if (isPinching || scale > 1.05f) 50f else 0f)
-            .padding(vertical = 16.dp)
+            .zIndex(if (isPinching || scale > 1.05f) 500f else 0f)
+            .padding(vertical = if (isPinching || scale > 1.05f) 0.dp else 16.dp)
             .pointerInput(bitmap, imgPath) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
@@ -464,20 +594,27 @@ fun InlineReaderImage(
 
                     if (transformed) {
                         isPinching = false
-                        coroutineScope.launch {
-                            val springSpec = spring<Float>(
-                                dampingRatio = Spring.DampingRatioMediumBouncy,
-                                stiffness = Spring.StiffnessLow
-                            )
-                            val animScale = Animatable(scale)
-                            val animRot = Animatable(rotation)
-                            val animX = Animatable(offset.x)
-                            val animY = Animatable(offset.y)
+                        if (scale >= 1.30f && bitmap != null) {
+                            scale = 1f
+                            rotation = 0f
+                            offset = Offset.Zero
+                            onOpenLightbox(bitmap, imgPath)
+                        } else {
+                            coroutineScope.launch {
+                                val springSpec = spring<Float>(
+                                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                                    stiffness = Spring.StiffnessLow
+                                )
+                                val animScale = Animatable(scale)
+                                val animRot = Animatable(rotation)
+                                val animX = Animatable(offset.x)
+                                val animY = Animatable(offset.y)
 
-                            launch { animScale.animateTo(1f, springSpec) { scale = value } }
-                            launch { animRot.animateTo(0f, springSpec) { rotation = value } }
-                            launch { animX.animateTo(0f, springSpec) { offset = Offset(value, offset.y) } }
-                            launch { animY.animateTo(0f, springSpec) { offset = Offset(offset.x, value) } }
+                                launch { animScale.animateTo(1f, springSpec) { scale = value } }
+                                launch { animRot.animateTo(0f, springSpec) { rotation = value } }
+                                launch { animX.animateTo(0f, springSpec) { offset = Offset(value, offset.y) } }
+                                launch { animY.animateTo(0f, springSpec) { offset = Offset(offset.x, value) } }
+                            }
                         }
                     } else {
                         if (totalDrag.getDistance() < touchSlop) {
@@ -493,52 +630,86 @@ fun InlineReaderImage(
         contentAlignment = Alignment.Center
     ) {
         if (bitmap != null) {
-            val isBlockDiagram = bitmap.width >= 500 && bitmap.height >= 200
+            val isSmallIcon = bitmap.width < 100 && bitmap.height < 100
+            val isTallPortrait = !isSmallIcon && (bitmap.height.toFloat() / bitmap.width.toFloat() > 1.45f)
             val density = LocalDensity.current
-            val imageModifier = if (isBlockDiagram) {
-                Modifier
-                    .fillMaxWidth(widthFraction)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp))
-            } else {
-                val intrinsicWidthDp = with(density) { bitmap.width.toDp() }
-                val intrinsicHeightDp = with(density) { bitmap.height.toDp() }
-                Modifier
-                    .widthIn(max = intrinsicWidthDp.coerceAtMost(360.dp).coerceAtLeast(32.dp))
-                    .heightIn(max = intrinsicHeightDp.coerceAtMost(240.dp).coerceAtLeast(24.dp))
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(4.dp))
+            val baseModifier = when {
+                isSmallIcon -> {
+                    val intrinsicWidthDp = with(density) { bitmap.width.toDp() }
+                    val intrinsicHeightDp = with(density) { bitmap.height.toDp() }
+                    Modifier
+                        .widthIn(max = intrinsicWidthDp.coerceAtMost(100.dp).coerceAtLeast(24.dp))
+                        .heightIn(max = intrinsicHeightDp.coerceAtMost(100.dp).coerceAtLeast(24.dp))
+                        .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(4.dp))
+                }
+                isTallPortrait -> {
+                    Modifier
+                        .fillMaxWidth(widthFraction)
+                        .heightIn(max = 500.dp)
+                        .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp))
+                }
+                else -> {
+                    Modifier
+                        .fillMaxWidth(widthFraction)
+                        .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp))
+                }
             }
+            val finalImageModifier = if (scale > 1.02f || isPinching) {
+                baseModifier
+            } else {
+                baseModifier.clip(RoundedCornerShape(if (isSmallIcon) 4.dp else 8.dp))
+            }
+
             Image(
                 bitmap = bitmap.asImageBitmap(),
                 contentDescription = "Illustration",
-                contentScale = if (isBlockDiagram) ContentScale.FillWidth else ContentScale.Fit,
-                modifier = imageModifier
+                contentScale = if (isSmallIcon || isTallPortrait) ContentScale.Fit else ContentScale.FillWidth,
+                modifier = finalImageModifier
                     .graphicsLayer {
                         scaleX = scale
                         scaleY = scale
                         rotationZ = rotation
                         translationX = offset.x
                         translationY = offset.y
-                        shadowElevation = if (isPinching) 16f else 0f
+                        shadowElevation = if (isPinching || scale > 1.05f) 24f else 0f
                     }
             )
         } else {
             Surface(
                 shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.20f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
                 modifier = Modifier
                     .fillMaxWidth(widthFraction)
-                    .height(160.dp)
+                    .height(140.dp)
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text(
-                        text = "Illustration",
-                        fontFamily = FontFamily.SansSerif,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Normal,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                    )
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = "Illustration",
+                            fontFamily = FontFamily.SansSerif,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Normal,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                        )
+                        val name = imgPath.substringAfterLast('/').substringBeforeLast('.')
+                        if (name.isNotBlank()) {
+                            androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = name.replace('_', ' ').take(32),
+                                fontFamily = FontFamily.SansSerif,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Light,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+                            )
+                        }
+                    }
                 }
             }
         }

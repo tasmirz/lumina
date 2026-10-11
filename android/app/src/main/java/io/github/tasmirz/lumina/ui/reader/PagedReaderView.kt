@@ -1,6 +1,8 @@
 package io.github.tasmirz.lumina.ui.reader
 
 import android.graphics.Bitmap
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -101,7 +103,11 @@ fun PagedReaderView(
             beyondViewportPageCount = 1,
             flingBehavior = PagerDefaults.flingBehavior(
                 state = pagerState,
-                snapPositionalThreshold = pagedSwipeThreshold.coerceIn(0.04f, 0.50f)
+                snapPositionalThreshold = (pagedSwipeThreshold * 0.70f).coerceIn(0.02f, 0.50f),
+                snapAnimationSpec = spring(
+                    dampingRatio = Spring.DampingRatioNoBouncy,
+                    stiffness = Spring.StiffnessMedium
+                )
             ),
             pageSpacing = (horizontalPadding * 1.5f).dp.coerceAtLeast(32.dp),
             modifier = Modifier
@@ -455,6 +461,16 @@ fun PagedReaderView(
                                     tableToken = block.token,
                                     isPagedMode = (readingMode == ReadingMode.PAGED),
                                     modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                            is PageBlock.Image -> {
+                                val bitmap = rememberBookImage(block.path, isInlineImage = true)
+                                InlineReaderImage(
+                                    bitmap = bitmap,
+                                    imgPath = block.path,
+                                    widthFraction = inlineImageWidthFraction,
+                                    onOpenLightbox = onOpenLightbox,
+                                    onTap = onToggleControls
                                 )
                             }
                         }

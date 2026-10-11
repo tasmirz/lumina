@@ -447,6 +447,8 @@ fun ReaderScreen(
     val verticallyCenterPages = verticallyCenterPagesState?.value ?: false
     val fillPageToBottomState = repository?.fillPageToBottom?.collectAsState(initial = true)
     val fillPageToBottom = fillPageToBottomState?.value ?: true
+    val allowTableSplittingState = repository?.allowTableSplitting?.collectAsState(initial = true)
+    val allowTableSplitting = allowTableSplittingState?.value ?: true
     val adaptiveVerticalSpacingState = repository?.adaptiveVerticalSpacing?.collectAsState(initial = false)
     val adaptiveVerticalSpacing = adaptiveVerticalSpacingState?.value ?: false
     val goldenRatioChapterOpenersState = repository?.goldenRatioChapterOpeners?.collectAsState(initial = false)
@@ -858,12 +860,12 @@ fun ReaderScreen(
     val screenWidthDp = configuration.screenWidthDp
     val screenHeightDp = configuration.screenHeightDp
 
-    val currentConfigKey = "${book.id}_${fontSize}_${isLandscape}_${readingMode}_${screenWidthDp}_${screenHeightDp}_${horizontalPadding}_${verticalPadding}_${(lineHeightMultiplier * 100).toInt()}_${(paragraphSpacingMultiplier * 100).toInt()}_${pagedSafeLinesToRemove}_${fillPageToBottom}"
+    val currentConfigKey = "${book.id}_${fontSize}_${isLandscape}_${readingMode}_${screenWidthDp}_${screenHeightDp}_${horizontalPadding}_${verticalPadding}_${(lineHeightMultiplier * 100).toInt()}_${(paragraphSpacingMultiplier * 100).toInt()}_${pagedSafeLinesToRemove}_${fillPageToBottom}_${allowTableSplitting}"
     var pagesConfigKey by remember { mutableStateOf(currentConfigKey) }
 
     // Prepared pages for Paged Mode with smart character/sentence budgeting so text never overflows
     // Non-blocking in-memory cache lookup on composition; background precomputation via getOrComputeAsync
-    var pages by remember(book.id, book.chapters.size, fontSize, readingMode, isLandscape, screenWidthDp, screenHeightDp, horizontalPadding, verticalPadding, lineHeightMultiplier, paragraphSpacingMultiplier, pagedSafeLinesToRemove, fillPageToBottom) {
+    var pages by remember(book.id, book.chapters.size, fontSize, readingMode, isLandscape, screenWidthDp, screenHeightDp, horizontalPadding, verticalPadding, lineHeightMultiplier, paragraphSpacingMultiplier, pagedSafeLinesToRemove, fillPageToBottom, allowTableSplitting) {
         val cached = if (isPagedReading) {
             PageCache.getCached(
                 bookId = book.id,
@@ -878,6 +880,7 @@ fun ReaderScreen(
                 paragraphSpacingMultiplier = paragraphSpacingMultiplier,
                 safeLinesToRemove = pagedSafeLinesToRemove,
                 fillPageToBottom = fillPageToBottom,
+                allowTableSplitting = allowTableSplitting,
                 context = context
             )
         } else null
@@ -887,7 +890,7 @@ fun ReaderScreen(
         mutableStateOf(cached ?: emptyList())
     }
 
-    LaunchedEffect(book.id, book.chapters.size, fontSize, readingMode, isLandscape, isPagedReading, screenWidthDp, screenHeightDp, horizontalPadding, verticalPadding, lineHeightMultiplier, paragraphSpacingMultiplier, pagedSafeLinesToRemove, fillPageToBottom) {
+    LaunchedEffect(book.id, book.chapters.size, fontSize, readingMode, isLandscape, isPagedReading, screenWidthDp, screenHeightDp, horizontalPadding, verticalPadding, lineHeightMultiplier, paragraphSpacingMultiplier, pagedSafeLinesToRemove, fillPageToBottom, allowTableSplitting) {
         if (isPagedReading && (pages.isEmpty() || pagesConfigKey != currentConfigKey) && book.chapters.isNotEmpty()) {
             val allPages = PageCache.getOrComputeAsync(
                 bookId = book.id,
@@ -903,6 +906,7 @@ fun ReaderScreen(
                 paragraphSpacingMultiplier = paragraphSpacingMultiplier,
                 safeLinesToRemove = pagedSafeLinesToRemove,
                 fillPageToBottom = fillPageToBottom,
+                allowTableSplitting = allowTableSplitting,
                 dbHelper = repository?.dbHelper,
                 context = context,
                 activeChapterIndex = book.currentChapter,

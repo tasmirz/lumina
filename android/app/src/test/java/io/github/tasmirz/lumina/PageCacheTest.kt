@@ -2,6 +2,7 @@ package io.github.tasmirz.lumina
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -920,6 +921,158 @@ class PageCacheTest {
         assertTrue("Heading must exist", headingPage >= 0)
         assertTrue("Table must exist", tablePage >= 0)
         assertEquals("Heading and Table must be on the exact same page", tablePage, headingPage)
+    }
+
+    @Test
+    fun testDeclickbaitChapter4Pages() {
+        val file = java.io.File("/tmp/chap4_paras.json")
+        if (!file.exists()) return
+        val json = file.readText()
+        val orgJson = org.json.JSONArray(json)
+        val paras = (0 until orgJson.length()).map { orgJson.getString(it) }
+
+        val chapter = Chapter(
+            title = "4. Empirical Training Dynamics & Validation Curves",
+            subtitle = "",
+            readTime = "10 min",
+            paragraphs = paras
+        )
+
+        val pages = PageCache.computeChapterPages(
+            chapter = chapter,
+            fontSize = 12,
+            isLandscape = false,
+            isStrictPaged = true,
+            screenWidthDp = 360,
+            screenHeightDp = 730,
+            horizontalPaddingDp = 20,
+            verticalPaddingDp = 40,
+            paragraphSpacingMultiplier = 1.2f,
+            safeLinesToRemove = 0,
+            fillPageToBottom = true
+        )
+
+        println("TOTAL PAGES IN CH4: ${pages.size}")
+        for (i in pages.indices) {
+            println("PAGE [$i]: len=${pages[i].second.length}, preview=${pages[i].second.take(120).replace("\n", " ")}")
+        }
+
+        pages.forEachIndexed { i, p ->
+            val content = p.second
+            val isChapStart = content.startsWith("CHAPTER_START:::")
+            val body = if (isChapStart) content.substringAfter("CHAPTER_START:::").substringAfter(":::").substringAfter(":::") else content
+            assertFalse("Page $i should not have empty body! Content was: $content", body.isBlank())
+        }
+    }
+
+    @Test
+    fun testFigureCaptionBundling() {
+        val paras = listOf(
+            "Some introductory text before the figure.",
+            "[IMG:images/figure1.png]",
+            "Figure 1: Overview of our system architecture and data pipelines.",
+            "Subsequent text describing the architecture."
+        )
+        val chapter = Chapter(
+            title = "Chapter 1",
+            subtitle = "",
+            readTime = "5 min",
+            paragraphs = paras
+        )
+        val pages = PageCache.computeChapterPages(
+            chapter = chapter,
+            fontSize = 12,
+            isStrictPaged = true,
+            screenWidthDp = 360,
+            screenHeightDp = 730,
+            horizontalPaddingDp = 20,
+            verticalPaddingDp = 40
+        )
+        val imagePage = pages.find { it.second.contains("[IMG:images/figure1.png]") }
+        assertNotNull("Image page must exist", imagePage)
+        assertTrue(
+            "Figure caption must be bundled onto the same page as the image. Actual: ${imagePage?.second}",
+            imagePage!!.second.contains("Figure 1: Overview of our system architecture")
+        )
+    }
+
+    @Test
+    fun testTableSplittingAcrossPages() {
+        val rows = (1..20).map { listOf("Item $it", "Value $it") }
+        val rowsJson = rows.joinToString(",") { "[\"${it[0]}\",\"${it[1]}\"]" }
+        val tableToken = "[TABLE:{\"headers\":[\"Name\",\"Score\"],\"rows\":[$rowsJson],\"caption\":\"Model Results\"}]"
+
+        val chapter = Chapter(
+            title = "Chapter 5",
+            subtitle = "",
+            readTime = "5 min",
+            paragraphs = listOf(
+                "Introductory paragraph before the table with some initial findings.",
+                tableToken,
+                "Conclusion paragraph after the table."
+            )
+        )
+
+        val pages = PageCache.computeChapterPages(
+            chapter = chapter,
+            fontSize = 14,
+            isStrictPaged = true,
+            screenWidthDp = 360,
+            screenHeightDp = 640,
+            allowTableSplitting = true
+        )
+
+        assertTrue("Expected chapter to be split into multiple pages", pages.size >= 2)
+        val tablePages = pages.filter { it.second.contains("[TABLE:") }
+        assertTrue("Table should be split across at least 2 pages", tablePages.size >= 2)
+
+        // Verify Part A has headers
+        val firstTablePage = tablePages[0].second
+        assertTrue("First page must have table headers", firstTablePage.contains("Name") && firstTablePage.contains("Score"))
+
+        // Verify Part B has headers and continuation marker
+        val secondTablePage = tablePages[1].second
+        assertTrue("Second page must repeat headers", secondTablePage.contains("Name") && secondTablePage.contains("Score"))
+        assertTrue("Second page must have isContinuation flag", secondTablePage.contains("\"isContinuation\":true"))
+    }
+
+    @Test
+    fun testHeadingAndTableStayTogetherWhenSplitting() {
+        val rows = (1..18).map { listOf("Metric $it", "Result $it") }
+        val rowsJson = rows.joinToString(",") { "[\"${it[0]}\",\"${it[1]}\"]" }
+        val tableToken = "[TABLE:{\"headers\":[\"Metric\",\"Result\"],\"rows\":[$rowsJson],\"caption\":\"Benchmark\"}]"
+
+        val chapter = Chapter(
+            title = "Chapter 6",
+            subtitle = "",
+            readTime = "5 min",
+            paragraphs = listOf(
+                "Long text filling most of the first page to test page boundary conditions. ".repeat(15),
+                "Benchmark Comparison Results:",
+                tableToken
+            )
+        )
+
+        val pages = PageCache.computeChapterPages(
+            chapter = chapter,
+            fontSize = 14,
+            isStrictPaged = true,
+            screenWidthDp = 360,
+            screenHeightDp = 640,
+            allowTableSplitting = true
+        )
+
+        // Check if any page contains ONLY the heading
+        pages.forEachIndexed { idx, pair ->
+            val pageContent = pair.second.removePrefix("CHAPTER_START:::Chapter 6::::::").trim()
+            if (pageContent.startsWith("Benchmark Comparison Results:")) {
+                // Must have table content on the same page, NEVER an orphan heading alone!
+                assertTrue(
+                    "Page $idx has heading but no table content: $pageContent",
+                    pageContent.contains("[TABLE:")
+                )
+            }
+        }
     }
 }
 

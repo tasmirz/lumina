@@ -323,7 +323,38 @@ fun rememberBookImage(source: String, isInlineImage: Boolean = false): Bitmap? {
                     val file = if (File(cleanPath).exists()) File(cleanPath) else File(decodedPath)
                     if (file.exists() && file.length() > 0) {
                         decodeSampledBitmapFromFile(file, maxWidth = maxW, maxHeight = maxH)
-                    } else null
+                    } else {
+                        // Directory fallback: if the exact file path is missing or renamed during EPUB import,
+                        // check the parent directory for best-matching image file
+                        val parent = file.parentFile
+                        val targetBase = file.nameWithoutExtension.lowercase()
+                        val fallbackFile = if (parent != null && parent.exists() && parent.isDirectory) {
+                            val candidates = parent.listFiles { f ->
+                                val ext = f.extension.lowercase()
+                                (ext == "png" || ext == "jpg" || ext == "jpeg" || ext == "webp") && f.length() > 0
+                            } ?: emptyArray()
+
+                            val keywords = targetBase.split('_', '-').filter { it.length >= 3 && !it.startsWith("custom") }
+                            candidates.maxByOrNull { cand ->
+                                val candName = cand.nameWithoutExtension.lowercase()
+                                var score = 0
+                                if (candName == targetBase) score += 100
+                                if (candName.contains(targetBase) || targetBase.contains(candName)) score += 50
+                                for (kw in keywords) {
+                                    if (candName.contains(kw)) score += 10
+                                }
+                                score
+                            }?.takeIf { cand ->
+                                val candName = cand.nameWithoutExtension.lowercase()
+                                candName.contains(targetBase) || targetBase.contains(candName) ||
+                                    keywords.any { candName.contains(it) }
+                            }
+                        } else null
+
+                        if (fallbackFile != null && fallbackFile.exists() && fallbackFile.length() > 0) {
+                            decodeSampledBitmapFromFile(fallbackFile, maxWidth = maxW, maxHeight = maxH)
+                        } else null
+                    }
                 }
                 if (decoded != null) {
                     bitmapCache.put(source, decoded)

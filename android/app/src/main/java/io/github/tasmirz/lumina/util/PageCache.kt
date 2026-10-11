@@ -5,6 +5,8 @@ import io.github.tasmirz.lumina.data.db.LuminaDatabaseHelper
 import io.github.tasmirz.lumina.model.Chapter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * High-performance, thread-safe LRU cache using standard LinkedHashMap.
@@ -134,18 +136,96 @@ object PageCache {
 
     fun estimateTableLines(tableToken: String): Float {
         return try {
-            val rowsMatch = Regex("\"rows\"\\s*:\\s*\\[(.*?)\\]\\s*\\}").find(tableToken)
-            val rowContent = rowsMatch?.groupValues?.getOrNull(1) ?: ""
-            val rowCount = if (rowContent.isBlank()) 0 else Regex("\\[[^\\]]*\\]").findAll(rowContent).count()
-
-            val headersMatch = Regex("\"headers\"\\s*:\\s*\\[(.*?)\\]").find(tableToken)
-            val headerContent = headersMatch?.groupValues?.getOrNull(1) ?: ""
-            val headerCount = if (headerContent.isBlank()) 0 else Regex("\"[^\"]*\"").findAll(headerContent).count()
-
-            val lines = 2.0f + (if (headerCount > 0) 1.5f else 0f) + (rowCount * 1.4f)
+            val jsonStr = tableToken.removePrefix("[TABLE:").removeSuffix("]")
+            val obj = JSONObject(jsonStr)
+            val rows = obj.optJSONArray("rows")
+            val rowCount = rows?.length() ?: 0
+            val headers = obj.optJSONArray("headers")
+            val headerCount = headers?.length() ?: 0
+            val caption = obj.optString("caption").ifBlank { obj.optString("title") }
+            val lines = 2.0f + (if (headerCount > 0) 1.5f else 0f) + (if (caption.isNotBlank()) 1.2f else 0f) + (rowCount * 1.4f)
             lines.coerceAtLeast(3f)
         } catch (_: Exception) {
-            6f
+            val rowCount = Regex("\\[\\s*\"[^\"]*\"").findAll(tableToken).count()
+            val lines = 3.5f + (rowCount * 1.4f)
+            lines.coerceAtLeast(3f)
+        }
+    }
+
+    fun estimateTableMinLines(tableToken: String): Float {
+        return try {
+            val jsonStr = tableToken.removePrefix("[TABLE:").removeSuffix("]")
+            val obj = JSONObject(jsonStr)
+            val headers = obj.optJSONArray("headers")
+            val headerCount = headers?.length() ?: 0
+            val caption = obj.optString("caption").ifBlank { obj.optString("title") }
+            val baseLines = 2.0f + (if (headerCount > 0) 1.5f else 0f) + (if (caption.isNotBlank()) 1.2f else 0f)
+            baseLines + (2 * 1.4f)
+        } catch (_: Exception) {
+            5.5f
+        }
+    }
+
+    fun trySplitTable(
+        tableToken: String,
+        availableLinesForTable: Float
+    ): Pair<String, String>? {
+        return try {
+            val jsonStr = tableToken.removePrefix("[TABLE:").removeSuffix("]")
+            val obj = JSONObject(jsonStr)
+            val headers = obj.optJSONArray("headers")
+            val rows = obj.optJSONArray("rows") ?: return null
+            val totalRows = rows.length()
+            if (totalRows <= 1) return null
+
+            val caption = obj.optString("caption").ifBlank { obj.optString("title") }
+            val isCont = obj.optBoolean("isContinuation", false)
+            val hasHeaders = headers != null && headers.length() > 0
+
+            val baseLines = 2.0f + (if (hasHeaders) 1.5f else 0f) + (if (caption.isNotBlank()) 1.2f else 0f)
+            val linesPerRow = 1.4f
+
+            val availableForRows = availableLinesForTable - baseLines
+            if (availableForRows < linesPerRow * 2f) {
+                return null
+            }
+
+            var rowsForPartA = kotlin.math.floor(availableForRows / linesPerRow).toInt()
+            if (rowsForPartA >= totalRows) {
+                return null
+            }
+
+            if (totalRows - rowsForPartA == 1 && rowsForPartA > 2) {
+                rowsForPartA--
+            }
+
+            if (rowsForPartA < 2) return null
+
+            val objA = JSONObject().apply {
+                if (headers != null) put("headers", headers)
+                val rowsA = JSONArray()
+                for (i in 0 until rowsForPartA) {
+                    rowsA.put(rows.getJSONArray(i))
+                }
+                put("rows", rowsA)
+                if (caption.isNotBlank()) put("caption", caption)
+                if (isCont) put("isContinuation", true)
+            }
+
+            val objB = JSONObject().apply {
+                if (headers != null) put("headers", headers)
+                val rowsB = JSONArray()
+                for (i in rowsForPartA until totalRows) {
+                    rowsB.put(rows.getJSONArray(i))
+                }
+                put("rows", rowsB)
+                if (caption.isNotBlank()) put("caption", caption)
+                put("isContinuation", true)
+            }
+
+            Pair("[TABLE:${objA.toString()}]", "[TABLE:${objB.toString()}]")
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -164,6 +244,22 @@ object PageCache {
     fun isDivider(text: String): Boolean {
         val trimmed = text.trim()
         return trimmed == "⁂" || trimmed == "[DIVIDER]" || trimmed == "* * *" || trimmed == "***"
+    }
+
+    fun isFigureCaption(text: String): Boolean {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty() || trimmed.startsWith("[TABLE:") || trimmed.startsWith("[IMG:") || trimmed.startsWith("[VERSE:") || trimmed.startsWith("[QUOTE:")) {
+            return false
+        }
+        if (trimmed.length > 320) return false
+        return trimmed.startsWith("Figure ", ignoreCase = true) ||
+                trimmed.startsWith("Figure.", ignoreCase = true) ||
+                trimmed.startsWith("Fig. ", ignoreCase = true) ||
+                trimmed.startsWith("Fig ", ignoreCase = true) ||
+                trimmed.startsWith("Illustration ", ignoreCase = true) ||
+                trimmed.startsWith("Diagram ", ignoreCase = true) ||
+                trimmed.startsWith("Photo ", ignoreCase = true) ||
+                trimmed.startsWith("Image ", ignoreCase = true)
     }
 
     fun calculateDeviceMetrics(
@@ -245,11 +341,12 @@ object PageCache {
         verticalPaddingDp: Int = 16,
         paragraphSpacingMultiplier: Float = 1.2f,
         safeLinesToRemove: Int = 0,
-        fillPageToBottom: Boolean = true
+        fillPageToBottom: Boolean = true,
+        allowTableSplitting: Boolean = true
     ): String {
         val orientation = if (isLandscape) "land" else "port"
         val mode = if (isStrictPaged) "strict" else "scroll"
-        val dims = if (screenWidthDp > 0 && screenHeightDp > 0) "_${screenWidthDp}x${screenHeightDp}_p${horizontalPaddingDp}_${verticalPaddingDp}_ps${(paragraphSpacingMultiplier * 10).toInt()}_sl${safeLinesToRemove}_fp${if (fillPageToBottom) 1 else 0}" else ""
+        val dims = if (screenWidthDp > 0 && screenHeightDp > 0) "_${screenWidthDp}x${screenHeightDp}_p${horizontalPaddingDp}_${verticalPaddingDp}_ps${(paragraphSpacingMultiplier * 10).toInt()}_sl${safeLinesToRemove}_fp${if (fillPageToBottom) 1 else 0}_ts${if (allowTableSplitting) 1 else 0}" else ""
         return "${CACHE_VERSION}${bookId}_${chaptersCount}_${fontSize}_${orientation}_${mode}${dims}"
     }
 
@@ -266,9 +363,10 @@ object PageCache {
         paragraphSpacingMultiplier: Float = 1.2f,
         safeLinesToRemove: Int = 0,
         fillPageToBottom: Boolean = true,
+        allowTableSplitting: Boolean = true,
         context: android.content.Context? = null
     ): List<Pair<String, String>>? {
-        val key = getCacheKey(bookId, chaptersCount, fontSize, isLandscape, isStrictPaged, screenWidthDp, screenHeightDp, horizontalPaddingDp, verticalPaddingDp, paragraphSpacingMultiplier, safeLinesToRemove, fillPageToBottom)
+        val key = getCacheKey(bookId, chaptersCount, fontSize, isLandscape, isStrictPaged, screenWidthDp, screenHeightDp, horizontalPaddingDp, verticalPaddingDp, paragraphSpacingMultiplier, safeLinesToRemove, fillPageToBottom, allowTableSplitting)
         val inMem = cache.get(key)
         if (inMem != null) return inMem
 
@@ -296,10 +394,11 @@ object PageCache {
         paragraphSpacingMultiplier: Float = 1.2f,
         safeLinesToRemove: Int = 0,
         fillPageToBottom: Boolean = true,
+        allowTableSplitting: Boolean = true,
         dbHelper: LuminaDatabaseHelper? = null,
         context: android.content.Context? = null
     ): List<Pair<String, String>> {
-        val key = getCacheKey(bookId, chapters.size, fontSize, isLandscape, isStrictPaged, screenWidthDp, screenHeightDp, horizontalPaddingDp, verticalPaddingDp, paragraphSpacingMultiplier, safeLinesToRemove, fillPageToBottom)
+        val key = getCacheKey(bookId, chapters.size, fontSize, isLandscape, isStrictPaged, screenWidthDp, screenHeightDp, horizontalPaddingDp, verticalPaddingDp, paragraphSpacingMultiplier, safeLinesToRemove, fillPageToBottom, allowTableSplitting)
         val cached = cache.get(key)
         if (cached != null) return cached
 
@@ -344,7 +443,8 @@ object PageCache {
             lineHeightMultiplier = lineHeightMultiplier,
             paragraphSpacingMultiplier = paragraphSpacingMultiplier,
             safeLinesToRemove = safeLinesToRemove,
-            fillPageToBottom = fillPageToBottom
+            fillPageToBottom = fillPageToBottom,
+            allowTableSplitting = allowTableSplitting
         )
         if (list.isNotEmpty()) {
             cache.put(key, list)
@@ -370,7 +470,8 @@ object PageCache {
         lineHeightMultiplier: Float = 1.45f,
         paragraphSpacingMultiplier: Float = 1.2f,
         safeLinesToRemove: Int = 0,
-        fillPageToBottom: Boolean = true
+        fillPageToBottom: Boolean = true,
+        allowTableSplitting: Boolean = true
     ): List<Pair<String, String>> {
         return computePages(
             chapters = listOf(chapter),
@@ -384,7 +485,8 @@ object PageCache {
             lineHeightMultiplier = lineHeightMultiplier,
             paragraphSpacingMultiplier = paragraphSpacingMultiplier,
             safeLinesToRemove = safeLinesToRemove,
-            fillPageToBottom = fillPageToBottom
+            fillPageToBottom = fillPageToBottom,
+            allowTableSplitting = allowTableSplitting
         )
     }
 
@@ -402,12 +504,13 @@ object PageCache {
         paragraphSpacingMultiplier: Float = 1.2f,
         safeLinesToRemove: Int = 0,
         fillPageToBottom: Boolean = true,
+        allowTableSplitting: Boolean = true,
         dbHelper: LuminaDatabaseHelper? = null,
         context: android.content.Context? = null,
         activeChapterIndex: Int = 0,
         onActiveChapterReady: ((List<Pair<String, String>>) -> Unit)? = null
     ): List<Pair<String, String>> = withContext(Dispatchers.Default) {
-        val key = getCacheKey(bookId, chapters.size, fontSize, isLandscape, isStrictPaged, screenWidthDp, screenHeightDp, horizontalPaddingDp, verticalPaddingDp, paragraphSpacingMultiplier, safeLinesToRemove, fillPageToBottom)
+        val key = getCacheKey(bookId, chapters.size, fontSize, isLandscape, isStrictPaged, screenWidthDp, screenHeightDp, horizontalPaddingDp, verticalPaddingDp, paragraphSpacingMultiplier, safeLinesToRemove, fillPageToBottom, allowTableSplitting)
         val cached = cache.get(key)
         if (cached != null) {
             onActiveChapterReady?.invoke(cached)
@@ -471,7 +574,8 @@ object PageCache {
             lineHeightMultiplier = lineHeightMultiplier,
             paragraphSpacingMultiplier = paragraphSpacingMultiplier,
             safeLinesToRemove = safeLinesToRemove,
-            fillPageToBottom = fillPageToBottom
+            fillPageToBottom = fillPageToBottom,
+            allowTableSplitting = allowTableSplitting
         )
         if (list.isNotEmpty()) {
             cache.put(key, list)
@@ -498,7 +602,8 @@ object PageCache {
         lineHeightMultiplier: Float = 1.45f,
         paragraphSpacingMultiplier: Float = 1.2f,
         safeLinesToRemove: Int = 0,
-        fillPageToBottom: Boolean = true
+        fillPageToBottom: Boolean = true,
+        allowTableSplitting: Boolean = true
     ): List<Pair<String, String>> {
         val list = mutableListOf<Pair<String, String>>()
         val metrics = calculateDeviceMetrics(
@@ -573,8 +678,38 @@ object PageCache {
                     val item = queue.removeFirst()
                     val p = item.text
                     if (p.startsWith("[IMG:") && p.endsWith("]")) {
-                        flushBatch()
-                        list.add(Pair(chap.title, p))
+                        val batchStr = currentBatch.toString().trimEnd()
+                        val lastSep = batchStr.lastIndexOf("\n\n")
+                        val candidateHeading = (if (lastSep >= 0) batchStr.substring(lastSep + 2) else batchStr).trim()
+                        val hasHeadingBefore = candidateHeading.isNotBlank() && (
+                            isFigureCaption(candidateHeading) ||
+                            (isHeadingCandidate(candidateHeading) && candidateHeading.startsWith("Figure", ignoreCase = true))
+                        )
+
+                        if (hasHeadingBefore) {
+                            if (lastSep >= 0) {
+                                currentBatch.setLength(lastSep)
+                            } else {
+                                currentBatch.clear()
+                            }
+                            flushBatch()
+                            val nextItem = queue.firstOrNull()
+                            if (nextItem != null && isFigureCaption(nextItem.text)) {
+                                queue.removeFirst()
+                                list.add(Pair(chap.title, "$candidateHeading\n\n$p\n\n${nextItem.text}"))
+                            } else {
+                                list.add(Pair(chap.title, "$candidateHeading\n\n$p"))
+                            }
+                        } else {
+                            flushBatch()
+                            val nextItem = queue.firstOrNull()
+                            if (nextItem != null && isFigureCaption(nextItem.text)) {
+                                queue.removeFirst()
+                                list.add(Pair(chap.title, "$p\n\n${nextItem.text}"))
+                            } else {
+                                list.add(Pair(chap.title, p))
+                            }
+                        }
                         continue
                     }
 
@@ -598,6 +733,21 @@ object PageCache {
                             currentLines += totalLinesNeeded
                             continue
                         } else {
+                            if (allowTableSplitting) {
+                                val availableForTable = availableLines - blankLinesBefore
+                                val splitResult = trySplitTable(p, availableForTable)
+                                if (splitResult != null) {
+                                    val (partA, partB) = splitResult
+                                    if (currentBatch.isNotEmpty()) {
+                                        currentBatch.append("\n\n")
+                                    }
+                                    currentBatch.append(partA)
+                                    flushBatch()
+                                    queue.addFirst(PageQueueItem(partB, isContinuation = true))
+                                    continue
+                                }
+                            }
+
                             if (currentBatch.isNotEmpty()) {
                                 // Reactive Pullback: Check if currentBatch ends with an orphan heading / divider
                                 val batchStr = currentBatch.toString().trimEnd()
@@ -626,6 +776,16 @@ object PageCache {
                                             continue
                                         }
                                     }
+                                } else {
+                                    // candidateHeading is the ONLY item in currentBatch (at top of page)
+                                    val candidateHeading = batchStr.trim()
+                                    if (isHeadingCandidate(candidateHeading)) {
+                                        // Heading is alone at top of page. Rather than flushing the heading alone onto an empty page,
+                                        // keep heading and table together on this page (with scroll if needed) so the heading is never orphaned!
+                                        currentBatch.append("\n\n").append(p)
+                                        flushBatch()
+                                        continue
+                                    }
                                 }
 
                                 // If heading was already at top of page (lastSep == -1) and table is oversized,
@@ -640,6 +800,17 @@ object PageCache {
                                 queue.addFirst(item)
                                 continue
                             } else {
+                                if (allowTableSplitting) {
+                                    val splitResult = trySplitTable(p, pageLineBudget)
+                                    if (splitResult != null) {
+                                        val (partA, partB) = splitResult
+                                        currentBatch.append(partA)
+                                        flushBatch()
+                                        queue.addFirst(PageQueueItem(partB, isContinuation = true))
+                                        continue
+                                    }
+                                }
+
                                 if (tableLines <= pageLineBudget) {
                                     currentBatch.append(p)
                                     currentLines += tableLines
@@ -686,8 +857,12 @@ object PageCache {
                         if (isHeadingCandidate(effectiveP) && queue.isNotEmpty()) {
                             val nextItem = queue.first()
                             if (nextItem.text.startsWith("[TABLE:") && nextItem.text.endsWith("]")) {
-                                val nextTableLines = paragraphGapLines + estimateTableLines(nextItem.text)
-                                if (totalLinesNeeded + nextTableLines > availableLines) {
+                                val minTableLines = paragraphGapLines + if (allowTableSplitting) {
+                                    estimateTableMinLines(nextItem.text)
+                                } else {
+                                    estimateTableLines(nextItem.text)
+                                }
+                                if (totalLinesNeeded + minTableLines > availableLines) {
                                     // Heading and table cannot fit together on this page.
                                     // Flush current page so heading and table start together on the next page.
                                     flushBatch()
@@ -709,8 +884,12 @@ object PageCache {
                         if (isDivider(effectiveP) && queue.isNotEmpty()) {
                             val next1 = queue.first().text
                             if (next1.startsWith("[TABLE:") && next1.endsWith("]")) {
-                                val nextTableLines = paragraphGapLines + estimateTableLines(next1)
-                                if (totalLinesNeeded + nextTableLines > availableLines) {
+                                val minTableLines = paragraphGapLines + if (allowTableSplitting) {
+                                    estimateTableMinLines(next1)
+                                } else {
+                                    estimateTableLines(next1)
+                                }
+                                if (totalLinesNeeded + minTableLines > availableLines) {
                                     flushBatch()
                                     queue.addFirst(item)
                                     continue
@@ -719,7 +898,7 @@ object PageCache {
                                 val nextHeadingLines = paragraphGapLines + kotlin.math.ceil(next1.length.toFloat() / effectiveCharsPerLine).coerceAtLeast(1f)
                                 val next2 = queue.elementAtOrNull(1)?.text
                                 val subsequentLines = if (next2 != null && next2.startsWith("[TABLE:") && next2.endsWith("]")) {
-                                    paragraphGapLines + estimateTableLines(next2)
+                                    paragraphGapLines + if (allowTableSplitting) estimateTableMinLines(next2) else estimateTableLines(next2)
                                 } else {
                                     paragraphGapLines + 2f
                                 }
