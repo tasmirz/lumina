@@ -1476,6 +1476,15 @@ class BookRepository private constructor(private val context: Context) {
         return bookProg
     }
 
+    fun getVerifiedPage(bookId: String): Int {
+        return prefs.getInt("${bookId}_verified_page", -1)
+    }
+
+    fun setVerifiedPage(bookId: String, page: Int) {
+        prefs.edit().putInt("${bookId}_verified_page", page).apply()
+        persistSettingToDb("verified_page_${bookId}", page.toString())
+    }
+
     fun forceSetReadTillPercent(bookId: String, percent: Int) {
         val clamped = percent.coerceIn(0, 100)
         _readTillMap.value = _readTillMap.value + (bookId to clamped)
@@ -1488,6 +1497,7 @@ class BookRepository private constructor(private val context: Context) {
         _readTillMap.value = _readTillMap.value + (bookId to clamped)
         prefs.edit().putInt("${bookId}_read_till", clamped).apply()
         persistSettingToDb("read_till_${bookId}", clamped.toString())
+        setVerifiedPage(bookId, pageIdx)
 
         val updated = _books.value.map {
             if (it.id == bookId) {

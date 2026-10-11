@@ -85,15 +85,52 @@ object PageCache {
         } catch (_: Exception) { null }
     }
 
-    // Bumped to v45_ to inline tables when space permits and prevent chopped bottom lines
-    private const val CACHE_VERSION = "v45_"
+    // Bumped to v47_ to dynamically budget multi-line chapter headers and prevent sliced bottom text
+    private const val CACHE_VERSION = "v47_"
 
     data class DeviceMetrics(
         val charsPerLine: Int,
         val maxLines: Int,
         val headerLinesCost: Int,
-        val baseTargetChars: Int
+        val baseTargetChars: Int,
+        val lineHeightDp: Float = 22f
     )
+
+    fun estimateHeaderLinesCost(
+        title: String,
+        subtitle: String,
+        charsPerLine: Int,
+        lineHeightDp: Float,
+        isLandscape: Boolean
+    ): Float {
+        if (isLandscape) {
+            val titleLines = kotlin.math.ceil(title.length.toFloat() / (charsPerLine * 0.65f).coerceAtLeast(14f)).coerceAtLeast(1f)
+            val subLines = if (subtitle.isNotBlank()) kotlin.math.ceil(subtitle.length.toFloat() / charsPerLine.coerceAtLeast(18).toFloat()).coerceAtLeast(1f) else 0f
+            val totalHeaderDp = 20f + (titleLines * 26f) + (subLines * 16f) + 16f
+            return (totalHeaderDp / lineHeightDp).coerceIn(2f, 8f)
+        } else {
+            // Eyebrow text (book title or subtitle Part...): on portrait, 11sp letter spacing 2sp
+            // takes at least 2 lines, or up to 4 lines if title is long (>40 chars)
+            val eyebrowLines = if (title.length > 50 || subtitle.length > 50) 3.5f else 2.0f
+            val eyebrowDp = eyebrowLines * 16f
+
+            // Chapter title at 24sp (takes ~0.65 of standard charsPerLine)
+            val titleLines = kotlin.math.ceil(title.length.toFloat() / (charsPerLine * 0.65f).coerceAtLeast(12f)).coerceAtLeast(1f)
+            val titleDp = titleLines * 28f
+
+            // Subtitle at 13sp
+            val subLines = if (subtitle.isNotBlank() && !subtitle.startsWith("Part", ignoreCase = true)) {
+                kotlin.math.ceil(subtitle.length.toFloat() / charsPerLine.coerceAtLeast(16).toFloat()).coerceAtLeast(1f)
+            } else 0f
+            val subDp = subLines * 16f
+
+            // Padding: top 4.dp + bottom 10.dp = 14.dp, spacers = 10.dp -> ~24.dp
+            val spacingDp = 24f
+            val totalHeaderDp = eyebrowDp + titleDp + subDp + spacingDp
+            val cost = kotlin.math.ceil(totalHeaderDp / lineHeightDp).toFloat()
+            return cost.coerceIn(2f, 12f)
+        }
+    }
 
     fun estimateTableLines(tableToken: String): Float {
         return try {
@@ -174,7 +211,8 @@ object PageCache {
             charsPerLine = charsPerLine,
             maxLines = maxLines,
             headerLinesCost = headerLinesCost,
-            baseTargetChars = baseTargetChars
+            baseTargetChars = baseTargetChars,
+            lineHeightDp = lineHeightDp
         )
     }
 
@@ -491,6 +529,14 @@ object PageCache {
                     return@forEach
                 }
 
+                val chapHeaderLinesCost = estimateHeaderLinesCost(
+                    title = chap.title,
+                    subtitle = chap.subtitle,
+                    charsPerLine = charsPerLine,
+                    lineHeightDp = metrics.lineHeightDp,
+                    isLandscape = isLandscape
+                )
+
                 var isFirstPageOfChapter = true
                 val currentBatch = StringBuilder()
                 var currentLines = 0f
@@ -528,7 +574,7 @@ object PageCache {
 
                     if (p.startsWith("[TABLE:") && p.endsWith("]")) {
                         val pageLineBudget = if (isFirstPageOfChapter) {
-                            (maxLines - headerLinesCost).coerceAtLeast(if (isLandscape) 2 else 4).toFloat()
+                            (maxLines - chapHeaderLinesCost).coerceAtLeast(if (isLandscape) 2f else 3f)
                         } else {
                             maxLines.toFloat()
                         }
@@ -577,7 +623,7 @@ object PageCache {
                     }
 
                     val pageLineBudget = if (isFirstPageOfChapter) {
-                        (maxLines - headerLinesCost).coerceAtLeast(if (isLandscape) 2 else 4).toFloat()
+                        (maxLines - chapHeaderLinesCost).coerceAtLeast(if (isLandscape) 2f else 3f)
                     } else {
                         maxLines.toFloat()
                     }
@@ -605,9 +651,23 @@ object PageCache {
                         if (linesForThisText >= 1f) {
                             // Break text to fill remaining lines on current page
                             val maxCharsToFit = (linesForThisText * effectiveCharsPerLine).toInt()
+                            if (maxCharsToFit < 35 && currentBatch.isNotEmpty()) {
+                                // Orphan protection: fitting < 35 characters at the very bottom of a page leaves
+                                // an awkward orphan label/fragment. Flush current page and start on the next page.
+                                flushBatch()
+                                queue.addFirst(item)
+                                continue
+                            }
                             val (partA, partB) = breakText(effectiveP, maxCharsToFit, effectiveCharsPerLine.toInt())
 
                             if (partA.isNotEmpty() && partB.isNotEmpty()) {
+                                if (!item.isContinuation && partA.length < 35 && currentBatch.isNotEmpty()) {
+                                    // Orphan protection: fitting < 35 characters of a new paragraph at the very bottom
+                                    // leaves an awkward orphan label/fragment. Flush current page and start on the next page.
+                                    flushBatch()
+                                    queue.addFirst(item)
+                                    continue
+                                }
                                 if (currentBatch.isNotEmpty()) {
                                     currentBatch.append(if (item.isContinuation) " " else "\n\n")
                                 }
@@ -663,6 +723,13 @@ object PageCache {
                     return@forEach
                 }
 
+                val chapFirstPageTarget = if (isLandscape) {
+                    (targetCharsPerPage * 0.75f).toInt().coerceAtLeast(250)
+                } else {
+                    val cost = estimateHeaderLinesCost(chap.title, chap.subtitle, metrics.charsPerLine, metrics.lineHeightDp, isLandscape)
+                    (targetCharsPerPage - (metrics.charsPerLine * cost).toInt()).coerceAtLeast((targetCharsPerPage * 0.35f).toInt())
+                }
+
                 var isFirstPageOfChapter = true
                 val currentBatch = StringBuilder(targetCharsPerPage + 300)
 
@@ -688,7 +755,7 @@ object PageCache {
 
                     if (p.startsWith("[TABLE:") && p.endsWith("]")) {
                         val tableChars = (estimateTableLines(p) * metrics.charsPerLine).toInt()
-                        val target = if (isFirstPageOfChapter) firstPageTarget else targetCharsPerPage
+                        val target = if (isFirstPageOfChapter) chapFirstPageTarget else targetCharsPerPage
                         if (currentBatch.length + tableChars <= target) {
                             if (currentBatch.isNotEmpty()) currentBatch.append("\n\n")
                             currentBatch.append(p)
@@ -716,7 +783,7 @@ object PageCache {
                     } else {
                         p
                     }
-                    val target = if (isFirstPageOfChapter) firstPageTarget else targetCharsPerPage
+                    val target = if (isFirstPageOfChapter) chapFirstPageTarget else targetCharsPerPage
 
                     if (currentBatch.isEmpty()) {
                         currentBatch.append(effectiveP)

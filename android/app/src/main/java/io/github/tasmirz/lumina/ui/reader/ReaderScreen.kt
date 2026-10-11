@@ -239,9 +239,9 @@ internal fun findPageForLocation(
 
     // 1. Try finding page by snippet within the target chapter (multiple lengths)
     if (cleanedSnippet.isNotBlank()) {
-        for (len in listOf(40, 30, 20, 14, 10)) {
+        for (len in listOf(40, 30, 20, 14)) {
             val snip = cleanedSnippet.take(len).trim()
-            if (snip.length >= 8) {
+            if (snip.length >= 12) {
                 val found = pages.indexOfFirst { (title, content) ->
                     (chapterTitle.isBlank() || title.equals(chapterTitle, ignoreCase = true)) &&
                         clean(content).contains(snip)
@@ -249,9 +249,9 @@ internal fun findPageForLocation(
                 if (found >= 0) return found
             }
         }
-        for (len in listOf(40, 30, 20, 14, 10)) {
+        for (len in listOf(40, 30, 20, 14)) {
             val snip = alphaSnippet.take(len).trim()
-            if (snip.length >= 8) {
+            if (snip.length >= 12) {
                 val found = pages.indexOfFirst { (title, content) ->
                     (chapterTitle.isBlank() || title.equals(chapterTitle, ignoreCase = true)) &&
                         cleanAlpha(content).contains(snip)
@@ -261,16 +261,16 @@ internal fun findPageForLocation(
         }
 
         // Global search across all pages by snippet (in case chapter title naming slightly differs)
-        for (len in listOf(30, 20, 14, 10)) {
+        for (len in listOf(30, 20, 14)) {
             val snip = cleanedSnippet.take(len).trim()
-            if (snip.length >= 8) {
+            if (snip.length >= 12) {
                 val foundGlobal = pages.indexOfFirst { clean(it.second).contains(snip) }
                 if (foundGlobal >= 0) return foundGlobal
             }
         }
-        for (len in listOf(30, 20, 14, 10)) {
+        for (len in listOf(30, 20, 14)) {
             val snip = alphaSnippet.take(len).trim()
-            if (snip.length >= 8) {
+            if (snip.length >= 12) {
                 val foundGlobal = pages.indexOfFirst { cleanAlpha(it.second).contains(snip) }
                 if (foundGlobal >= 0) return foundGlobal
             }
@@ -282,9 +282,9 @@ internal fun findPageForLocation(
     val cleanedPara = clean(rawPara)
     val alphaPara = cleanAlpha(rawPara)
     if (cleanedPara.isNotBlank()) {
-        for (len in listOf(35, 24, 14, 8)) {
+        for (len in listOf(35, 24, 16)) {
             val paraSnip = cleanedPara.take(len).trim()
-            if (paraSnip.length >= 6) {
+            if (paraSnip.length >= 12) {
                 val foundByPara = pages.indexOfFirst { (title, content) ->
                     (chapterTitle.isBlank() || title.equals(chapterTitle, ignoreCase = true)) &&
                         clean(content).contains(paraSnip)
@@ -292,9 +292,9 @@ internal fun findPageForLocation(
                 if (foundByPara >= 0) return foundByPara
             }
         }
-        for (len in listOf(35, 24, 14, 8)) {
+        for (len in listOf(35, 24, 16)) {
             val paraSnip = alphaPara.take(len).trim()
-            if (paraSnip.length >= 6) {
+            if (paraSnip.length >= 12) {
                 val foundByPara = pages.indexOfFirst { (title, content) ->
                     (chapterTitle.isBlank() || title.equals(chapterTitle, ignoreCase = true)) &&
                         cleanAlpha(content).contains(paraSnip)
@@ -303,16 +303,16 @@ internal fun findPageForLocation(
             }
         }
         // Global search by paragraph
-        for (len in listOf(24, 14, 8)) {
+        for (len in listOf(24, 16)) {
             val paraSnip = cleanedPara.take(len).trim()
-            if (paraSnip.length >= 6) {
+            if (paraSnip.length >= 12) {
                 val foundGlobalPara = pages.indexOfFirst { clean(it.second).contains(paraSnip) }
                 if (foundGlobalPara >= 0) return foundGlobalPara
             }
         }
-        for (len in listOf(24, 14, 8)) {
+        for (len in listOf(24, 16)) {
             val paraSnip = alphaPara.take(len).trim()
-            if (paraSnip.length >= 6) {
+            if (paraSnip.length >= 12) {
                 val foundGlobalPara = pages.indexOfFirst { cleanAlpha(it.second).contains(paraSnip) }
                 if (foundGlobalPara >= 0) return foundGlobalPara
             }
@@ -996,6 +996,15 @@ fun ReaderScreen(
 
     // Remembers the return position before jumping to saved/read-till location so user can tap back
     var previousJumpLocation by rememberSaveable { mutableStateOf<Triple<Int, Int, Int>?>(null) }
+
+    // Track verified reading position to enforce sequential progression (20 -> 21 -> 22 with >= 5s delay)
+    // Clicking or scrubbing the progress bar does NOT count as read.
+    val initialVerifiedPage = remember(book.id) {
+        val repoVerified = repository?.getVerifiedPage(book.id) ?: -1
+        if (repoVerified >= 0) repoVerified else book.currentPage
+    }
+    var lastVerifiedReadPage by rememberSaveable(book.id) { mutableIntStateOf(initialVerifiedPage) }
+    var lastVerifiedScrollPos by rememberSaveable(book.id) { mutableIntStateOf(book.scrollPos) }
 
     // Detect font zoom or screen rotation changes to trigger re-anchoring to the exact reading position
     LaunchedEffect(fontSize, isLandscape) {
@@ -2097,16 +2106,23 @@ fun ReaderScreen(
                                     anchorParaIdx = paraIdx
                                 }
 
-                                delay(500)
-                                onPositionChange(currentChap, 0, firstIndex, overallProgress)
                                 val finalTitle = book.chapters.getOrNull(currentChap)?.title ?: "Chapter 1"
-                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                    repository?.updateLastReadBookmark(
-                                        bookId = book.id,
-                                        chapterTitle = finalTitle,
-                                        pageNumber = 1,
-                                        paragraphSnippet = paraText.take(150).ifBlank { "Chapter ${currentChap + 1}, paragraph ${paraIdx + 1}" }
-                                    )
+                                if (firstIndex <= lastVerifiedScrollPos + 4 || (lastVerifiedScrollPos == 0 && firstIndex == 0)) {
+                                    delay(4700)
+                                    lastVerifiedScrollPos = maxOf(lastVerifiedScrollPos, firstIndex)
+                                    onPositionChange(currentChap, 0, firstIndex, overallProgress)
+                                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                        repository?.updateLastReadBookmark(
+                                            bookId = book.id,
+                                            chapterTitle = finalTitle,
+                                            pageNumber = 1,
+                                            paragraphSnippet = paraText.take(150).ifBlank { "Chapter ${currentChap + 1}, paragraph ${paraIdx + 1}" }
+                                        )
+                                    }
+                                } else if (firstIndex <= lastVerifiedScrollPos) {
+                                    delay(1200)
+                                    val verifiedProg = ((lastVerifiedScrollPos.toFloat() / totalParas) * 100).toInt().coerceIn(0, 100)
+                                    onPositionChange(currentChap, 0, firstIndex, verifiedProg)
                                 }
                             }
                     }
@@ -2455,15 +2471,42 @@ fun ReaderScreen(
                                 }
                             }
 
-                            delay(800)
-                            onPositionChange(chapIdx, currentPage, 0, progress)
-                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                repository?.updateLastReadBookmark(
-                                    bookId = book.id,
-                                    chapterTitle = book.chapters.getOrNull(chapIdx)?.title ?: "Chapter ${chapIdx + 1}",
-                                    pageNumber = currentPage + 1,
-                                    paragraphSnippet = cleanSnippet.take(150).ifBlank { "Page ${currentPage + 1}" }
-                                )
+                            // DWELL GUARD & INCREASING ORDER CHECK:
+                            // Issue #COLLECT-20261011-174342:
+                            // Clicking the bar or random scrubbing jumps the viewport but does NOT count as read.
+                            // Advancing the reading amount / read-till requires sequential page progression
+                            // (e.g. 20 -> 21 -> 22) with at least 5s dwell time on each page.
+                            if (currentPage == lastVerifiedReadPage + 1 || (lastVerifiedReadPage == 0 && currentPage == 0)) {
+                                delay(5000L)
+                                lastVerifiedReadPage = currentPage
+                                repository?.setVerifiedPage(book.id, currentPage)
+                                onPositionChange(chapIdx, currentPage, 0, progress)
+                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    repository?.updateLastReadBookmark(
+                                        bookId = book.id,
+                                        chapterTitle = book.chapters.getOrNull(chapIdx)?.title ?: "Chapter ${chapIdx + 1}",
+                                        pageNumber = currentPage + 1,
+                                        paragraphSnippet = cleanSnippet.take(150).ifBlank { "Page ${currentPage + 1}" }
+                                    )
+                                }
+                            } else if (currentPage <= lastVerifiedReadPage) {
+                                delay(1200L)
+                                val verifiedProgress = if (pages.size > 1) {
+                                    ((lastVerifiedReadPage.toFloat() / (pages.size - 1)) * 100).toInt().coerceIn(0, 100)
+                                } else progress
+                                onPositionChange(chapIdx, currentPage, 0, verifiedProgress)
+                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    repository?.updateLastReadBookmark(
+                                        bookId = book.id,
+                                        chapterTitle = book.chapters.getOrNull(chapIdx)?.title ?: "Chapter ${chapIdx + 1}",
+                                        pageNumber = currentPage + 1,
+                                        paragraphSnippet = cleanSnippet.take(150).ifBlank { "Page ${currentPage + 1}" }
+                                    )
+                                }
+                            } else {
+                                // Random drop / jump (e.g. scrubbing to page 50 from 20):
+                                // DOES NOT count as read! Do not advance lastVerifiedReadPage or reading progress.
+                                // Preserves verified reading position and allows double-tap to return.
                             }
                         }
                     }
@@ -2698,7 +2741,7 @@ fun ReaderScreen(
                                         Column(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .padding(top = 8.dp, bottom = 18.dp),
+                                                .padding(top = 4.dp, bottom = 10.dp),
                                             horizontalAlignment = Alignment.CenterHorizontally
                                         ) {
                                             val eyebrowText = if (cSub.isNotBlank() && cSub.startsWith("Part", ignoreCase = true)) {
@@ -2879,10 +2922,32 @@ fun ReaderScreen(
             progressBottomInset = progressBottomInset,
             showNavBarInReader = showNavBarInReader,
             currentProgressPct = currentProgressPct,
-            currentReadTillPct = readTillMapState?.value?.get(book.id) ?: currentProgressPct,
+            currentReadTillPct = maxOf(
+                if (pages.size > 1) ((lastVerifiedReadPage.toFloat() / (pages.size - 1)) * 100).toInt().coerceIn(0, 100) else 0,
+                readTillMapState?.value?.get(book.id) ?: currentProgressPct
+            ),
             readTimeLeft = book.readTimeLeft,
             activeChapterTitle = activeChapterTitle,
             onToggleNavBar = onToggleNavBar,
+            onJumpToLastRead = {
+                coroutineScope.launch {
+                    if (readingMode == ReadingMode.SCROLL) {
+                        val targetScroll = lastVerifiedScrollPos.coerceIn(0, maxOf(0, totalScrollItems - 1))
+                        if (kotlin.math.abs(listState.firstVisibleItemIndex - targetScroll) > 4) {
+                            listState.scrollToItem(targetScroll)
+                        } else {
+                            listState.animateScrollToItem(targetScroll)
+                        }
+                    } else {
+                        val targetPage = lastVerifiedReadPage.coerceIn(0, maxOf(0, pages.size - 1))
+                        if (kotlin.math.abs(pagerState.currentPage - targetPage) > 3) {
+                            pagerState.scrollToPage(targetPage)
+                        } else {
+                            pagerState.animateScrollToPage(targetPage)
+                        }
+                    }
+                }
+            },
             onSeekToProgress = { targetPct ->
                 val clamped = targetPct.coerceIn(0, 100)
                 currentProgressPct = clamped
@@ -2986,6 +3051,9 @@ fun ReaderScreen(
                 val currentPageIdx = if (readingMode != ReadingMode.SCROLL) pagerState.currentPage else 0
                 val currentScrollPos = if (readingMode == ReadingMode.SCROLL) listState.firstVisibleItemIndex else 0
 
+                lastVerifiedReadPage = currentPageIdx
+                lastVerifiedScrollPos = currentScrollPos
+                repository?.setVerifiedPage(book.id, currentPageIdx)
                 repository?.forceSetLastReadPosition(
                     book.id,
                     currentChapIdx,

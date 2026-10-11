@@ -48,6 +48,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.Bookmarks
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -226,6 +227,7 @@ class MainActivity : ComponentActivity() {
             var showNavBarInReader by rememberSaveable { mutableStateOf(false) }
             var isFullscreen by rememberSaveable { mutableStateOf(false) }
             var activeWordDefinition by remember { mutableStateOf<WordDefinition?>(null) }
+            var triggerLibrarySearchFocus by rememberSaveable { mutableIntStateOf(0) }
 
             val coroutineScope = rememberCoroutineScope()
 
@@ -365,7 +367,8 @@ class MainActivity : ComponentActivity() {
                                     },
                                     onShareReadingList = {
                                         bookRepository.shareReadingList(this@MainActivity)
-                                    }
+                                    },
+                                    triggerSearchFocus = triggerLibrarySearchFocus
                                 )
                             }
                             ScreenTab.READER -> {
@@ -548,6 +551,21 @@ class MainActivity : ComponentActivity() {
                                                 Icon(
                                                     Icons.AutoMirrored.Filled.MenuBook,
                                                     contentDescription = "Read",
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            },
+                                            alwaysShowLabel = false
+                                        )
+                                        NavigationBarItem(
+                                            selected = false,
+                                            onClick = {
+                                                currentTab = ScreenTab.LIBRARY
+                                                triggerLibrarySearchFocus++
+                                            },
+                                            icon = {
+                                                Icon(
+                                                    Icons.Default.Search,
+                                                    contentDescription = "Search",
                                                     modifier = Modifier.size(20.dp)
                                                 )
                                             },

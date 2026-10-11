@@ -50,6 +50,7 @@ fun ReaderBottomDock(
     activeChapterTitle: String,
     onToggleNavBar: () -> Unit,
     onJumpToPreviousLocation: () -> Unit = onToggleNavBar,
+    onJumpToLastRead: () -> Unit = onJumpToPreviousLocation,
     onSeekToProgress: (Int) -> Unit = {},
     onForceSavePosition: () -> String,
     onBackToLibrary: () -> Unit,
@@ -70,10 +71,12 @@ fun ReaderBottomDock(
     var scrubPercent by remember { mutableFloatStateOf(currentProgressPct.toFloat()) }
     var railWidthPx by remember { mutableFloatStateOf(1f) }
     var hasSnappedHaptic by remember { mutableStateOf(false) }
+    var lastTapRailTime by remember { mutableLongStateOf(0L) }
 
     val currentOnSeekToProgress by rememberUpdatedState(onSeekToProgress)
     val currentOnToggleNavBar by rememberUpdatedState(onToggleNavBar)
     val currentOnJumpToPreviousLocation by rememberUpdatedState(onJumpToPreviousLocation)
+    val currentOnJumpToLastRead by rememberUpdatedState(onJumpToLastRead)
     val currentOnForceSavePosition by rememberUpdatedState(onForceSavePosition)
 
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
@@ -82,7 +85,7 @@ fun ReaderBottomDock(
 
     LaunchedEffect(showReadTillFeedback) {
         if (showReadTillFeedback) {
-            delay(800)
+            delay(1200)
             showReadTillFeedback = false
         }
     }
@@ -217,16 +220,27 @@ fun ReaderBottomDock(
                                         view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                                         currentOnSeekToProgress(scrubPercent.roundToInt().coerceIn(0, 100))
                                     } else {
-                                        // Quick tap on seek rail: if close to saved last read pos, snap to it; otherwise seek directly to tapped percentage
+                                        // Quick tap on seek rail:
+                                        // Double-tap detects 2 rapid taps within 350ms to return to last read area
                                         isScrubbing = false
-                                        val tapPct = if (railWidthPx > 10f) (downX / railWidthPx).coerceIn(0f, 1f) * 100f else currentProgressPct.toFloat()
-                                        val snapThreshold = 5.0f
-                                        if (kotlin.math.abs(tapPct - currentReadTillPct.toFloat()) <= snapThreshold) {
-                                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                                            currentOnSeekToProgress(currentReadTillPct)
+                                        val now = System.currentTimeMillis()
+                                        if (now - lastTapRailTime <= 350L) {
+                                            lastTapRailTime = 0L
+                                            view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                            readTillFeedbackText = "Returned to last read: ${currentReadTillPct}%"
+                                            showReadTillFeedback = true
+                                            currentOnJumpToLastRead()
                                         } else {
-                                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                                            currentOnSeekToProgress(tapPct.roundToInt().coerceIn(0, 100))
+                                            lastTapRailTime = now
+                                            val tapPct = if (railWidthPx > 10f) (downX / railWidthPx).coerceIn(0f, 1f) * 100f else currentProgressPct.toFloat()
+                                            val snapThreshold = 5.0f
+                                            if (kotlin.math.abs(tapPct - currentReadTillPct.toFloat()) <= snapThreshold) {
+                                                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                                currentOnSeekToProgress(currentReadTillPct)
+                                            } else {
+                                                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                                currentOnSeekToProgress(tapPct.roundToInt().coerceIn(0, 100))
+                                            }
                                         }
                                     }
 

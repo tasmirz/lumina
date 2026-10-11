@@ -37,6 +37,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -73,10 +75,21 @@ fun LibraryScreen(
     onAddToWishlist: (title: String, author: String, notes: String) -> Unit = { _, _, _ -> },
     onRemoveFromWishlist: (String) -> Unit = {},
     onShareReadingList: () -> Unit = {},
+    triggerSearchFocus: Int = 0,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+    val searchFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(triggerSearchFocus) {
+        if (triggerSearchFocus > 0) {
+            try {
+                searchFocusRequester.requestFocus()
+            } catch (_: Exception) {}
+        }
+    }
+
     val activeBackgroundTask by (repository?.activeBackgroundTask?.collectAsState(initial = null) ?: remember { mutableStateOf(null) })
     var isRefreshing by remember { mutableStateOf(false) }
     var selectedTab by rememberSaveable { mutableIntStateOf(0) } // 0: All, 1: Read, 2: Wishlist
@@ -182,7 +195,8 @@ fun LibraryScreen(
                         LibrarySearchBar(
                             searchQuery = searchQuery,
                             onSearchQueryChange = { searchQuery = it },
-                            isLandscape = true
+                            isLandscape = true,
+                            modifier = Modifier.focusRequester(searchFocusRequester)
                         )
                     }
 
@@ -386,7 +400,8 @@ fun LibraryScreen(
                     LibrarySearchBar(
                         searchQuery = searchQuery,
                         onSearchQueryChange = { searchQuery = it },
-                        isLandscape = false
+                        isLandscape = false,
+                        modifier = Modifier.focusRequester(searchFocusRequester)
                     )
                     LazyColumn(
                         contentPadding = PaddingValues(bottom = 140.dp),
@@ -538,7 +553,8 @@ fun LibraryScreen(
                         LibrarySearchBar(
                             searchQuery = searchQuery,
                             onSearchQueryChange = { searchQuery = it },
-                            isLandscape = true
+                            isLandscape = true,
+                            modifier = Modifier.focusRequester(searchFocusRequester)
                         )
                     }
                     if (readBooks.isEmpty()) {
@@ -674,7 +690,8 @@ fun LibraryScreen(
                     LibrarySearchBar(
                         searchQuery = searchQuery,
                         onSearchQueryChange = { searchQuery = it },
-                        isLandscape = false
+                        isLandscape = false,
+                        modifier = Modifier.focusRequester(searchFocusRequester)
                     )
                     LazyVerticalGrid(
                         columns = GridCells.Adaptive(minSize = gridMinSize),
@@ -829,7 +846,8 @@ fun LibraryScreen(
                         LibrarySearchBar(
                             searchQuery = searchQuery,
                             onSearchQueryChange = { searchQuery = it },
-                            isLandscape = true
+                            isLandscape = true,
+                            modifier = Modifier.focusRequester(searchFocusRequester)
                         )
                     }
                     if (wishlistBooks.isEmpty()) {
@@ -905,7 +923,8 @@ fun LibraryScreen(
                     LibrarySearchBar(
                         searchQuery = searchQuery,
                         onSearchQueryChange = { searchQuery = it },
-                        isLandscape = false
+                        isLandscape = false,
+                        modifier = Modifier.focusRequester(searchFocusRequester)
                     )
                     LazyColumn(
                         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 140.dp),
@@ -1010,7 +1029,8 @@ fun LibraryScreen(
                             LibrarySearchBar(
                                 searchQuery = searchQuery,
                                 onSearchQueryChange = { searchQuery = it },
-                                isLandscape = true
+                                isLandscape = true,
+                                modifier = Modifier.focusRequester(searchFocusRequester)
                             )
                         }
 
@@ -1420,7 +1440,8 @@ fun LibraryScreen(
                     LibrarySearchBar(
                         searchQuery = searchQuery,
                         onSearchQueryChange = { searchQuery = it },
-                        isLandscape = false
+                        isLandscape = false,
+                        modifier = Modifier.focusRequester(searchFocusRequester)
                     )
                     PullToRefreshBox(
                         isRefreshing = isRefreshing,
@@ -1830,7 +1851,8 @@ private fun LibraryTabChips(
 private fun LibrarySearchBar(
     searchQuery: String,
     onSearchQueryChange: (String) -> Unit,
-    isLandscape: Boolean
+    isLandscape: Boolean,
+    modifier: Modifier = Modifier
 ) {
     OutlinedTextField(
         value = searchQuery,
@@ -1865,7 +1887,7 @@ private fun LibrarySearchBar(
             focusedBorderColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.6f),
             unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
         ),
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .padding(
                 horizontal = if (isLandscape) 4.dp else 20.dp,

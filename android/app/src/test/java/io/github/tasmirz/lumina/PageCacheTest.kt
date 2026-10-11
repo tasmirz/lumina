@@ -705,7 +705,6 @@ class PageCacheTest {
                 paraIdx = 7,
                 topSnippet = touchedSnippet
             )
-
             assertTrue("Found page index must be within range for fontSize $fontSize", foundPage in pages.indices)
             val pageText = pages[foundPage].second
             val cleanedPage = cleanAlpha(pageText)
