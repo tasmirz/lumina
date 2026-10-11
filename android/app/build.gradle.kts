@@ -11,8 +11,8 @@ android {
         applicationId = "io.github.tasmirz.lumina"
         minSdk = 24
         targetSdk = 36
-        versionCode = 8
-        versionName = "0.0.8-beta"
+        versionCode = 9
+        versionName = "0.0.9-beta"
     }
 
     buildTypes {
