@@ -30,8 +30,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.layout.onGloballyPositioned
 import io.github.tasmirz.lumina.model.ReadingMode
 import io.github.tasmirz.lumina.ui.components.AssistantVoiceState
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -47,9 +49,12 @@ fun ReaderBottomDock(
     readTimeLeft: String,
     activeChapterTitle: String,
     onToggleNavBar: () -> Unit,
+    onJumpToPreviousLocation: () -> Unit = onToggleNavBar,
+    onSeekToProgress: (Int) -> Unit = {},
     onForceSavePosition: () -> String,
     onBackToLibrary: () -> Unit,
     onOpenToc: () -> Unit,
+    onOpenSearch: () -> Unit = {},
     onOpenBookmarks: () -> Unit,
     onOpenReadingSettings: () -> Unit,
     modifier: Modifier = Modifier
@@ -61,8 +66,14 @@ fun ReaderBottomDock(
     val progressHoldAnim = remember { Animatable(0f) }
     var showReadTillFeedback by remember { mutableStateOf(false) }
     var readTillFeedbackText by remember { mutableStateOf("") }
+    var isScrubbing by remember { mutableStateOf(false) }
+    var scrubPercent by remember { mutableFloatStateOf(currentProgressPct.toFloat()) }
+    var railWidthPx by remember { mutableFloatStateOf(1f) }
+    var hasSnappedHaptic by remember { mutableStateOf(false) }
 
+    val currentOnSeekToProgress by rememberUpdatedState(onSeekToProgress)
     val currentOnToggleNavBar by rememberUpdatedState(onToggleNavBar)
+    val currentOnJumpToPreviousLocation by rememberUpdatedState(onJumpToPreviousLocation)
     val currentOnForceSavePosition by rememberUpdatedState(onForceSavePosition)
 
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
@@ -91,84 +102,141 @@ fun ReaderBottomDock(
             modifier = Modifier
                 .fillMaxWidth()
                 .widthIn(max = 380.dp)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null
-                ) { /* Consume taps to prevent passing through to reader */ }
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        var isLongPress = false
+                        val saveJob = coroutineScope.launch {
+                            delay(400)
+                            isLongPress = true
+                            view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                            val savedFeedback = currentOnForceSavePosition()
+                            readTillFeedbackText = savedFeedback
+                            showReadTillFeedback = true
+                        }
+                        val up = waitForUpOrCancellation()
+                        saveJob.cancel()
+                        if (up != null && !isLongPress) {
+                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            currentOnToggleNavBar()
+                        }
+                    }
+                }
         ) {
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Dynamic rail height: expands from 3.5.dp to 7.dp while long-pressing
+                // Dynamic rail height: expands from 3.5.dp to 7.dp while scrubbing or long-pressing
                 val animatedRailHeight by animateDpAsState(
-                    targetValue = if (isLongPressingProgress) 7.dp else 3.5.dp,
+                    targetValue = if (isScrubbing || isLongPressingProgress) 7.dp else 3.5.dp,
                     animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
                     label = "railHeight"
                 )
 
-                // Top Progress Bar Extension: Pure Display, tapping toggles bottom nav dock, long press charges up & saves last read position
+                // Top Progress Bar Extension: YouTube-like seekable progress rail with snapping to saved / last read position
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .pointerInput(Unit) {
-                            awaitEachGesture {
-                                val down = awaitFirstDown(requireUnconsumed = false)
-                                val startTime = System.currentTimeMillis()
-                                var completed = false
-
-                                val animJob = coroutineScope.launch {
-                                    // Delay 200ms before starting the charging animation so quick taps don't trigger it
-                                    delay(200)
-                                    isLongPressingProgress = true
-                                    progressHoldAnim.snapTo(0f)
-                                    progressHoldAnim.animateTo(
-                                        targetValue = 1f,
-                                        animationSpec = tween(durationMillis = 500, easing = LinearEasing)
-                                    )
-                                    // Long-press hold completed! Save position and trigger feedback
-                                    completed = true
-                                    view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-
-                                    val savedFeedback = currentOnForceSavePosition()
-                                    readTillFeedbackText = savedFeedback
-                                    showReadTillFeedback = true
-                                }
-
-                                val up = waitForUpOrCancellation()
-                                animJob.cancel()
-                                isLongPressingProgress = false
-
-                                if (up != null && !completed) {
-                                    currentOnToggleNavBar()
-                                }
-                                coroutineScope.launch {
-                                    progressHoldAnim.animateTo(0f, tween(150))
-                                }
-                            }
-                        }
                         .padding(horizontal = 14.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
+                    val displayedPct = if (isScrubbing) {
+                        scrubPercent.roundToInt().coerceIn(0, 100)
+                    } else if (isLongPressingProgress && progressHoldAnim.value > 0.05f) {
+                        (progressHoldAnim.value * 100).toInt()
+                    } else {
+                        currentProgressPct
+                    }
+
                     Text(
-                        text = if (isLongPressingProgress && progressHoldAnim.value > 0.05f) {
-                            "${(progressHoldAnim.value * 100).toInt()}%"
-                        } else {
-                            "${currentProgressPct}%"
-                        },
+                        text = "$displayedPct%",
                         fontFamily = FontFamily.SansSerif,
                         fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (isLongPressingProgress) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
+                        fontWeight = if (isScrubbing || isLongPressingProgress) FontWeight.Normal else FontWeight.Light,
+                        color = if (isScrubbing || isLongPressingProgress) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
                     )
                     Spacer(modifier = Modifier.width(10.dp))
 
-                    // Pure Display Progress Rail with charging animation on hold
+                    // YouTube-like seekable rail with magnetic snap to last read / saved location
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .height(12.dp),
+                            .height(28.dp)
+                            .onGloballyPositioned { coordinates ->
+                                railWidthPx = coordinates.size.width.toFloat().coerceAtLeast(1f)
+                            }
+                            .pointerInput(currentReadTillPct, currentProgressPct) {
+                                awaitEachGesture {
+                                    val down = awaitFirstDown(requireUnconsumed = false)
+                                    val downX = down.position.x
+                                    val downTime = System.currentTimeMillis()
+                                    var isDrag = false
+
+                                    fun calculatePercentFromX(x: Float): Float {
+                                        if (railWidthPx <= 10f) return currentProgressPct.toFloat()
+                                        val raw = (x / railWidthPx).coerceIn(0f, 1f) * 100f
+                                        val snapThreshold = 3.5f
+                                        val snapTarget = currentReadTillPct.toFloat()
+                                        return if (kotlin.math.abs(raw - snapTarget) <= snapThreshold) {
+                                            if (!hasSnappedHaptic) {
+                                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                                hasSnappedHaptic = true
+                                            }
+                                            snapTarget
+                                        } else {
+                                            hasSnappedHaptic = false
+                                            raw
+                                        }
+                                    }
+
+                                    // Consume initial touch on seek rail so surface doesn't trigger
+                                    down.consume()
+                                    isScrubbing = true
+                                    scrubPercent = calculatePercentFromX(downX)
+
+                                    // Track pointer movement
+                                    while (true) {
+                                        val event = awaitPointerEvent()
+                                        val currentPointer = event.changes.firstOrNull() ?: break
+                                        if (!currentPointer.pressed) break
+
+                                        val currentX = currentPointer.position.x
+                                        if (kotlin.math.abs(currentX - downX) > 6f) {
+                                            isDrag = true
+                                        }
+                                        scrubPercent = calculatePercentFromX(currentX)
+                                        currentPointer.consume()
+                                    }
+
+                                    val elapsed = System.currentTimeMillis() - downTime
+
+                                    if (isDrag || elapsed >= 200) {
+                                        isScrubbing = false
+                                        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                        currentOnSeekToProgress(scrubPercent.roundToInt().coerceIn(0, 100))
+                                    } else {
+                                        // Quick tap on seek rail: if close to saved last read pos, snap to it; otherwise seek directly to tapped percentage
+                                        isScrubbing = false
+                                        val tapPct = if (railWidthPx > 10f) (downX / railWidthPx).coerceIn(0f, 1f) * 100f else currentProgressPct.toFloat()
+                                        val snapThreshold = 5.0f
+                                        if (kotlin.math.abs(tapPct - currentReadTillPct.toFloat()) <= snapThreshold) {
+                                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                            currentOnSeekToProgress(currentReadTillPct)
+                                        } else {
+                                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                            currentOnSeekToProgress(tapPct.roundToInt().coerceIn(0, 100))
+                                        }
+                                    }
+
+                                    coroutineScope.launch {
+                                        progressHoldAnim.animateTo(0f, tween(150))
+                                        isLongPressingProgress = false
+                                        isScrubbing = false
+                                    }
+                                }
+                            },
                         contentAlignment = Alignment.CenterStart
                     ) {
                         // Background rail
@@ -179,6 +247,7 @@ fun ReaderBottomDock(
                                 .clip(RoundedCornerShape(animatedRailHeight / 2))
                                 .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
                         )
+
                         // Read-till progress indicator (if ahead of current reading position)
                         val readTillFraction = (currentReadTillPct.toFloat() / 100f).coerceIn(0f, 1f)
                         if (currentReadTillPct > currentProgressPct) {
@@ -190,17 +259,19 @@ fun ReaderBottomDock(
                                     .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.35f))
                             )
                         }
-                        // Filled progress bar (current scroll/page position)
-                        val currentFraction = (currentProgressPct.toFloat() / 100f).coerceIn(0.01f, 1f)
+
+                        // Filled progress bar (current scroll/page position or active scrub position)
+                        val activePct = if (isScrubbing) scrubPercent else currentProgressPct.toFloat()
+                        val currentFraction = (activePct / 100f).coerceIn(0.01f, 1f)
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth(currentFraction)
                                 .height(animatedRailHeight)
                                 .clip(RoundedCornerShape(animatedRailHeight / 2))
-                                .background(MaterialTheme.colorScheme.secondary)
+                                .background(if (isScrubbing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary)
                         )
 
-                        // Charging animation beam while holding down to save location (only active after 200ms)
+                        // Charging animation beam while holding down to save location (only active after 350ms)
                         val holdFraction = progressHoldAnim.value
                         if (isLongPressingProgress || holdFraction > 0f) {
                             Box(
@@ -220,19 +291,34 @@ fun ReaderBottomDock(
                             )
                         }
 
-                        // Read-till marker pip if ahead of current progress
-                        if (currentReadTillPct > currentProgressPct) {
+                        // Read-till marker pip / notch if ahead of current progress or during scrub
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(readTillFraction)
+                                .height(animatedRailHeight + 6.dp),
+                            contentAlignment = Alignment.CenterEnd
+                        ) {
                             Box(
                                 modifier = Modifier
-                                    .fillMaxWidth(readTillFraction)
-                                    .height(animatedRailHeight + 4.dp),
-                                    contentAlignment = Alignment.CenterEnd
+                                    .size(if (isScrubbing && kotlin.math.abs(scrubPercent - currentReadTillPct) <= 3.5f) 9.dp else 6.dp)
+                                    .clip(CircleShape)
+                                    .background(if (isScrubbing && kotlin.math.abs(scrubPercent - currentReadTillPct) <= 3.5f) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary)
+                            )
+                        }
+
+                        // YouTube-style Scrubber Thumb (visible when dragging or interacting)
+                        if (isScrubbing) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(currentFraction)
+                                    .height(16.dp),
+                                contentAlignment = Alignment.CenterEnd
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(if (isLongPressingProgress) 8.dp else 6.dp)
+                                        .size(12.dp)
                                         .clip(CircleShape)
-                                        .background(MaterialTheme.colorScheme.tertiary)
+                                        .background(MaterialTheme.colorScheme.primary)
                                 )
                             }
                         }
@@ -242,15 +328,17 @@ fun ReaderBottomDock(
                     Text(
                         text = if (isLongPressingProgress && progressHoldAnim.value > 0.05f) {
                             "Saving..."
+                        } else if (isScrubbing) {
+                            "Seeking"
                         } else {
                             if (readTimeLeft.isNotBlank()) readTimeLeft else activeChapterTitle
                         },
                         fontFamily = FontFamily.SansSerif,
                         fontSize = 10.5.sp,
-                        fontWeight = if (isLongPressingProgress) FontWeight.SemiBold else FontWeight.Normal,
+                        fontWeight = if (isScrubbing || isLongPressingProgress) FontWeight.Normal else FontWeight.Light,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        color = if (isLongPressingProgress) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        color = if (isScrubbing || isLongPressingProgress) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
 
@@ -283,7 +371,7 @@ fun ReaderBottomDock(
                                 text = readTillFeedbackText,
                                 fontFamily = FontFamily.SansSerif,
                                 fontSize = 11.5.sp,
-                                fontWeight = FontWeight.SemiBold,
+                                fontWeight = FontWeight.Normal,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer
                             )
                         }
@@ -327,7 +415,16 @@ fun ReaderBottomDock(
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
-                            // 3. Highlights & Bookmarks
+                            // 3. Search in Book
+                            IconButton(onClick = onOpenSearch) {
+                                Icon(
+                                    imageVector = Icons.Default.Search,
+                                    contentDescription = "Search in Book",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            // 4. Highlights & Bookmarks
                             IconButton(onClick = onOpenBookmarks) {
                                 Icon(
                                     imageVector = Icons.Default.Bookmarks,
@@ -336,7 +433,7 @@ fun ReaderBottomDock(
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
-                            // 4 (old 5). Reading Settings
+                            // 5. Reading Settings
                             IconButton(onClick = onOpenReadingSettings) {
                                 Icon(
                                     imageVector = Icons.Default.Tune,

@@ -94,12 +94,12 @@ private data class ThemeStarterTemplate(
 )
 
 enum class SettingsSubScreen(val title: String, val subtitle: String, val icon: ImageVector) {
-    MENU("Advanced Settings", "Personalization, Storage & FOSS Engine", Icons.Default.Settings),
+    MENU("Advanced Settings", "Personalization, Storage & Open Source Engine", Icons.Default.Settings),
     THEMES_TYPOGRAPHY("Themes, Typography & Textures", "Palettes, fonts, line spacing, margins", Icons.Outlined.Palette),
     CUSTOM_CSS("Custom Theme & CSS Engine", "Palette builder, custom CSS import/export", Icons.Outlined.Brush),
     READING_CONTROLS("Reading Controls & Audio", "Floating orb, actions, TTS, auto-scroll", Icons.Outlined.TouchApp),
     AI_INTELLIGENCE("AI Assistant & Intelligence", "Offline command palette, Gemini, custom endpoints", Icons.Outlined.AutoAwesome),
-    STORAGE_BACKUP("Storage, Backup & AGPLv3", "Cache management, index cleaner, export/import", Icons.Outlined.Storage)
+    STORAGE_BACKUP("Storage, Backup & License", "Cache management, index cleaner, export/import", Icons.Outlined.Storage)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -205,6 +205,9 @@ fun AdvancedSettingsScreen(
 
     val paragraphSpacingState = repository?.paragraphSpacingMultiplier?.collectAsState(initial = 1.2f)
     val paragraphSpacing = paragraphSpacingState?.value ?: 1.2f
+
+    val inlineImageWidthPercentState = repository?.inlineImageWidthPercent?.collectAsState(initial = 100)
+    val inlineImageWidthPercent = inlineImageWidthPercentState?.value ?: 100
 
     val preferredLanguageState = repository?.preferredLanguage?.collectAsState(initial = "auto")
     val preferredLanguage = preferredLanguageState?.value ?: "auto"
@@ -443,7 +446,7 @@ fun AdvancedSettingsScreen(
                         Text(
                             text = currentSubScreen.title,
                             fontFamily = FontFamily.Serif,
-                            fontWeight = FontWeight.SemiBold,
+                            fontWeight = FontWeight.Normal,
                             fontSize = 18.sp
                         )
                         Text(
@@ -489,7 +492,7 @@ fun AdvancedSettingsScreen(
                     SettingsSubScreen.CUSTOM_CSS to "Build custom themes with color pickers, import/export CSS style sheets, and manage wallpaper backgrounds.",
                     SettingsSubScreen.READING_CONTROLS to "Configure the 2-layer floating assistant orb, active quick actions, auto-scroll speed, and TTS audio toggles.",
                     SettingsSubScreen.AI_INTELLIGENCE to "Toggle generative AI on/off for 100% offline privacy, configure Gemini API keys, or connect to custom OpenAI-compatible endpoints.",
-                    SettingsSubScreen.STORAGE_BACKUP to "Manage live FTS5 search index and image caches, export/import complete unified JSON backups, and view AGPLv3 terms."
+                    SettingsSubScreen.STORAGE_BACKUP to "Manage search index and offline image caches, export/import complete unified JSON backups, and view open source terms."
                 )
 
                 item {
@@ -534,7 +537,7 @@ fun AdvancedSettingsScreen(
                                     Text(
                                         text = "Local-Only Mode",
                                         fontFamily = FontFamily.Serif,
-                                        fontWeight = FontWeight.SemiBold,
+                                        fontWeight = FontWeight.Normal,
                                         fontSize = 14.5.sp,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
@@ -550,7 +553,7 @@ fun AdvancedSettingsScreen(
                                             Text(
                                                 text = "OFFLINE",
                                                 fontSize = 8.5.sp,
-                                                fontWeight = FontWeight.Bold,
+                                                fontWeight = FontWeight.Normal,
                                                 letterSpacing = 0.5.sp,
                                                 maxLines = 1,
                                                 softWrap = false,
@@ -598,13 +601,13 @@ fun AdvancedSettingsScreen(
                                 modifier = Modifier
                                     .size(44.dp)
                                     .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.primaryContainer),
+                                    .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.14f)),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
                                     imageVector = screen.icon,
                                     contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    tint = MaterialTheme.colorScheme.secondary,
                                     modifier = Modifier.size(22.dp)
                                 )
                             }
@@ -613,7 +616,7 @@ fun AdvancedSettingsScreen(
                                 Text(
                                     text = screen.title,
                                     fontFamily = FontFamily.Serif,
-                                    fontWeight = FontWeight.SemiBold,
+                                    fontWeight = FontWeight.Normal,
                                     fontSize = 15.sp,
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
@@ -655,7 +658,7 @@ fun AdvancedSettingsScreen(
                         // Reading Mode Selector
                         Text(
                             text = "Reading Mode",
-                            fontWeight = FontWeight.SemiBold,
+                            fontWeight = FontWeight.Normal,
                             fontSize = 13.sp
                         )
                         Spacer(modifier = Modifier.height(6.dp))
@@ -700,7 +703,7 @@ fun AdvancedSettingsScreen(
                                             text = label,
                                             fontSize = 10.5.sp,
                                             maxLines = 1,
-                                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                            fontWeight = if (isSelected) FontWeight.Normal else FontWeight.Normal,
                                             color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
@@ -716,7 +719,7 @@ fun AdvancedSettingsScreen(
                         // Theme Variant Chips
                         Text(
                             text = "Color Mode",
-                            fontWeight = FontWeight.SemiBold,
+                            fontWeight = FontWeight.Normal,
                             fontSize = 13.sp
                         )
                         Spacer(modifier = Modifier.height(6.dp))
@@ -839,17 +842,21 @@ fun AdvancedSettingsScreen(
                         ) {
                             Text(
                                 text = "Background Surface Texture",
-                                fontWeight = FontWeight.SemiBold,
+                                fontWeight = FontWeight.Normal,
                                 fontSize = 13.sp
                             )
-                            FilledTonalButton(
+                            OutlinedButton(
                                 onClick = { texturePickerLauncher.launch("image/*") },
                                 shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.onSurface
+                                ),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                             ) {
                                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(15.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("Load Texture", fontSize = 11.sp)
+                                Text("Load Texture", fontSize = 11.sp, fontWeight = FontWeight.Normal)
                             }
                         }
                         Spacer(modifier = Modifier.height(6.dp))
@@ -897,7 +904,7 @@ fun AdvancedSettingsScreen(
                             Text(
                                 text = "Custom Surface Textures",
                                 fontSize = 11.5.sp,
-                                fontWeight = FontWeight.Medium,
+                                fontWeight = FontWeight.Normal,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Spacer(modifier = Modifier.height(6.dp))
@@ -945,7 +952,7 @@ fun AdvancedSettingsScreen(
                                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                                         Text(
                                                             text = tex.name,
-                                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                            fontWeight = if (isSelected) FontWeight.Normal else FontWeight.Normal,
                                                             fontSize = 12.sp,
                                                             color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                                         )
@@ -1011,7 +1018,7 @@ fun AdvancedSettingsScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("Dynamic Rolling Texture", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                                Text("Dynamic Rolling Texture", fontSize = 12.sp, fontWeight = FontWeight.Normal)
                                 Text("Roll background textures when scrolling or swiping pages", fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Switch(
@@ -1080,17 +1087,17 @@ fun AdvancedSettingsScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("Paged Safe Lines to Remove", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text("Subtracts lines per page in Paged Mode to prevent bottom clipping", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                                Text("Paged Line Safety Reducer", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("Reduces line budget per page in portrait & landscape to eliminate bottom text cut-off", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
                             }
-                            Text(if (pagedSafeLinesToRemove == 0) "0 (Default)" else "$pagedSafeLinesToRemove lines", fontSize = 12.sp, fontWeight = FontWeight.Normal, color = MaterialTheme.colorScheme.secondary)
+                            Text(if (pagedSafeLinesToRemove == 0) "0 (Auto)" else "-$pagedSafeLinesToRemove ${if (pagedSafeLinesToRemove == 1) "line" else "lines"}", fontSize = 12.sp, fontWeight = FontWeight.Normal, color = MaterialTheme.colorScheme.secondary)
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Slider(
                             value = pagedSafeLinesToRemove.toFloat(),
                             onValueChange = { repository?.setPagedSafeLinesToRemove(it.toInt()) },
-                            valueRange = 0f..5f,
-                            steps = 4,
+                            valueRange = 0f..8f,
+                            steps = 7,
                             modifier = Modifier.fillMaxWidth()
                         )
 
@@ -1202,7 +1209,7 @@ fun AdvancedSettingsScreen(
                                 Text(
                                     text = "${currentFontSize} sp",
                                     fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
+                                    fontWeight = FontWeight.Normal,
                                     color = MaterialTheme.colorScheme.secondary,
                                     modifier = Modifier.padding(horizontal = 4.dp)
                                 )
@@ -1240,7 +1247,7 @@ fun AdvancedSettingsScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text("Line Spacing", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text("${String.format("%.2f", lineHeight)}x", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                            Text("${String.format("%.2f", lineHeight)}x", fontSize = 11.5.sp, fontWeight = FontWeight.Normal)
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Slider(
@@ -1259,7 +1266,7 @@ fun AdvancedSettingsScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text("Letter Spacing", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text("${String.format("%.2f", letterSpacing)}sp", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                            Text("${String.format("%.2f", letterSpacing)}sp", fontSize = 11.5.sp, fontWeight = FontWeight.Normal)
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Slider(
@@ -1278,13 +1285,33 @@ fun AdvancedSettingsScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text("Paragraph Spacing", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text("${String.format("%.2f", paragraphSpacing)}x", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                            Text("${String.format("%.2f", paragraphSpacing)}x", fontSize = 11.5.sp, fontWeight = FontWeight.Normal)
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Slider(
                             value = paragraphSpacing,
                             onValueChange = { repository?.setParagraphSpacing(it) },
                             valueRange = 0.6f..2.4f,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Inline Image Width
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Inline Image Width", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("${inlineImageWidthPercent}%", fontSize = 11.5.sp, fontWeight = FontWeight.Normal)
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Slider(
+                            value = inlineImageWidthPercent.toFloat(),
+                            onValueChange = { repository?.setInlineImageWidthPercent(it.toInt()) },
+                            valueRange = 50f..100f,
+                            steps = 4,
                             modifier = Modifier.fillMaxWidth()
                         )
 
@@ -1329,7 +1356,7 @@ fun AdvancedSettingsScreen(
                         Column(modifier = Modifier.fillMaxWidth()) {
                             Text(
                                 text = "Custom Palette Builder",
-                                fontWeight = FontWeight.SemiBold,
+                                fontWeight = FontWeight.Normal,
                                 fontSize = 14.sp
                             )
                             Spacer(modifier = Modifier.height(4.dp))
@@ -1381,7 +1408,7 @@ fun AdvancedSettingsScreen(
                         Text(
                             text = "Reading Palette Presets",
                             fontSize = 11.5.sp,
-                            fontWeight = FontWeight.Medium,
+                            fontWeight = FontWeight.Normal,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(modifier = Modifier.height(4.dp))
@@ -1440,7 +1467,7 @@ fun AdvancedSettingsScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Background Color", fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
+                            Text("Background Color", fontSize = 11.5.sp, fontWeight = FontWeight.Normal)
                             TextButton(
                                 onClick = { colorPickerTarget = ColorPickerTarget.BACKGROUND },
                                 contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
@@ -1470,7 +1497,7 @@ fun AdvancedSettingsScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Text Color", fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
+                            Text("Text Color", fontSize = 11.5.sp, fontWeight = FontWeight.Normal)
                             TextButton(
                                 onClick = { colorPickerTarget = ColorPickerTarget.TEXT },
                                 contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
@@ -1500,7 +1527,7 @@ fun AdvancedSettingsScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Accent Color", fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
+                            Text("Accent Color", fontSize = 11.5.sp, fontWeight = FontWeight.Normal)
                             TextButton(
                                 onClick = { colorPickerTarget = ColorPickerTarget.ACCENT },
                                 contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
@@ -1536,7 +1563,7 @@ fun AdvancedSettingsScreen(
                                     text = customThemeName.ifBlank { "Chapter I. The Celestial Journey" },
                                     color = customAccentColor,
                                     fontSize = 12.5.sp,
-                                    fontWeight = FontWeight.Bold,
+                                    fontWeight = FontWeight.Normal,
                                     fontFamily = FontFamily.Serif
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
@@ -1582,7 +1609,7 @@ fun AdvancedSettingsScreen(
                             Text(
                                 text = "Saved Themes (${customThemes.size})",
                                 fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium
+                                fontWeight = FontWeight.Normal
                             )
                             Spacer(modifier = Modifier.height(6.dp))
 
@@ -1617,7 +1644,7 @@ fun AdvancedSettingsScreen(
                                                 Text(
                                                     text = th.name,
                                                     fontSize = 11.5.sp,
-                                                    fontWeight = FontWeight.Medium,
+                                                    fontWeight = FontWeight.Normal,
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis
                                                 )
@@ -1687,17 +1714,21 @@ fun AdvancedSettingsScreen(
                         ) {
                             Text(
                                 text = "Background Surface Textures",
-                                fontWeight = FontWeight.SemiBold,
+                                fontWeight = FontWeight.Normal,
                                 fontSize = 13.sp
                             )
-                            FilledTonalButton(
+                            OutlinedButton(
                                 onClick = { texturePickerLauncher.launch("image/*") },
                                 shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.onSurface
+                                ),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                             ) {
                                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(15.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("Load Texture", fontSize = 11.sp)
+                                Text("Load Texture", fontSize = 11.sp, fontWeight = FontWeight.Normal)
                             }
                         }
                         Spacer(modifier = Modifier.height(6.dp))
@@ -1745,7 +1776,7 @@ fun AdvancedSettingsScreen(
                             Text(
                                 text = "Custom Surface Textures",
                                 fontSize = 11.5.sp,
-                                fontWeight = FontWeight.Medium,
+                                fontWeight = FontWeight.Normal,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Spacer(modifier = Modifier.height(6.dp))
@@ -1793,7 +1824,7 @@ fun AdvancedSettingsScreen(
                                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                                         Text(
                                                             text = tex.name,
-                                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                            fontWeight = if (isSelected) FontWeight.Normal else FontWeight.Normal,
                                                             fontSize = 12.sp,
                                                             color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                                         )
@@ -1859,7 +1890,7 @@ fun AdvancedSettingsScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("Dynamic Rolling Texture", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                                Text("Dynamic Rolling Texture", fontSize = 12.sp, fontWeight = FontWeight.Normal)
                                 Text("Roll background textures when scrolling or swiping pages", fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Switch(
@@ -1875,7 +1906,7 @@ fun AdvancedSettingsScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("Custom Wallpaper", fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
+                                Text("Custom Wallpaper", fontSize = 11.5.sp, fontWeight = FontWeight.Normal)
                                 if (customBgUri.isNotBlank()) {
                                     Text("Image active", fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
                                 }
@@ -1886,7 +1917,7 @@ fun AdvancedSettingsScreen(
                                         Text("Clear", fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
                                     }
                                 }
-                                Button(
+                                OutlinedButton(
                                     onClick = { bgPickerLauncher.launch("image/*") },
                                     shape = RoundedCornerShape(8.dp),
                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
@@ -1932,7 +1963,7 @@ fun AdvancedSettingsScreen(
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Text(
                                             text = "Text-to-Speech (TTS) Voice Engine",
-                                            fontWeight = FontWeight.SemiBold,
+                                            fontWeight = FontWeight.Normal,
                                             fontSize = 12.5.sp
                                         )
                                     }
@@ -1954,7 +1985,7 @@ fun AdvancedSettingsScreen(
                                 Spacer(modifier = Modifier.height(10.dp))
                                 Text(
                                     text = "Audio Engine Mode",
-                                    fontWeight = FontWeight.SemiBold,
+                                    fontWeight = FontWeight.Normal,
                                     fontSize = 11.5.sp
                                 )
                                 Spacer(modifier = Modifier.height(6.dp))
@@ -1980,7 +2011,7 @@ fun AdvancedSettingsScreen(
                                                 .padding(10.dp),
                                             verticalArrangement = Arrangement.SpaceBetween
                                         ) {
-                                            Text(text = "Edge Neural\n(Audiobook)", fontWeight = FontWeight.Bold, fontSize = 11.5.sp)
+                                            Text(text = "Edge Neural\n(Audiobook)", fontWeight = FontWeight.Normal, fontSize = 11.5.sp)
                                             Spacer(modifier = Modifier.height(6.dp))
                                             Text(text = "Natural human voice synthesis", fontSize = 9.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
@@ -2001,7 +2032,7 @@ fun AdvancedSettingsScreen(
                                                 .padding(10.dp),
                                             verticalArrangement = Arrangement.SpaceBetween
                                         ) {
-                                            Text(text = "System TTS\n(On-device)", fontWeight = FontWeight.Bold, fontSize = 11.5.sp)
+                                            Text(text = "System TTS\n(On-device)", fontWeight = FontWeight.Normal, fontSize = 11.5.sp)
                                             Spacer(modifier = Modifier.height(6.dp))
                                             Text(text = "Local speech engine synthesis", fontSize = 9.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
@@ -2012,7 +2043,7 @@ fun AdvancedSettingsScreen(
                                     Spacer(modifier = Modifier.height(10.dp))
                                     Text(
                                         text = "Neural Voice Persona",
-                                        fontWeight = FontWeight.SemiBold,
+                                        fontWeight = FontWeight.Normal,
                                         fontSize = 11.5.sp
                                     )
                                     Spacer(modifier = Modifier.height(6.dp))
@@ -2070,7 +2101,7 @@ fun AdvancedSettingsScreen(
                                                     )
                                                     Spacer(modifier = Modifier.width(10.dp))
                                                     Column(modifier = Modifier.weight(1f)) {
-                                                        Text(text = voice.displayName, fontWeight = FontWeight.Medium, fontSize = 11.5.sp)
+                                                        Text(text = voice.displayName, fontWeight = FontWeight.Normal, fontSize = 11.5.sp)
                                                         Text(text = voice.description, fontSize = 9.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                                     }
                                                     IconButton(
@@ -2108,7 +2139,7 @@ fun AdvancedSettingsScreen(
                                 Spacer(modifier = Modifier.height(10.dp))
                                 Text(
                                     text = "Narration Speed: ${String.format(Locale.US, "%.2f", ttsSpeed)}x",
-                                    fontWeight = FontWeight.Medium,
+                                    fontWeight = FontWeight.Normal,
                                     fontSize = 11.sp
                                 )
                                 Slider(
@@ -2142,7 +2173,7 @@ fun AdvancedSettingsScreen(
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Text(
                                             text = "Floating Assistant Orb",
-                                            fontWeight = FontWeight.SemiBold,
+                                            fontWeight = FontWeight.Normal,
                                             fontSize = 12.5.sp
                                         )
                                     }
@@ -2166,7 +2197,7 @@ fun AdvancedSettingsScreen(
                                 // Assistant Controller Placement Style
                                 Text(
                                     text = "Trigger Placement Layout",
-                                    fontWeight = FontWeight.SemiBold,
+                                    fontWeight = FontWeight.Normal,
                                     fontSize = 12.sp
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
@@ -2196,7 +2227,7 @@ fun AdvancedSettingsScreen(
                                         ) {
                                             Text(
                                                 text = "Floating Orb",
-                                                fontWeight = if (isDot) FontWeight.SemiBold else FontWeight.Medium,
+                                                fontWeight = if (isDot) FontWeight.Normal else FontWeight.Normal,
                                                 fontSize = 11.5.sp,
                                                 color = if (isDot) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurface
                                             )
@@ -2230,7 +2261,7 @@ fun AdvancedSettingsScreen(
                                         ) {
                                             Text(
                                                 text = "Top-Bar Button",
-                                                fontWeight = if (isTopBar) FontWeight.SemiBold else FontWeight.Medium,
+                                                fontWeight = if (isTopBar) FontWeight.Normal else FontWeight.Normal,
                                                 fontSize = 11.5.sp,
                                                 color = if (isTopBar) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurface
                                             )
@@ -2249,7 +2280,7 @@ fun AdvancedSettingsScreen(
                                     // Orb Size Customization
                                     Text(
                                         text = "Orb Edge Dock Size",
-                                        fontWeight = FontWeight.SemiBold,
+                                        fontWeight = FontWeight.Normal,
                                         fontSize = 12.sp
                                     )
                                     Spacer(modifier = Modifier.height(2.dp))
@@ -2284,7 +2315,7 @@ fun AdvancedSettingsScreen(
                                                     Text(
                                                         text = size.displayName,
                                                         fontSize = 11.sp,
-                                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                        fontWeight = if (isSelected) FontWeight.Normal else FontWeight.Normal,
                                                         color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                                     )
                                                     Text(
@@ -2302,7 +2333,7 @@ fun AdvancedSettingsScreen(
                                      // Orb Menu Palette Size
                                      Text(
                                          text = "Orb Menu Palette Size",
-                                         fontWeight = FontWeight.SemiBold,
+                                         fontWeight = FontWeight.Normal,
                                          fontSize = 12.sp
                                      )
                                      Spacer(modifier = Modifier.height(2.dp))
@@ -2337,7 +2368,7 @@ fun AdvancedSettingsScreen(
                                                      Text(
                                                          text = menuSize.displayName,
                                                          fontSize = 11.sp,
-                                                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                         fontWeight = if (isSelected) FontWeight.Normal else FontWeight.Normal,
                                                          color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                                      )
                                                      Text(
@@ -2361,7 +2392,7 @@ fun AdvancedSettingsScreen(
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(
                                                 text = "Edge Snap",
-                                                fontWeight = FontWeight.SemiBold,
+                                                fontWeight = FontWeight.Normal,
                                                 fontSize = 12.sp
                                             )
                                             Spacer(modifier = Modifier.height(2.dp))
@@ -2389,7 +2420,7 @@ fun AdvancedSettingsScreen(
                                         Column(modifier = Modifier.weight(1f, fill = false)) {
                                             Text(
                                                 text = "Orb Color",
-                                                fontWeight = FontWeight.SemiBold,
+                                                fontWeight = FontWeight.Normal,
                                                 fontSize = 12.sp
                                             )
                                             Spacer(modifier = Modifier.height(2.dp))
@@ -2454,7 +2485,7 @@ fun AdvancedSettingsScreen(
                                                     Text(
                                                         text = colorOption.displayName,
                                                         fontSize = 9.5.sp,
-                                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                        fontWeight = if (isSelected) FontWeight.Normal else FontWeight.Normal,
                                                         color = if (isSelected) previewColor else MaterialTheme.colorScheme.onSurface,
                                                         maxLines = 1,
                                                         overflow = TextOverflow.Ellipsis
@@ -2474,12 +2505,12 @@ fun AdvancedSettingsScreen(
                                     ) {
                                         Text(
                                             text = "Orb Opacity (Reading Subtlety)",
-                                            fontWeight = FontWeight.SemiBold,
+                                            fontWeight = FontWeight.Normal,
                                             fontSize = 12.sp
                                         )
                                         Text(
                                             text = "${(orbOpacity * 100).toInt()}%",
-                                            fontWeight = FontWeight.Bold,
+                                            fontWeight = FontWeight.Normal,
                                             fontSize = 12.sp,
                                             color = MaterialTheme.colorScheme.secondary
                                         )
@@ -2514,12 +2545,12 @@ fun AdvancedSettingsScreen(
                         ) {
                             Text(
                                 text = "Auto-Scroll Speed",
-                                fontWeight = FontWeight.Medium,
+                                fontWeight = FontWeight.Normal,
                                 fontSize = 12.5.sp
                             )
                             Text(
                                 text = "${String.format("%.1f", autoScrollSpeed)}x",
-                                fontWeight = FontWeight.Bold,
+                                fontWeight = FontWeight.Normal,
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.secondary
                             )
@@ -2546,7 +2577,7 @@ fun AdvancedSettingsScreen(
                         ) {
                             Text(
                                 text = "Gesture Shortcuts",
-                                fontWeight = FontWeight.Medium,
+                                fontWeight = FontWeight.Normal,
                                 fontSize = 12.5.sp
                             )
                             Text(
@@ -2644,7 +2675,7 @@ fun AdvancedSettingsScreen(
                         ) {
                             Text(
                                 text = "Radial Orb Quick Actions",
-                                fontWeight = FontWeight.Medium,
+                                fontWeight = FontWeight.Normal,
                                 fontSize = 12.5.sp
                             )
                             Text(
@@ -2720,7 +2751,7 @@ fun AdvancedSettingsScreen(
                                         Text(
                                             text = item.displayName,
                                             fontSize = 12.sp,
-                                            fontWeight = if (isActive) FontWeight.Medium else FontWeight.Normal
+                                            fontWeight = if (isActive) FontWeight.Normal else FontWeight.Normal
                                         )
                                         Text(
                                             text = item.description,
@@ -2765,7 +2796,7 @@ fun AdvancedSettingsScreen(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = "Disable AI Assistant",
-                                    fontWeight = FontWeight.SemiBold,
+                                    fontWeight = FontWeight.Normal,
                                     fontSize = 12.5.sp
                                 )
                                 Text(
@@ -2789,7 +2820,7 @@ fun AdvancedSettingsScreen(
                             Text(
                                 text = "AI Service Provider",
                                 fontFamily = FontFamily.SansSerif,
-                                fontWeight = FontWeight.Medium,
+                                fontWeight = FontWeight.Normal,
                                 fontSize = 12.5.sp
                             )
                             Spacer(modifier = Modifier.height(6.dp))
@@ -2818,7 +2849,7 @@ fun AdvancedSettingsScreen(
                                         ) {
                                             Text(
                                                 text = provider.displayName,
-                                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                                                fontWeight = if (isSelected) FontWeight.Normal else FontWeight.Normal,
                                                 fontSize = 12.sp,
                                                 color = if (isSelected) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurface
                                             )
@@ -2833,7 +2864,7 @@ fun AdvancedSettingsScreen(
                             Text(
                                 text = if (aiProvider == AiProvider.GEMINI) "Google Gemini API Key" else "API Key",
                                 fontFamily = FontFamily.SansSerif,
-                                fontWeight = FontWeight.Medium,
+                                fontWeight = FontWeight.Normal,
                                 fontSize = 12.5.sp
                             )
                             Spacer(modifier = Modifier.height(4.dp))
@@ -2886,7 +2917,7 @@ fun AdvancedSettingsScreen(
                                         Text(
                                             text = "Get Free Gemini API Key (AI Studio)",
                                             fontSize = 11.5.sp,
-                                            fontWeight = FontWeight.Medium,
+                                            fontWeight = FontWeight.Normal,
                                             color = MaterialTheme.colorScheme.primary
                                         )
                                     }
@@ -2898,7 +2929,7 @@ fun AdvancedSettingsScreen(
                                 Text(
                                     text = "Base URL (Ollama / Local / Custom)",
                                     fontFamily = FontFamily.SansSerif,
-                                    fontWeight = FontWeight.Medium,
+                                    fontWeight = FontWeight.Normal,
                                     fontSize = 12.5.sp
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
@@ -2918,7 +2949,7 @@ fun AdvancedSettingsScreen(
                             Text(
                                 text = "Model Selection",
                                 fontFamily = FontFamily.SansSerif,
-                                fontWeight = FontWeight.Medium,
+                                fontWeight = FontWeight.Normal,
                                 fontSize = 12.5.sp
                             )
                             Spacer(modifier = Modifier.height(4.dp))
@@ -2954,7 +2985,7 @@ fun AdvancedSettingsScreen(
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Text(
                                             text = "Disable Voice Input / STT",
-                                            fontWeight = FontWeight.Medium,
+                                            fontWeight = FontWeight.Normal,
                                             fontSize = 12.5.sp
                                         )
                                     }
@@ -2994,7 +3025,7 @@ fun AdvancedSettingsScreen(
                                             Spacer(modifier = Modifier.width(6.dp))
                                             Text(
                                                 text = "Auto-Start Microphone",
-                                                fontWeight = FontWeight.Medium,
+                                                fontWeight = FontWeight.Normal,
                                                 fontSize = 12.5.sp
                                             )
                                         }
@@ -3034,7 +3065,7 @@ fun AdvancedSettingsScreen(
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Text(
                                             text = "Anti-Spoiler Context Shield",
-                                            fontWeight = FontWeight.Medium,
+                                            fontWeight = FontWeight.Normal,
                                             fontSize = 12.5.sp
                                         )
                                     }
@@ -3060,7 +3091,7 @@ fun AdvancedSettingsScreen(
                             Text(
                                 text = "Assistant & Voice Language",
                                 fontFamily = FontFamily.SansSerif,
-                                fontWeight = FontWeight.Medium,
+                                fontWeight = FontWeight.Normal,
                                 fontSize = 12.5.sp
                             )
                             Spacer(modifier = Modifier.height(2.dp))
@@ -3106,7 +3137,7 @@ fun AdvancedSettingsScreen(
                         // Local Reader Services & Offline Tools Catalog
                         Text(
                             text = "Local Reader Services & Built-in Tools",
-                            fontWeight = FontWeight.Medium,
+                            fontWeight = FontWeight.Normal,
                             fontSize = 12.5.sp
                         )
                         Text(
@@ -3136,7 +3167,7 @@ fun AdvancedSettingsScreen(
                     CollapsibleCard(
                         icon = Icons.Outlined.Storage,
                         title = "Storage, Backup & License",
-                        subtitle = "FTS5 Index • Image Cache • Unified Backup • AGPLv3"
+                        subtitle = "Offline Search • Image Cache • Vault Backup • Open Source"
                     ) {
                         Column(
                             modifier = Modifier
@@ -3146,19 +3177,19 @@ fun AdvancedSettingsScreen(
                             // Granular Storage Dashboard Card
                             Text(
                                 text = "Device Storage & Caches",
-                                fontWeight = FontWeight.SemiBold,
+                                fontWeight = FontWeight.Normal,
                                 fontSize = 13.sp
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Manage local index files, cover caches, and database footprint to reclaim internal phone storage.",
+                                text = "Manage local index files, cover caches, and vault footprint to reclaim internal phone storage.",
                                 fontSize = 10.5.sp,
                                 lineHeight = 14.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Spacer(modifier = Modifier.height(12.dp))
 
-                            // Storage Stat 1: FTS5 Content Index
+                            // Storage Stat 1: Offline Search Index
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -3170,19 +3201,19 @@ fun AdvancedSettingsScreen(
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "Full-Text Deep Search Index",
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 12.sp
+                                        text = "Offline Search Index",
+                                        fontWeight = FontWeight.Normal,
+                                        fontSize = 12.5.sp
                                     )
                                     Text(
-                                        text = "$ftsIndexCount chapter scenes indexed",
+                                        text = "$ftsIndexCount scenes indexed",
                                         fontSize = 10.5.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                                 Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     val isIndexing by (repository?.isIndexingActive?.collectAsState() ?: remember { mutableStateOf(false) })
                                     Button(
@@ -3201,18 +3232,24 @@ fun AdvancedSettingsScreen(
                                         shape = RoundedCornerShape(6.dp),
                                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
                                     ) {
-                                        Text(if (isIndexing) "Indexing..." else if (ftsIndexCount == 0) "Index Now" else "Re-Index", fontSize = 10.5.sp)
+                                        Text(if (isIndexing) "Indexing…" else if (ftsIndexCount == 0) "Index" else "Re-Index", fontSize = 10.5.sp, fontWeight = FontWeight.Normal)
                                     }
-                                    OutlinedButton(
-                                        onClick = {
-                                            repository?.clearFtsIndex()
-                                            ftsIndexCount = 0
-                                            Toast.makeText(context, "Search index cleared", Toast.LENGTH_SHORT).show()
-                                        },
-                                        shape = RoundedCornerShape(6.dp),
-                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                                    ) {
-                                        Text("Clear Index", fontSize = 10.5.sp)
+                                    if (ftsIndexCount > 0) {
+                                        OutlinedButton(
+                                            onClick = {
+                                                repository?.clearFtsIndex()
+                                                ftsIndexCount = 0
+                                                Toast.makeText(context, "Search index cleared", Toast.LENGTH_SHORT).show()
+                                            },
+                                            shape = RoundedCornerShape(6.dp),
+                                            colors = ButtonDefaults.outlinedButtonColors(
+                                                contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                            ),
+                                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Text("Clear", fontSize = 10.5.sp, fontWeight = FontWeight.Normal)
+                                        }
                                     }
                                 }
                             }
@@ -3232,8 +3269,8 @@ fun AdvancedSettingsScreen(
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
                                         text = "Cover & Image Cache",
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 12.sp
+                                        fontWeight = FontWeight.Normal,
+                                        fontSize = 12.5.sp
                                     )
                                     Text(
                                         text = formatBytes(imageCacheSizeBytes),
@@ -3256,7 +3293,7 @@ fun AdvancedSettingsScreen(
 
                             Spacer(modifier = Modifier.height(8.dp))
 
-                            // Storage Stat 3: SQLite Database & Reading Progress
+                            // Storage Stat 3: Library Database & Reading Progress
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -3268,9 +3305,9 @@ fun AdvancedSettingsScreen(
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "SQLite Database Footprint",
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 12.sp
+                                        text = "Library & Vault Data",
+                                        fontWeight = FontWeight.Normal,
+                                        fontSize = 12.5.sp
                                     )
                                     Text(
                                         text = formatBytes(dbFileSizeBytes),
@@ -3284,9 +3321,13 @@ fun AdvancedSettingsScreen(
                                         Toast.makeText(context, "Reading progress reset", Toast.LENGTH_SHORT).show()
                                     },
                                     shape = RoundedCornerShape(6.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                    ),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
                                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
                                 ) {
-                                    Text("Reset Progress", fontSize = 10.5.sp)
+                                    Text("Reset Progress", fontSize = 10.5.sp, fontWeight = FontWeight.Normal)
                                 }
                             }
 
@@ -3295,7 +3336,7 @@ fun AdvancedSettingsScreen(
                                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
                             )
 
-                            // SQLite FTS5 Search Engine Toggle
+                            // Offline Search Engine Toggle
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -3303,8 +3344,8 @@ fun AdvancedSettingsScreen(
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "Enable Full-Text Indexing",
-                                        fontWeight = FontWeight.SemiBold,
+                                        text = "Enable Offline Deep Search",
+                                        fontWeight = FontWeight.Normal,
                                         fontSize = 12.5.sp
                                     )
                                     Spacer(modifier = Modifier.height(2.dp))
@@ -3408,7 +3449,7 @@ fun AdvancedSettingsScreen(
                             // Unified Backup & Restore Card
                             Text(
                                 text = "Unified Data Backup & Restore",
-                                fontWeight = FontWeight.SemiBold,
+                                fontWeight = FontWeight.Normal,
                                 fontSize = 13.sp
                             )
                             Spacer(modifier = Modifier.height(4.dp))
@@ -3479,7 +3520,7 @@ fun AdvancedSettingsScreen(
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
                                         text = "Open Library & Archive.org Key",
-                                        fontWeight = FontWeight.SemiBold,
+                                        fontWeight = FontWeight.Normal,
                                         fontSize = 13.sp
                                     )
                                 }
@@ -3563,7 +3604,7 @@ fun AdvancedSettingsScreen(
                                     Text(
                                         text = "Paste Key",
                                         fontSize = 11.5.sp,
-                                        fontWeight = FontWeight.Medium,
+                                        fontWeight = FontWeight.Normal,
                                         color = MaterialTheme.colorScheme.primary
                                     )
                                 }
@@ -3589,7 +3630,7 @@ fun AdvancedSettingsScreen(
                                     Text(
                                         text = "Get Free S3 Keys",
                                         fontSize = 11.5.sp,
-                                        fontWeight = FontWeight.Medium,
+                                        fontWeight = FontWeight.Normal,
                                         color = MaterialTheme.colorScheme.primary
                                     )
                                 }
@@ -3606,7 +3647,10 @@ fun AdvancedSettingsScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                Row(
+                                    modifier = Modifier.weight(1f, fill = false),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
                                     Icon(
                                         imageVector = Icons.Outlined.Dns,
                                         contentDescription = null,
@@ -3615,11 +3659,14 @@ fun AdvancedSettingsScreen(
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
-                                        text = "Custom Catalogs & OPDS Endpoints",
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 13.sp
+                                        text = "Custom Catalogs & OPDS",
+                                        fontWeight = FontWeight.Normal,
+                                        fontSize = 13.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 }
+                                Spacer(modifier = Modifier.width(8.dp))
                                 TextButton(
                                     onClick = {
                                         editingEndpoint = null
@@ -3629,7 +3676,7 @@ fun AdvancedSettingsScreen(
                                 ) {
                                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Add Source", fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
+                                    Text("Add Source", fontSize = 11.5.sp, fontWeight = FontWeight.Normal, maxLines = 1)
                                 }
                             }
                             Spacer(modifier = Modifier.height(4.dp))
@@ -3682,7 +3729,7 @@ fun AdvancedSettingsScreen(
                                                     Column(modifier = Modifier.weight(1f)) {
                                                         Text(
                                                             text = endpoint.name,
-                                                            fontWeight = FontWeight.SemiBold,
+                                                            fontWeight = FontWeight.Normal,
                                                             fontSize = 12.5.sp
                                                         )
                                                         Text(
@@ -3770,7 +3817,7 @@ fun AdvancedSettingsScreen(
                                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
                             )
 
-                            // AGPLv3 Open Source License
+                            // Open Source License
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -3786,12 +3833,12 @@ fun AdvancedSettingsScreen(
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Column {
                                         Text(
-                                            text = "AGPLv3 Open Source License",
-                                            fontWeight = FontWeight.Medium,
+                                            text = "Open Source License",
+                                            fontWeight = FontWeight.Normal,
                                             fontSize = 12.5.sp
                                         )
                                         Text(
-                                            text = "GNU Affero General Public License v3.0 • F-Droid FOSS",
+                                            text = "Affero GPL v3.0 • Free & Open Source",
                                             fontSize = 10.sp,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -3800,9 +3847,13 @@ fun AdvancedSettingsScreen(
                                 OutlinedButton(
                                     onClick = { showLicenseDialog = true },
                                     shape = RoundedCornerShape(6.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                    ),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                                 ) {
-                                    Text("Terms", fontSize = 11.sp)
+                                    Text("Terms", fontSize = 11.sp, fontWeight = FontWeight.Normal)
                                 }
                             }
 
@@ -3872,7 +3923,7 @@ fun AdvancedSettingsScreen(
                 Text(
                     text = "Import CSS Theme",
                     fontFamily = FontFamily.Serif,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.Normal,
                     fontSize = 16.sp
                 )
             },
@@ -3939,7 +3990,7 @@ fun AdvancedSettingsScreen(
                                 text = if (parsedThemeName.isNotBlank()) parsedThemeName else "Theme Preview",
                                 color = acc,
                                 fontSize = 11.5.sp,
-                                fontWeight = FontWeight.Bold,
+                                fontWeight = FontWeight.Normal,
                                 fontFamily = FontFamily.Serif
                             )
                             Spacer(modifier = Modifier.height(2.dp))
@@ -3991,7 +4042,7 @@ fun AdvancedSettingsScreen(
                 Text(
                     text = "Export Theme CSS",
                     fontFamily = FontFamily.Serif,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.Normal,
                     fontSize = 16.sp
                 )
             },
@@ -4075,7 +4126,7 @@ fun AdvancedSettingsScreen(
                 Text(
                     text = "Customize $editingGestureName",
                     fontFamily = FontFamily.Serif,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.Normal,
                     fontSize = 16.sp
                 )
             },
@@ -4112,7 +4163,7 @@ fun AdvancedSettingsScreen(
                                 Text(
                                     text = action.displayName,
                                     fontSize = 13.sp,
-                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                    fontWeight = if (isSelected) FontWeight.Normal else FontWeight.Normal,
                                     color = if (isSelected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface
                                 )
                                 if (isSelected) {
@@ -4144,7 +4195,7 @@ fun AdvancedSettingsScreen(
                 Text(
                     text = "Restore Complete Backup",
                     fontFamily = FontFamily.Serif,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.Normal,
                     fontSize = 16.sp
                 )
             },
@@ -4226,7 +4277,7 @@ fun AdvancedSettingsScreen(
                 Text(
                     text = "GNU Affero General Public License",
                     fontFamily = FontFamily.Serif,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.Normal,
                     fontSize = 16.sp
                 )
             },
@@ -4265,7 +4316,7 @@ fun AdvancedSettingsScreen(
                 Text(
                     text = "Rename Custom Theme",
                     fontFamily = FontFamily.Serif,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.Normal,
                     fontSize = 16.sp
                 )
             },
@@ -4343,7 +4394,7 @@ fun AdvancedSettingsScreen(
                 Text(
                     text = "Name Custom Texture",
                     fontFamily = FontFamily.Serif,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.Normal,
                     fontSize = 16.sp
                 )
             },
@@ -4370,7 +4421,7 @@ fun AdvancedSettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Seamless Tiling", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                            Text("Seamless Tiling", fontSize = 12.sp, fontWeight = FontWeight.Normal)
                             Text(
                                 if (textureImportIsTiled) "Repeats as seamless pattern" else "Stretches to cover page",
                                 fontSize = 10.5.sp,
@@ -4388,8 +4439,8 @@ fun AdvancedSettingsScreen(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text("Overlay Opacity", fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                            Text("${(textureImportOpacity * 100).toInt()}%", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                            Text("Overlay Opacity", fontSize = 12.sp, fontWeight = FontWeight.Normal)
+                            Text("${(textureImportOpacity * 100).toInt()}%", fontSize = 12.sp, fontWeight = FontWeight.Normal, color = MaterialTheme.colorScheme.primary)
                         }
                         Slider(
                             value = textureImportOpacity,
@@ -4440,7 +4491,7 @@ fun AdvancedSettingsScreen(
                 Text(
                     text = "Rename Surface Texture",
                     fontFamily = FontFamily.Serif,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.Normal,
                     fontSize = 16.sp
                 )
             },
@@ -4493,7 +4544,7 @@ fun AdvancedSettingsScreen(
                 Text(
                     text = "Delete Texture",
                     fontFamily = FontFamily.Serif,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.Normal,
                     fontSize = 16.sp
                 )
             },
@@ -4560,13 +4611,13 @@ private fun CollapsibleCard(
                     modifier = Modifier
                         .size(36.dp)
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primaryContainer),
+                        .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.14f)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = icon,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        tint = MaterialTheme.colorScheme.secondary,
                         modifier = Modifier.size(18.dp)
                     )
                 }
@@ -4577,7 +4628,7 @@ private fun CollapsibleCard(
                     Text(
                         text = title,
                         fontFamily = FontFamily.Serif,
-                        fontWeight = FontWeight.SemiBold,
+                        fontWeight = FontWeight.Normal,
                         fontSize = 15.sp,
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -4617,7 +4668,7 @@ private fun AiToolCompactRow(
         Text(
             text = name,
             fontSize = 11.sp,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.Normal,
             fontFamily = FontFamily.Monospace,
             color = MaterialTheme.colorScheme.secondary,
             modifier = Modifier.width(110.dp)
@@ -4655,7 +4706,7 @@ private fun ConfigurableGestureItem(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = gestureName,
-                    fontWeight = FontWeight.SemiBold,
+                    fontWeight = FontWeight.Normal,
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurface
                 )
@@ -4693,7 +4744,7 @@ private fun GestureGuideItem(
             Text(
                 text = gesture,
                 fontSize = 10.5.sp,
-                fontWeight = FontWeight.SemiBold,
+                fontWeight = FontWeight.Normal,
                 fontFamily = FontFamily.Monospace,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -4838,7 +4889,7 @@ private fun LuminaColorPickerDialog(
             Text(
                 text = title,
                 fontFamily = FontFamily.Serif,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.Normal,
                 fontSize = 16.sp
             )
         },
@@ -4863,7 +4914,7 @@ private fun LuminaColorPickerDialog(
                         Text(
                             text = hexInput.uppercase(),
                             color = if (currentColor.luminance() > 0.5f) Color.Black else Color.White,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.Normal,
                             fontSize = 14.sp,
                             letterSpacing = 1.sp
                         )
@@ -5006,7 +5057,7 @@ private fun LuminaColorPickerDialog(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text("Brightness", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("${(valueBrightness * 100f).roundToInt()}%", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        Text("${(valueBrightness * 100f).roundToInt()}%", fontSize = 11.sp, fontWeight = FontWeight.Normal)
                     }
                     Slider(
                         value = valueBrightness,
@@ -5034,7 +5085,7 @@ private fun LuminaColorPickerDialog(
                 )
 
                 // Quick Palette Presets
-                Text("Reading Presets", fontSize = 11.sp, fontWeight = FontWeight.Medium, modifier = Modifier.align(Alignment.Start))
+                Text("Reading Presets", fontSize = 11.sp, fontWeight = FontWeight.Normal, modifier = Modifier.align(Alignment.Start))
                 val quickPicks = listOf(
                     Color(0xFFFAF6EE), Color(0xFFF4ECD8), Color(0xFFEFE8D8), Color(0xFFEFF4ED),
                     Color(0xFF1E1C1A), Color(0xFF181D24), Color(0xFF211B17), Color(0xFF131722),
@@ -5219,7 +5270,7 @@ fun CustomEndpointEditorDialog(
                 Text(
                     text = if (initialEndpoint != null) "Edit Custom Catalog" else "Add Custom Catalog",
                     fontFamily = FontFamily.Serif,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.Normal,
                     fontSize = 16.sp
                 )
             }
@@ -5235,7 +5286,7 @@ fun CustomEndpointEditorDialog(
                 Text(
                     text = "Quick Presets:",
                     fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    fontWeight = FontWeight.Normal,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 

@@ -281,6 +281,7 @@ data class ReaderSettings(
     val pagedSwipeThreshold: Float = 0.18f,
     val showStartupLoadingScreen: Boolean = false,
     val uncachedBookOpenMode: UncachedBookOpenMode = UncachedBookOpenMode.INSTANT_ACTIVE_FIRST,
+    val inlineImageWidthPercent: Int = 100,
     val assistantOrbStyle: String = "EDGE_DOT",
     val spoilerShield: Boolean = true,
     val autoScrollSpeed: Float = 1.0f,

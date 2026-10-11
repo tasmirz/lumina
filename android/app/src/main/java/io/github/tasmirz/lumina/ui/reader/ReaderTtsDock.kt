@@ -71,7 +71,7 @@ fun ReaderTtsDock(
                         Text(
                             text = "Audio Reader",
                             fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
+                            fontWeight = FontWeight.Normal,
                             fontFamily = FontFamily.SansSerif
                         )
                         Text(
@@ -129,7 +129,7 @@ fun ReaderTtsDock(
                     Box {
                         AssistChip(
                             onClick = { showSpeedMenu = true },
-                            label = { Text("${ttsSpeed}x", fontSize = 11.sp, fontWeight = FontWeight.Medium) },
+                            label = { Text("${ttsSpeed}x", fontSize = 11.sp, fontWeight = FontWeight.Normal) },
                             modifier = Modifier.height(28.dp)
                         )
                         DropdownMenu(

@@ -64,7 +64,7 @@ fun ReaderAutoScrollPill(
                 Text(
                     text = speedText,
                     fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    fontWeight = FontWeight.Normal,
                     letterSpacing = 0.5.sp,
                     color = MaterialTheme.colorScheme.onSurface
                 )

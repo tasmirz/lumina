@@ -301,7 +301,7 @@ fun AssistantChatSheet(
                             Text(
                                 text = if (disableAi) "Command Palette" else "Lumina Assistant",
                                 fontFamily = FontFamily.Serif,
-                                fontWeight = FontWeight.Bold,
+                                fontWeight = FontWeight.Normal,
                                 fontSize = 13.5.sp,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
@@ -417,7 +417,7 @@ fun AssistantChatSheet(
                                                             Text(
                                                                 text = "Action executed",
                                                                 fontSize = 10.5.sp,
-                                                                fontWeight = FontWeight.Medium,
+                                                                fontWeight = FontWeight.Normal,
                                                                 color = MaterialTheme.colorScheme.secondary
                                                             )
                                                         }
@@ -701,7 +701,7 @@ private fun QuickPromptChip(
             Text(
                 text = text,
                 fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
+                fontWeight = FontWeight.Normal,
                 color = MaterialTheme.colorScheme.onSurface
             )
         }

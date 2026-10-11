@@ -113,7 +113,7 @@ class BookRepository private constructor(private val context: Context) {
     private val _pagedSafeLinesToRemove = MutableStateFlow(prefs.getInt("paged_safe_lines_to_remove", 0))
     val pagedSafeLinesToRemove: StateFlow<Int> = _pagedSafeLinesToRemove.asStateFlow()
 
-    private val _verticallyCenterPages = MutableStateFlow(prefs.getBoolean("vertically_center_pages", true))
+    private val _verticallyCenterPages = MutableStateFlow(prefs.getBoolean("vertically_center_pages", false))
     val verticallyCenterPages: StateFlow<Boolean> = _verticallyCenterPages.asStateFlow()
 
     private val _pagedSwipeThreshold = MutableStateFlow(prefs.getFloat("paged_swipe_threshold", 0.18f))
@@ -130,6 +130,9 @@ class BookRepository private constructor(private val context: Context) {
         }
     )
     val uncachedBookOpenMode: StateFlow<UncachedBookOpenMode> = _uncachedBookOpenMode.asStateFlow()
+
+    private val _inlineImageWidthPercent = MutableStateFlow(prefs.getInt("inline_image_width_percent", 100))
+    val inlineImageWidthPercent: StateFlow<Int> = _inlineImageWidthPercent.asStateFlow()
 
     private val _isStartupInitialized = MutableStateFlow(false)
     val isStartupInitialized: StateFlow<Boolean> = _isStartupInitialized.asStateFlow()
@@ -398,10 +401,11 @@ class BookRepository private constructor(private val context: Context) {
             horizontalPadding = prefs.getInt("horizontal_padding", 20),
             verticalPadding = prefs.getInt("vertical_padding", 16),
             pagedSafeLinesToRemove = prefs.getInt("paged_safe_lines_to_remove", 0),
-            verticallyCenterPages = prefs.getBoolean("vertically_center_pages", true),
+            verticallyCenterPages = prefs.getBoolean("vertically_center_pages", false),
             pagedSwipeThreshold = prefs.getFloat("paged_swipe_threshold", 0.18f),
             showStartupLoadingScreen = prefs.getBoolean("show_startup_loading_screen", false),
             uncachedBookOpenMode = try { UncachedBookOpenMode.valueOf(prefs.getString("uncached_book_open_mode", UncachedBookOpenMode.INSTANT_ACTIVE_FIRST.name) ?: UncachedBookOpenMode.INSTANT_ACTIVE_FIRST.name) } catch (_: Exception) { UncachedBookOpenMode.INSTANT_ACTIVE_FIRST },
+            inlineImageWidthPercent = prefs.getInt("inline_image_width_percent", 100),
             showFloatingAssistant = prefs.getBoolean("show_floating_assistant", true),
             orbSize = try { OrbSize.valueOf(prefs.getString("orb_size", OrbSize.NANO.name) ?: OrbSize.NANO.name) } catch (_: Exception) { OrbSize.NANO },
             orbMenuSize = try { OrbMenuSize.valueOf(prefs.getString("orb_menu_size", OrbMenuSize.MEDIUM.name) ?: OrbMenuSize.MEDIUM.name) } catch (_: Exception) { OrbMenuSize.MEDIUM },
@@ -476,7 +480,7 @@ class BookRepository private constructor(private val context: Context) {
             if (file.exists() && file.length() > 0L) {
                 try {
                     file.inputStream().use { stream ->
-                        val parsed = EpubParser.parseEpub(stream, file.name, context)
+                        val parsed = EpubParser.parseEpub(stream, file.name, context, bookId)
                         if (parsed.chapters.isNotEmpty()) {
                             dbHelper.saveChaptersForBook(bookId, parsed.chapters)
                             chapterCache.put(bookId, parsed.chapters)
@@ -577,6 +581,23 @@ class BookRepository private constructor(private val context: Context) {
             val loadedThemes = try { dbHelper.getAllCustomThemes() } catch (_: Exception) { emptyList() }
             val loadedTextures = try { dbHelper.getAllCustomTextures() } catch (_: Exception) { emptyList() }
             val loadedEndpoints = try { dbHelper.getAllCustomEndpoints() } catch (_: Exception) { emptyList() }
+
+            val currentParserRev = 37
+            val lastParserRev = prefs.getInt("epub_parser_rev", 0)
+            if (lastParserRev < currentParserRev) {
+                _startupStatusMessage.value = "Updating book chapters to latest rendering format…"
+                for (b in loadedBooks) {
+                    if (b.filePath.isNotBlank() && File(b.filePath).exists()) {
+                        try {
+                            reparseBook(b.id)
+                        } catch (e: Exception) {
+                            io.github.tasmirz.lumina.util.LuminaLog.w("BookRepository", "Failed reparsing ${b.title}", e)
+                        }
+                    }
+                }
+                prefs.edit().putInt("epub_parser_rev", currentParserRev).apply()
+                loadedBooks = loadAllBooks()
+            }
 
             _books.value = loadedBooks
             _bookmarks.value = loadedBookmarks
@@ -699,6 +720,14 @@ class BookRepository private constructor(private val context: Context) {
         updateReaderSettings { it.copy(verticalPadding = padding) }
         prefs.edit().putInt("vertical_padding", padding).apply()
         persistSettingToDb("vertical_padding", padding.toString())
+    }
+
+    fun setInlineImageWidthPercent(pct: Int) {
+        val clamped = pct.coerceIn(40, 100)
+        _inlineImageWidthPercent.value = clamped
+        updateReaderSettings { it.copy(inlineImageWidthPercent = clamped) }
+        prefs.edit().putInt("inline_image_width_percent", clamped).apply()
+        persistSettingToDb("inline_image_width_percent", clamped.toString())
     }
 
     fun updatePagedSafeLinesToRemove(lines: Int) {
@@ -1956,8 +1985,10 @@ class BookRepository private constructor(private val context: Context) {
         )
         val updated = listOf(mark) + existingWithout
         _bookmarks.value = updated
-        dbHelper.insertBookmark(mark)
-        saveBookmarks(updated)
+        repoScope.launch(Dispatchers.IO) {
+            dbHelper.insertBookmark(mark)
+            saveBookmarks(updated)
+        }
     }
 
     fun updateBookmark(bookmark: Bookmark) {
@@ -2264,12 +2295,34 @@ class BookRepository private constructor(private val context: Context) {
                 ?: dbHelper.getAllBooks().find { isDuplicateBook(it, parsedBook) }
 
             if (existing != null && existing.filePath.isNotBlank() && File(existing.filePath).exists()) {
-                // Book is already present in library with a valid file - do not duplicate!
+                // Book is already present in library with a valid file - update/re-parse chapters & file while preserving reading progress!
+                val destFile = File(existing.filePath)
+                tempFile.copyTo(destFile, overwrite = true)
                 tempFile.delete()
+
+                val updatedParsed = destFile.inputStream().use { stream ->
+                    EpubParser.parseEpub(stream, cleanName, context, existing.id)
+                }
+                val bookToSave = updatedParsed.copy(
+                    id = existing.id,
+                    filePath = destFile.absolutePath,
+                    fileSize = destFile.length(),
+                    isDownloaded = false,
+                    progress = existing.progress,
+                    currentChapter = existing.currentChapter,
+                    currentPage = existing.currentPage,
+                    scrollPos = existing.scrollPos,
+                    lastRead = existing.lastRead,
+                    coverUrl = if (updatedParsed.coverUrl.isNotBlank()) updatedParsed.coverUrl else existing.coverUrl
+                )
+                PageCache.invalidate(existing.id, dbHelper)
+                chapterCache.remove(existing.id)
+                dbHelper.saveChaptersForBook(existing.id, bookToSave.chapters)
+                addBook(bookToSave)
                 withContext(Dispatchers.Main) {
                     setActiveBook(existing.id)
                 }
-                return@withContext existing
+                return@withContext bookToSave
             }
 
             // Move temp file to persistent EPUB directory
@@ -2289,6 +2342,37 @@ class BookRepository private constructor(private val context: Context) {
             e.printStackTrace()
             null
         }
+    }
+
+    /**
+     * Re-parses an existing book from its local file, refreshing chapters, MathML, and inline images
+     * while preserving reading progress and bookmarks.
+     */
+    fun reparseBook(bookId: String): Book? {
+        val book = _books.value.find { it.id == bookId } ?: dbHelper.getAllBooks().find { it.id == bookId } ?: return null
+        if (book.filePath.isBlank()) return null
+        val file = File(book.filePath)
+        if (!file.exists() || file.length() == 0L) return null
+
+        val parsed = file.inputStream().use { stream ->
+            EpubParser.parseEpub(stream, file.name, context, book.id)
+        }
+        if (parsed.chapters.isEmpty()) return null
+
+        val updatedBook = book.copy(
+            title = parsed.title.ifBlank { book.title },
+            author = if (parsed.author != "Unknown Author") parsed.author else book.author,
+            coverUrl = parsed.coverUrl.ifBlank { book.coverUrl },
+            chapters = parsed.chapters,
+            language = parsed.language.ifBlank { book.language },
+            fileSize = file.length()
+        )
+
+        PageCache.invalidate(bookId, dbHelper)
+        chapterCache.remove(bookId)
+        dbHelper.saveChaptersForBook(bookId, parsed.chapters)
+        addBook(updatedBook)
+        return updatedBook
     }
 
     fun removeBook(bookId: String) {

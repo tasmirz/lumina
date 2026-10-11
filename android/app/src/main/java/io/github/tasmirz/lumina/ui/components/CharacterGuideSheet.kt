@@ -105,7 +105,7 @@ fun CharacterGuideSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight(0.92f)
+                .fillMaxHeight()
                 .padding(horizontal = 20.dp)
         ) {
             // Header
@@ -119,7 +119,7 @@ fun CharacterGuideSheet(
                         text = "Characters & World Lore",
                         fontFamily = FontFamily.Serif,
                         fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.Normal,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
@@ -386,7 +386,7 @@ fun CharacterGuideSheet(
                                     text = "CHARACTERS (${filteredCharacters.size})",
                                     fontFamily = FontFamily.SansSerif,
                                     fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
+                                    fontWeight = FontWeight.Normal,
                                     color = MaterialTheme.colorScheme.secondary,
                                     modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
                                 )
@@ -419,7 +419,7 @@ fun CharacterGuideSheet(
                                                 text = character.name,
                                                 fontFamily = FontFamily.Serif,
                                                 fontSize = 16.sp,
-                                                fontWeight = FontWeight.Bold,
+                                                fontWeight = FontWeight.Normal,
                                                 color = MaterialTheme.colorScheme.onSurface
                                             )
                                             Spacer(modifier = Modifier.width(8.dp))
@@ -431,7 +431,7 @@ fun CharacterGuideSheet(
                                                     text = character.role,
                                                     fontFamily = FontFamily.SansSerif,
                                                     fontSize = 11.sp,
-                                                    fontWeight = FontWeight.Medium,
+                                                    fontWeight = FontWeight.Normal,
                                                     color = MaterialTheme.colorScheme.secondary,
                                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                                 )
@@ -491,7 +491,7 @@ fun CharacterGuideSheet(
                                             Text(
                                                 text = "Key Events & Timeline:",
                                                 fontFamily = FontFamily.SansSerif,
-                                                fontWeight = FontWeight.SemiBold,
+                                                fontWeight = FontWeight.Normal,
                                                 fontSize = 12.sp,
                                                 color = MaterialTheme.colorScheme.secondary
                                             )
@@ -518,7 +518,7 @@ fun CharacterGuideSheet(
                                     text = "WORLD LORE & CONCEPTS (${filteredLore.size})",
                                     fontFamily = FontFamily.SansSerif,
                                     fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
+                                    fontWeight = FontWeight.Normal,
                                     color = MaterialTheme.colorScheme.tertiary,
                                     modifier = Modifier.padding(top = 8.dp, bottom = 2.dp)
                                 )
@@ -551,7 +551,7 @@ fun CharacterGuideSheet(
                                                 text = lore.title,
                                                 fontFamily = FontFamily.Serif,
                                                 fontSize = 16.sp,
-                                                fontWeight = FontWeight.Bold,
+                                                fontWeight = FontWeight.Normal,
                                                 color = MaterialTheme.colorScheme.onSurface
                                             )
                                             Spacer(modifier = Modifier.width(8.dp))
@@ -563,7 +563,7 @@ fun CharacterGuideSheet(
                                                     text = lore.category.uppercase(),
                                                     fontFamily = FontFamily.SansSerif,
                                                     fontSize = 10.sp,
-                                                    fontWeight = FontWeight.SemiBold,
+                                                    fontWeight = FontWeight.Normal,
                                                     color = MaterialTheme.colorScheme.tertiary,
                                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                                 )
@@ -612,7 +612,7 @@ fun CharacterGuideSheet(
                                             Text(
                                                 text = "Key Facts:",
                                                 fontFamily = FontFamily.SansSerif,
-                                                fontWeight = FontWeight.SemiBold,
+                                                fontWeight = FontWeight.Normal,
                                                 fontSize = 12.sp,
                                                 color = MaterialTheme.colorScheme.tertiary
                                             )

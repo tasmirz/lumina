@@ -442,7 +442,7 @@ class PageCacheTest {
             screenWidthDp = 392,
             screenHeightDp = 828
         )
-        assertTrue("Tall phone max lines in range 25..30, got: ${tallMetrics.maxLines}", tallMetrics.maxLines in 25..30)
+        assertTrue("Tall phone max lines in range 24..30, got: ${tallMetrics.maxLines}", tallMetrics.maxLines in 24..30)
         assertTrue("Tall phone chars per line in range 46..54", tallMetrics.charsPerLine in 46..54)
 
         // Large 10-inch Tablet (800x1280 dp)

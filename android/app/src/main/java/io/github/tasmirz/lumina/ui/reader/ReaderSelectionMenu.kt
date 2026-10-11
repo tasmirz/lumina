@@ -105,7 +105,7 @@ fun ReaderSelectionMenu(
                             Text(
                                 text = "Bookmark & Highlight",
                                 fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
+                                fontWeight = FontWeight.Normal,
                                 color = MaterialTheme.colorScheme.primary
                             )
                             Row(

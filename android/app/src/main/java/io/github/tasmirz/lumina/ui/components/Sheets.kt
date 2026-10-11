@@ -112,7 +112,7 @@ fun DictionarySheet(
                     text = definition.word,
                     fontFamily = FontFamily.Serif,
                     fontSize = 28.sp,
-                    fontWeight = FontWeight.Medium,
+                    fontWeight = FontWeight.Normal,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 if (definition.phonetic.isNotBlank()) {
@@ -227,7 +227,7 @@ fun BookmarksSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false),
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = MaterialTheme.colorScheme.surface,
         contentColor = MaterialTheme.colorScheme.onSurface
     ) {
@@ -246,7 +246,7 @@ fun BookmarksSheet(
                     text = "Highlights & Bookmarks (${filteredBookmarks.size}${if (searchQuery.isNotBlank() || selectedFilter != "ALL") " of ${bookmarks.size}" else ""})",
                     fontFamily = FontFamily.SansSerif,
                     fontSize = 16.sp,
-                    fontWeight = FontWeight.Medium
+                    fontWeight = FontWeight.Normal
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (onShare != null && bookmarks.isNotEmpty()) {
@@ -387,7 +387,7 @@ fun BookmarksSheet(
                                             text = bookTitle,
                                             fontFamily = FontFamily.SansSerif,
                                             fontSize = 13.sp,
-                                            fontWeight = FontWeight.SemiBold,
+                                            fontWeight = FontWeight.Normal,
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
                                     }
@@ -399,7 +399,7 @@ fun BookmarksSheet(
                                             Text(
                                                 text = "${bookMarks.size}",
                                                 fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold,
+                                                fontWeight = FontWeight.Normal,
                                                 color = MaterialTheme.colorScheme.primary,
                                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                                             )
@@ -465,7 +465,7 @@ fun BookmarksSheet(
                                                                 text = "Last Read",
                                                                 fontFamily = FontFamily.SansSerif,
                                                                 fontSize = 10.sp,
-                                                                fontWeight = FontWeight.Bold,
+                                                                fontWeight = FontWeight.Normal,
                                                                 color = MaterialTheme.colorScheme.onTertiaryContainer
                                                             )
                                                         }
@@ -476,7 +476,7 @@ fun BookmarksSheet(
                                                     text = locationText,
                                                     fontFamily = FontFamily.SansSerif,
                                                     fontSize = 12.sp,
-                                                    fontWeight = FontWeight.Medium,
+                                                    fontWeight = FontWeight.Normal,
                                                     color = MaterialTheme.colorScheme.secondary
                                                 )
                                             }
@@ -534,7 +534,7 @@ fun BookmarksSheet(
                                                         text = mark.note,
                                                         fontFamily = FontFamily.SansSerif,
                                                         fontSize = 12.sp,
-                                                        fontWeight = FontWeight.SemiBold,
+                                                        fontWeight = FontWeight.Normal,
                                                         color = MaterialTheme.colorScheme.primary
                                                     )
                                                 }
@@ -605,7 +605,7 @@ fun AppearanceSheet(
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false),
         containerColor = MaterialTheme.colorScheme.surface,
         contentColor = MaterialTheme.colorScheme.onSurface
     ) {
@@ -625,7 +625,7 @@ fun AppearanceSheet(
                     text = "Reading Settings",
                     fontFamily = FontFamily.SansSerif,
                     fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium
+                    fontWeight = FontWeight.Normal
                 )
                 IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
                     Icon(Icons.Default.Close, contentDescription = "Close", modifier = Modifier.size(18.dp))
@@ -646,7 +646,7 @@ fun AppearanceSheet(
                     text = "Reading Mode",
                     fontFamily = FontFamily.SansSerif,
                     fontSize = 12.5.sp,
-                    fontWeight = FontWeight.Medium
+                    fontWeight = FontWeight.Normal
                 )
                 Row(
                     modifier = Modifier
@@ -683,7 +683,7 @@ fun AppearanceSheet(
                                 Text(
                                     text = label,
                                     fontSize = 10.5.sp,
-                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                    fontWeight = FontWeight.Normal,
                                     color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
@@ -703,7 +703,7 @@ fun AppearanceSheet(
                     text = "Typeface",
                     fontFamily = FontFamily.SansSerif,
                     fontSize = 12.5.sp,
-                    fontWeight = FontWeight.Medium,
+                    fontWeight = FontWeight.Normal,
                     modifier = Modifier.width(sectionLabelWidth)
                 )
                 Row(
@@ -733,7 +733,7 @@ fun AppearanceSheet(
                                     text = mode.displayName,
                                     fontFamily = mode.toFontFamily(),
                                     fontSize = 10.5.sp,
-                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                    fontWeight = FontWeight.Normal,
                                     color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
@@ -754,7 +754,7 @@ fun AppearanceSheet(
                     text = "Color Theme",
                     fontFamily = FontFamily.SansSerif,
                     fontSize = 12.5.sp,
-                    fontWeight = FontWeight.Medium
+                    fontWeight = FontWeight.Normal
                 )
                 Row(
                     modifier = Modifier
@@ -791,7 +791,7 @@ fun AppearanceSheet(
                                 Text(
                                     text = label,
                                     fontSize = 10.5.sp,
-                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                    fontWeight = FontWeight.Normal,
                                     color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
@@ -853,7 +853,7 @@ fun AppearanceSheet(
                                 text = family.displayName,
                                 fontSize = 11.5.sp,
                                 maxLines = 1,
-                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                fontWeight = FontWeight.Normal,
                                 color = textPreview
                             )
                         }
@@ -918,7 +918,7 @@ fun AppearanceSheet(
                     text = "Floating AI Assistant Orb",
                     fontFamily = FontFamily.SansSerif,
                     fontSize = 12.5.sp,
-                    fontWeight = FontWeight.Medium,
+                    fontWeight = FontWeight.Normal,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Switch(
@@ -970,7 +970,7 @@ fun AppearanceSheet(
                         Text(
                             text = "Open Advanced Settings",
                             fontFamily = FontFamily.SansSerif,
-                            fontWeight = FontWeight.Medium,
+                            fontWeight = FontWeight.Normal,
                             fontSize = 13.5.sp,
                             maxLines = 1,
                             color = MaterialTheme.colorScheme.onSurface
@@ -1019,7 +1019,7 @@ fun TableOfContentsSheet(
                     text = "Table of Contents",
                     fontFamily = FontFamily.SansSerif,
                     fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
+                    fontWeight = FontWeight.Normal,
                     letterSpacing = 1.sp,
                     color = MaterialTheme.colorScheme.secondary
                 )
@@ -1031,10 +1031,10 @@ fun TableOfContentsSheet(
             Spacer(modifier = Modifier.height(4.dp))
 
             Text(
-                text = bookTitle,
+                text = io.github.tasmirz.lumina.ui.reader.sanitizeDisplayTitle(bookTitle),
                 fontFamily = FontFamily.Serif,
                 fontSize = 20.sp,
-                fontWeight = FontWeight.Medium,
+                fontWeight = FontWeight.Normal,
                 color = MaterialTheme.colorScheme.onSurface
             )
             Text(
@@ -1120,7 +1120,7 @@ fun TableOfContentsSheet(
                 state = listState,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 440.dp),
+                    .weight(1f, fill = false),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(
@@ -1155,10 +1155,10 @@ fun TableOfContentsSheet(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = chapter.title,
+                                    text = io.github.tasmirz.lumina.ui.reader.sanitizeDisplayTitle(chapter.title),
                                     fontFamily = FontFamily.Serif,
                                     fontSize = 15.sp,
-                                    fontWeight = if (isCurrent) FontWeight.Medium else FontWeight.Normal,
+                                    fontWeight = FontWeight.Normal,
                                     color = if (isCurrent) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f)
                                 )
                                 if (chapter.subtitle.isNotBlank()) {
@@ -1186,7 +1186,7 @@ fun TableOfContentsSheet(
                                             text = "Reading",
                                             fontFamily = FontFamily.SansSerif,
                                             fontSize = 9.sp,
-                                            fontWeight = FontWeight.Medium,
+                                            fontWeight = FontWeight.Normal,
                                             color = MaterialTheme.colorScheme.surface,
                                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                         )
@@ -1221,7 +1221,7 @@ fun BookContextMenuSheet(
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false),
         containerColor = MaterialTheme.colorScheme.surface,
         contentColor = MaterialTheme.colorScheme.onSurface
     ) {
@@ -1253,7 +1253,7 @@ fun BookContextMenuSheet(
                         text = book.title,
                         fontFamily = FontFamily.Serif,
                         fontSize = 17.sp,
-                        fontWeight = FontWeight.Medium,
+                        fontWeight = FontWeight.Normal,
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 2
                     )
@@ -1386,7 +1386,7 @@ fun BookContextMenuSheet(
                         text = "Delete Book from Library",
                         fontFamily = FontFamily.SansSerif,
                         fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium,
+                        fontWeight = FontWeight.Normal,
                         color = MaterialTheme.colorScheme.error
                     )
                 }
@@ -1597,7 +1597,7 @@ fun TexturePreviewCard(
                 text = label,
                 fontSize = 11.5.sp,
                 maxLines = 1,
-                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                fontWeight = FontWeight.Normal,
                 color = textColor
             )
         }

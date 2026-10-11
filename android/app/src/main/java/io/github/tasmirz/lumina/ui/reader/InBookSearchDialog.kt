@@ -19,8 +19,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -46,14 +52,37 @@ fun InBookSearchDialog(
     repository: BookRepository?,
     onDismiss: () -> Unit,
     onJumpToMatch: (SceneMatch) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    searchQuery: String = "",
+    onSearchQueryChange: ((String) -> Unit)? = null,
+    onSearchResultsUpdate: ((List<SceneMatch>, Int) -> Unit)? = null
 ) {
     val context = LocalContext.current
-    var inBookSearchQuery by rememberSaveable { mutableStateOf("") }
+    var inBookSearchQuery by rememberSaveable { mutableStateOf(searchQuery) }
     var inBookSearchMode by rememberSaveable { mutableStateOf(InBookSearchMode.PLAIN) }
     var inBookSearchResults by remember { mutableStateOf<List<SceneMatch>>(emptyList()) }
     var inBookCurrentMatchIndex by rememberSaveable { mutableIntStateOf(0) }
     var isSearchingInBook by remember { mutableStateOf(false) }
+    val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+
+    LaunchedEffect(showDialog) {
+        if (showDialog) {
+            if (searchQuery.isNotEmpty() && inBookSearchQuery != searchQuery) {
+                inBookSearchQuery = searchQuery
+            }
+            delay(150)
+            runCatching { focusRequester.requestFocus() }
+        } else {
+            keyboardController?.hide()
+        }
+    }
+
+    LaunchedEffect(searchQuery) {
+        if (searchQuery != inBookSearchQuery) {
+            inBookSearchQuery = searchQuery
+        }
+    }
 
     LaunchedEffect(inBookSearchQuery, inBookSearchMode) {
         val q = inBookSearchQuery.trim()
@@ -61,6 +90,7 @@ fun InBookSearchDialog(
             inBookSearchResults = emptyList()
             inBookCurrentMatchIndex = 0
             isSearchingInBook = false
+            onSearchResultsUpdate?.invoke(emptyList(), 0)
             return@LaunchedEffect
         }
         isSearchingInBook = true
@@ -179,22 +209,35 @@ fun InBookSearchDialog(
         inBookSearchResults = results
         inBookCurrentMatchIndex = 0
         isSearchingInBook = false
+        onSearchResultsUpdate?.invoke(results, 0)
         if (results.isNotEmpty()) {
             onJumpToMatch(results[0])
         }
     }
 
-    val topCutout = WindowInsets.displayCutout.asPaddingValues().calculateTopPadding()
+    val configuration = LocalConfiguration.current
+    val layoutDirection = LocalLayoutDirection.current
+    val cutoutInsets = WindowInsets.displayCutout.asPaddingValues()
+    val topCutout = cutoutInsets.calculateTopPadding()
     val topStatusBar = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-    val topSafeInset = maxOf(topCutout, topStatusBar, 14.dp)
+    // Safe top inset to avoid camera punch-hole collision even in edge-to-edge / fullscreen mode
+    val topSafeInset = maxOf(topCutout, topStatusBar, 36.dp) + 6.dp
+    val startCutout = cutoutInsets.calculateStartPadding(layoutDirection)
+    val endCutout = cutoutInsets.calculateEndPadding(layoutDirection)
+    val horizontalSafeInset = maxOf(startCutout, endCutout, 10.dp)
+    val imeBottom = WindowInsets.ime.asPaddingValues().calculateBottomPadding()
 
     AnimatedVisibility(
         visible = showDialog,
         enter = slideInVertically { -it } + fadeIn(),
         exit = slideOutVertically { -it } + fadeOut(),
         modifier = modifier
-            .padding(top = topSafeInset)
-            .padding(horizontal = 10.dp, vertical = 6.dp)
+            .padding(
+                top = topSafeInset,
+                start = horizontalSafeInset,
+                end = horizontalSafeInset,
+                bottom = 6.dp
+            )
             .fillMaxWidth()
     ) {
         Surface(
@@ -210,20 +253,20 @@ fun InBookSearchDialog(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(50.dp)
-                        .padding(horizontal = 6.dp),
+                        .heightIn(min = 48.dp, max = 52.dp)
+                        .padding(start = 8.dp, end = 6.dp, top = 2.dp, bottom = 2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // 1. Mode Toggle Button
                     Surface(
-                        shape = RoundedCornerShape(10.dp),
+                        shape = RoundedCornerShape(8.dp),
                         color = if (inBookSearchMode == InBookSearchMode.SEMANTIC) {
                             MaterialTheme.colorScheme.primaryContainer
                         } else {
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
                         },
                         modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
+                            .clip(RoundedCornerShape(8.dp))
                             .clickable {
                                 inBookSearchMode = if (inBookSearchMode == InBookSearchMode.PLAIN) {
                                     InBookSearchMode.SEMANTIC
@@ -234,27 +277,27 @@ fun InBookSearchDialog(
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 5.dp)
                         ) {
                             Icon(
                                 imageVector = if (inBookSearchMode == InBookSearchMode.SEMANTIC) {
                                     Icons.Default.AutoAwesome
                                 } else {
-                                    Icons.Default.FindInPage
+                                    Icons.Default.Search
                                 },
-                                contentDescription = if (inBookSearchMode == InBookSearchMode.SEMANTIC) "Semantic Search (AI)" else "Plain Text Search",
+                                contentDescription = if (inBookSearchMode == InBookSearchMode.SEMANTIC) "Semantic Search (AI)" else "Text Search",
                                 tint = if (inBookSearchMode == InBookSearchMode.SEMANTIC) {
                                     MaterialTheme.colorScheme.onPrimaryContainer
                                 } else {
                                     MaterialTheme.colorScheme.onSurfaceVariant
                                 },
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(15.dp)
                             )
-                            Spacer(modifier = Modifier.width(4.dp))
+                            Spacer(modifier = Modifier.width(3.dp))
                             Text(
                                 text = if (inBookSearchMode == InBookSearchMode.SEMANTIC) "AI" else "Text",
                                 fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
+                                fontWeight = FontWeight.Normal,
                                 color = if (inBookSearchMode == InBookSearchMode.SEMANTIC) {
                                     MaterialTheme.colorScheme.onPrimaryContainer
                                 } else {
@@ -270,25 +313,30 @@ fun InBookSearchDialog(
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .padding(horizontal = 4.dp),
+                            .padding(end = 4.dp),
                         contentAlignment = Alignment.CenterStart
                     ) {
                         if (inBookSearchQuery.isEmpty()) {
                             Text(
-                                text = if (inBookSearchMode == InBookSearchMode.PLAIN) "Find in book..." else "Search scenes & themes...",
+                                text = if (inBookSearchMode == InBookSearchMode.PLAIN) "Find in book..." else "Search themes...",
                                 fontSize = 13.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                fontWeight = FontWeight.Light,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
                         BasicTextField(
                             value = inBookSearchQuery,
-                            onValueChange = { inBookSearchQuery = it },
+                            onValueChange = {
+                                inBookSearchQuery = it
+                                onSearchQueryChange?.invoke(it)
+                            },
                             singleLine = true,
                             maxLines = 1,
                             textStyle = TextStyle(
                                 fontSize = 13.5.sp,
+                                fontWeight = FontWeight.Normal,
                                 color = MaterialTheme.colorScheme.onSurface,
                                 fontFamily = FontFamily.SansSerif
                             ),
@@ -300,6 +348,7 @@ fun InBookSearchDialog(
                                 onNext = {
                                     if (inBookSearchResults.isNotEmpty()) {
                                         inBookCurrentMatchIndex = (inBookCurrentMatchIndex + 1) % inBookSearchResults.size
+                                        onSearchResultsUpdate?.invoke(inBookSearchResults, inBookCurrentMatchIndex)
                                         onJumpToMatch(inBookSearchResults[inBookCurrentMatchIndex])
                                     }
                                 },
@@ -309,56 +358,65 @@ fun InBookSearchDialog(
                                     }
                                 }
                             ),
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusRequester(focusRequester)
                         )
                     }
 
                     // 3. Clear button
                     if (inBookSearchQuery.isNotEmpty()) {
                         IconButton(
-                            onClick = { inBookSearchQuery = "" },
-                            modifier = Modifier.size(30.dp)
+                            onClick = {
+                                inBookSearchQuery = ""
+                                inBookSearchResults = emptyList()
+                                inBookCurrentMatchIndex = 0
+                                onSearchQueryChange?.invoke("")
+                                onSearchResultsUpdate?.invoke(emptyList(), 0)
+                            },
+                            modifier = Modifier.size(26.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Clear,
                                 contentDescription = "Clear",
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(15.dp)
+                                modifier = Modifier.size(14.dp)
                             )
                         }
                     }
 
                     // 4. Regular / Plain Search controls
-                    if (inBookSearchMode == InBookSearchMode.PLAIN) {
-                        if (inBookSearchQuery.trim().length >= 2) {
-                            Text(
-                                text = if (inBookSearchResults.isEmpty()) {
-                                    if (isSearchingInBook) "..." else "0/0"
-                                } else {
-                                    "${(inBookCurrentMatchIndex + 1).coerceAtMost(inBookSearchResults.size)}/${inBookSearchResults.size}"
-                                },
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 4.dp)
-                            )
+                    if (inBookSearchMode == InBookSearchMode.PLAIN && inBookSearchQuery.trim().length >= 2) {
+                        val counterText = if (inBookSearchResults.isEmpty()) {
+                            if (isSearchingInBook) "..." else "0/0"
+                        } else {
+                            "${(inBookCurrentMatchIndex + 1).coerceAtMost(inBookSearchResults.size)}/${inBookSearchResults.size}"
                         }
+                        Text(
+                            text = counterText,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Normal,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 3.dp),
+                            maxLines = 1
+                        )
 
                         IconButton(
                             onClick = {
                                 if (inBookSearchResults.isNotEmpty()) {
                                     inBookCurrentMatchIndex = if (inBookCurrentMatchIndex <= 0) inBookSearchResults.size - 1 else inBookCurrentMatchIndex - 1
+                                    onSearchResultsUpdate?.invoke(inBookSearchResults, inBookCurrentMatchIndex)
                                     onJumpToMatch(inBookSearchResults[inBookCurrentMatchIndex])
                                 }
                             },
                             enabled = inBookSearchResults.isNotEmpty(),
-                            modifier = Modifier.size(32.dp)
+                            modifier = Modifier.size(26.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.KeyboardArrowUp,
                                 contentDescription = "Previous Match",
                                 tint = if (inBookSearchResults.isNotEmpty()) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f),
-                                modifier = Modifier.size(20.dp)
+                                modifier = Modifier.size(18.dp)
                             )
                         }
 
@@ -366,17 +424,18 @@ fun InBookSearchDialog(
                             onClick = {
                                 if (inBookSearchResults.isNotEmpty()) {
                                     inBookCurrentMatchIndex = (inBookCurrentMatchIndex + 1) % inBookSearchResults.size
+                                    onSearchResultsUpdate?.invoke(inBookSearchResults, inBookCurrentMatchIndex)
                                     onJumpToMatch(inBookSearchResults[inBookCurrentMatchIndex])
                                 }
                             },
                             enabled = inBookSearchResults.isNotEmpty(),
-                            modifier = Modifier.size(32.dp)
+                            modifier = Modifier.size(26.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.KeyboardArrowDown,
                                 contentDescription = "Next Match",
                                 tint = if (inBookSearchResults.isNotEmpty()) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f),
-                                modifier = Modifier.size(20.dp)
+                                modifier = Modifier.size(18.dp)
                             )
                         }
                     }
@@ -387,15 +446,17 @@ fun InBookSearchDialog(
                             inBookSearchQuery = ""
                             inBookSearchResults = emptyList()
                             inBookCurrentMatchIndex = 0
+                            onSearchQueryChange?.invoke("")
+                            onSearchResultsUpdate?.invoke(emptyList(), 0)
                             onDismiss()
                         },
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier.size(28.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
                             contentDescription = "Close Search",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(16.dp)
                         )
                     }
                 }
@@ -410,17 +471,24 @@ fun InBookSearchDialog(
                         LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     }
 
+                    val screenHeight = configuration.screenHeightDp.dp
+                    val maxListHeight = if (imeBottom > 0.dp) {
+                        (screenHeight * 0.35f).coerceIn(160.dp, 260.dp)
+                    } else {
+                        (screenHeight * 0.5f).coerceIn(240.dp, 380.dp)
+                    }
+
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(max = 380.dp)
+                            .heightIn(max = maxListHeight)
                             .padding(horizontal = 12.dp, vertical = 8.dp)
                     ) {
                         if (inBookSearchQuery.trim().length >= 2 && !isSearchingInBook) {
                             Text(
                                 text = "${inBookSearchResults.size} scenes found",
                                 fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium,
+                                fontWeight = FontWeight.Normal,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(bottom = 6.dp)
                             )
@@ -436,6 +504,7 @@ fun InBookSearchDialog(
                                 Text(
                                     text = "No matching scenes or concepts found",
                                     fontSize = 12.sp,
+                                    fontWeight = FontWeight.Light,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
@@ -464,13 +533,14 @@ fun InBookSearchDialog(
                                         Column(modifier = Modifier.padding(10.dp)) {
                                             Text(
                                                 text = match.chapterTitle,
-                                                fontWeight = FontWeight.SemiBold,
+                                                fontWeight = FontWeight.Normal,
                                                 fontSize = 12.sp,
                                                 color = MaterialTheme.colorScheme.primary
                                             )
                                             Spacer(modifier = Modifier.height(3.dp))
                                             Text(
                                                 text = match.snippet,
+                                                fontWeight = FontWeight.Light,
                                                 fontSize = 11.sp,
                                                 lineHeight = 15.sp,
                                                 color = MaterialTheme.colorScheme.onSurface

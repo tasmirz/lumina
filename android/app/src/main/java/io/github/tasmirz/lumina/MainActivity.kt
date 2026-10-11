@@ -16,6 +16,8 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import io.github.tasmirz.lumina.data.LuminaDownloadService
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -253,18 +255,27 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            var isImportingBook by rememberSaveable { mutableStateOf(false) }
+
             // Handle incoming EPUB intent (open from file manager, browser, share sheet)
             LaunchedEffect(pendingImportUri) {
                 val uri = pendingImportUri
                 if (uri != null) {
-                    val importedBook = bookRepository.importEpubFromUri(uri)
-                    if (importedBook != null) {
-                        currentTab = ScreenTab.READER
-                        Toast.makeText(this@MainActivity, "Added \"${importedBook.title}\" to Library", Toast.LENGTH_SHORT).show()
-                    } else {
-                        Toast.makeText(this@MainActivity, "Failed to parse EPUB file", Toast.LENGTH_SHORT).show()
+                    isImportingBook = true
+                    try {
+                        val importedBook = withContext(Dispatchers.IO) {
+                            bookRepository.importEpubFromUri(uri)
+                        }
+                        if (importedBook != null) {
+                            currentTab = ScreenTab.READER
+                            Toast.makeText(this@MainActivity, "Added \"${importedBook.title}\" to Library", Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(this@MainActivity, "Failed to parse EPUB file", Toast.LENGTH_SHORT).show()
+                        }
+                    } finally {
+                        isImportingBook = false
+                        pendingImportUri = null
                     }
-                    pendingImportUri = null
                 }
             }
 
@@ -274,18 +285,31 @@ class MainActivity : ComponentActivity() {
             ) { uri: Uri? ->
                 if (uri != null) {
                     coroutineScope.launch {
-                        val importedBook = bookRepository.importEpubFromUri(uri)
-                        if (importedBook != null) {
-                            currentTab = ScreenTab.READER
-                            Toast.makeText(this@MainActivity, "Added \"${importedBook.title}\" to Library", Toast.LENGTH_SHORT).show()
-                        } else {
-                            Toast.makeText(this@MainActivity, "Failed to parse EPUB file", Toast.LENGTH_SHORT).show()
+                        isImportingBook = true
+                        try {
+                            val importedBook = withContext(Dispatchers.IO) {
+                                bookRepository.importEpubFromUri(uri)
+                            }
+                            if (importedBook != null) {
+                                currentTab = ScreenTab.READER
+                                Toast.makeText(this@MainActivity, "Added \"${importedBook.title}\" to Library", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(this@MainActivity, "Failed to parse EPUB file", Toast.LENGTH_SHORT).show()
+                            }
+                        } finally {
+                            isImportingBook = false
                         }
                     }
                 }
             }
 
-            LuminaReaderTheme(themeFamily = themeFamily, themeVariant = themeVariant) {
+            LuminaReaderTheme(
+                themeFamily = themeFamily,
+                themeVariant = themeVariant,
+                customBgColor = readerSettings.customBgColor,
+                customTextColor = readerSettings.customTextColor,
+                customAccentColor = readerSettings.customAccentColor
+            ) {
                 BackHandler(enabled = showAdvancedSettingsScreen) {
                     showAdvancedSettingsScreen = false
                 }
@@ -712,6 +736,51 @@ class MainActivity : ComponentActivity() {
                                     ).show()
                                 }
                             )
+                        }
+
+                        // Import Loading Overlay Modal
+                        if (isImportingBook) {
+                            Dialog(
+                                onDismissRequest = {},
+                                properties = DialogProperties(
+                                    dismissOnBackPress = false,
+                                    dismissOnClickOutside = false
+                                )
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(16.dp),
+                                    color = MaterialTheme.colorScheme.surface,
+                                    tonalElevation = 6.dp,
+                                    modifier = Modifier
+                                        .fillMaxWidth(0.85f)
+                                        .padding(16.dp)
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(24.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                                    ) {
+                                        CircularProgressIndicator(
+                                            strokeWidth = 2.dp,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(40.dp)
+                                        )
+                                        Text(
+                                            text = "Importing Book",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Normal,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = "Reading EPUB archive and extracting chapters...",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.Light,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }

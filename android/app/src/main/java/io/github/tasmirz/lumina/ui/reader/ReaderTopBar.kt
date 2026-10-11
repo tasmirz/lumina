@@ -61,7 +61,7 @@ fun ReaderTopBar(
         val surfaceColor = if (readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL) {
             Color.Transparent
         } else {
-            MaterialTheme.colorScheme.background.copy(alpha = 0.95f)
+            MaterialTheme.colorScheme.background
         }
 
         Surface(
@@ -89,27 +89,32 @@ fun ReaderTopBar(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
+                        val displayBookTitle = sanitizeDisplayTitle(bookTitle)
+                        val displayChapterTitle = sanitizeDisplayTitle(activeChapterTitle)
+
                         Text(
-                            text = bookTitle,
+                            text = displayBookTitle,
                             fontFamily = FontFamily.Serif,
                             fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium,
+                            fontWeight = FontWeight.Normal,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             textAlign = TextAlign.Center,
                             color = MaterialTheme.colorScheme.onBackground
                         )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = activeChapterTitle,
-                            fontFamily = FontFamily.SansSerif,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Normal,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            textAlign = TextAlign.Center,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
-                        )
+                        if (!displayChapterTitle.equals(displayBookTitle, ignoreCase = true) && displayChapterTitle.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = displayChapterTitle,
+                                fontFamily = FontFamily.SansSerif,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Normal,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = TextAlign.Center,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
+                            )
+                        }
                         Spacer(modifier = Modifier.height(3.dp))
                     }
 
@@ -144,4 +149,19 @@ fun ReaderTopBar(
             }
         }
     }
+}
+
+/**
+ * Sanitizes book and chapter titles by stripping raw file extensions (.epub),
+ * converting numeric underscore delimiters (e.g. "3_ Word" -> "3: Word"),
+ * and replacing raw underscores with spaces.
+ */
+fun sanitizeDisplayTitle(title: String): String {
+    if (title.isBlank()) return title
+    return title
+        .replace("(?i)\\.epub$".toRegex(), "")
+        .replace("(\\d+)_\\s*([A-Za-z])".toRegex(), "$1: $2")
+        .replace("_+", " ")
+        .replace("\\s+".toRegex(), " ")
+        .trim()
 }
