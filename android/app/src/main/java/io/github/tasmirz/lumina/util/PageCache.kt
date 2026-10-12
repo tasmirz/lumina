@@ -88,7 +88,7 @@ object PageCache {
     }
 
     // Bumped to v55_ to calibrate inline math, table horizontal scroll, visual filters and paged bottom clearance
-    private const val CACHE_VERSION = "v55_"
+    private const val CACHE_VERSION = "v56_"
 
     data class DeviceMetrics(
         val charsPerLine: Int,
@@ -268,30 +268,37 @@ object PageCache {
     fun estimateImageLines(imageToken: String, lineHeightDp: Float): Float {
         val rawPath = imageToken.removePrefix("[IMG:").removeSuffix("]").trim()
         val cleanPath = rawPath.removePrefix("file://").replace("\\/", "/")
-        val file = java.io.File(cleanPath)
-        if (file.exists()) {
+        val decodedPath = try { java.net.URLDecoder.decode(cleanPath, "UTF-8") } catch (_: Exception) { cleanPath }
+        val file = if (java.io.File(cleanPath).exists()) java.io.File(cleanPath) else java.io.File(decodedPath)
+        if (file.exists() && file.length() > 0) {
             try {
                 val opt = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 android.graphics.BitmapFactory.decodeFile(file.absolutePath, opt)
                 if (opt.outWidth > 0 && opt.outHeight > 0) {
                     val ar = opt.outWidth.toFloat() / opt.outHeight.toFloat()
-                    if (opt.outHeight <= 140 || ar >= 2.5f) {
-                        val hDp = (opt.outHeight * 0.45f).coerceIn(24f, 56f)
-                        return (hDp / lineHeightDp).coerceIn(1.5f, 3.5f)
+                    // Single-line inline or display equations (very wide aspect ratio or small height)
+                    if (opt.outHeight <= 60 || ar >= 4.0f) {
+                        val hDp = (opt.outHeight * 0.35f).coerceIn(14f, 32f)
+                        return (hDp / lineHeightDp).coerceIn(0.9f, 1.6f)
+                    } else if (opt.outHeight <= 140 || ar >= 2.2f) {
+                        val hDp = (opt.outHeight * 0.40f).coerceIn(24f, 54f)
+                        return (hDp / lineHeightDp).coerceIn(1.4f, 2.6f)
                     } else if (opt.outHeight <= 360) {
-                        val hDp = (opt.outHeight * 0.45f).coerceIn(56f, 150f)
-                        return (hDp / lineHeightDp).coerceIn(3.5f, 8.0f)
+                        val hDp = (opt.outHeight * 0.45f).coerceIn(54f, 140f)
+                        return (hDp / lineHeightDp).coerceIn(2.6f, 6.0f)
                     } else {
-                        return 24f
+                        // Capped to max image display height in InlineReaderImage (heightIn(max = 280.dp))
+                        val hDp = 220f
+                        return (hDp / lineHeightDp).coerceIn(6.0f, 10.0f)
                     }
                 }
             } catch (_: Exception) {}
         }
         val lower = rawPath.lowercase()
         if (lower.contains("eq") || lower.contains("math") || lower.contains("formula") || lower.contains("tex")) {
-            return 2.5f
+            return 1.4f
         }
-        return 5.0f
+        return 3.0f
     }
 
     fun isDivider(text: String): Boolean {
@@ -340,23 +347,23 @@ object PageCache {
 
         // Dynamic vertical margin deduction (status bar, top bar, bottom dock, reading controls)
         val verticalMargin = if (isLandscape) {
-            72 + (verticalPaddingDp * 0.4f).toInt()
+            56 + (verticalPaddingDp * 0.3f).toInt()
         } else {
-            110 + pagedBottomClearanceDp.coerceIn(0, 100) + (verticalPaddingDp * 0.5f).toInt()
+            88 + pagedBottomClearanceDp.coerceIn(0, 100) + (verticalPaddingDp * 0.35f).toInt()
         }
 
-        // Bottom safety buffer: 2.0% in portrait, 1.5% in landscape to ensure maximum usable reading height
+        // Bottom safety buffer: 0.8% in portrait, 0.5% in landscape to ensure maximum usable reading height
         val bottomSafetyBufferDp = if (isLandscape) {
-            (screenH * 0.015f).coerceIn(4f, 16f)
+            (screenH * 0.005f).coerceIn(2f, 8f)
         } else {
-            (screenH * 0.020f).coerceIn(6f, 18f)
+            (screenH * 0.008f).coerceIn(4f, 10f)
         }
         val usableW = (screenW - horizontalMargin).coerceAtLeast(180)
         val usableH = (screenH - verticalMargin - bottomSafetyBufferDp).coerceAtLeast(140f)
 
         // Dynamic line height in dp: font size * effective line height multiplier + glyph descent/ascent
         val effectiveMultiplier = lineHeightMultiplier.coerceIn(1.1f, 2.2f)
-        val lineHeightDp = (fontSize * effectiveMultiplier * 1.08f).coerceAtLeast(14f)
+        val lineHeightDp = (fontSize * effectiveMultiplier).coerceAtLeast(14f)
 
         // Dynamic average character width in dp for serif/sans-serif book typography
         val avgCharWidthDp = (fontSize * 0.44f).coerceAtLeast(4.5f)
@@ -365,8 +372,8 @@ object PageCache {
         val rawMaxLines = (usableH / lineHeightDp).toInt().coerceIn(4, 80)
         val maxLines = (rawMaxLines - safeLinesToRemove.coerceIn(0, 10)).coerceAtLeast(2)
 
-        val headerHeightDp = if (isLandscape) 72f else 112f
-        val headerLinesCost = kotlin.math.ceil(headerHeightDp / lineHeightDp).toInt().coerceIn(if (isLandscape) 2 else 3, 7)
+        val headerHeightDp = if (isLandscape) 64f else 96f
+        val headerLinesCost = kotlin.math.ceil(headerHeightDp / lineHeightDp).toInt().coerceIn(if (isLandscape) 2 else 3, 6)
 
         // Base target characters for non-strict scroll engine (~90% density)
         val baseTargetChars = (charsPerLine * maxLines * 0.90f).toInt().coerceAtLeast(200)
@@ -727,8 +734,9 @@ object PageCache {
                             isFigureCaption(candidateHeading) ||
                             (isHeadingCandidate(candidateHeading) && candidateHeading.startsWith("Figure", ignoreCase = true))
                         )
+                        val isIntroductoryColon = candidateHeading.isNotBlank() && candidateHeading.endsWith(":") && candidateHeading.length <= 160
 
-                        if (imgLines <= 8f && totalLinesNeeded <= availableLines) {
+                        if (totalLinesNeeded <= availableLines) {
                             // Fits on current page with introducing text (equations, formulas, diagrams)
                             if (currentBatch.isNotEmpty()) {
                                 currentBatch.append("\n\n")
@@ -747,20 +755,16 @@ object PageCache {
                                 }
                             }
                             continue
-                        } else if (hasHeadingBefore) {
+                        } else if (hasHeadingBefore || isIntroductoryColon) {
+                            // Pull back the heading or introductory colon sentence so it accompanies the image/formula to the next page!
                             if (lastSep >= 0) {
                                 currentBatch.setLength(lastSep)
                             } else {
                                 currentBatch.clear()
                             }
                             flushBatch()
-                            val nextItem = queue.firstOrNull()
-                            if (nextItem != null && isFigureCaption(nextItem.text)) {
-                                queue.removeFirst()
-                                list.add(Pair(chap.title, "$candidateHeading\n\n$p\n\n${nextItem.text}"))
-                            } else {
-                                list.add(Pair(chap.title, "$candidateHeading\n\n$p"))
-                            }
+                            queue.addFirst(item)
+                            queue.addFirst(PageQueueItem(candidateHeading, isContinuation = false))
                             continue
                         } else {
                             if (currentBatch.isNotEmpty()) {
@@ -768,14 +772,28 @@ object PageCache {
                                 queue.addFirst(item)
                                 continue
                             } else {
-                                val nextItem = queue.firstOrNull()
-                                if (nextItem != null && isFigureCaption(nextItem.text)) {
-                                    queue.removeFirst()
-                                    list.add(Pair(chap.title, "$p\n\n${nextItem.text}"))
+                                // currentBatch is empty: Image starts at top of page.
+                                if (imgLines < pageLineBudget) {
+                                    currentBatch.append(p)
+                                    currentLines += imgLines
+                                    val nextItem = queue.firstOrNull()
+                                    if (nextItem != null && isFigureCaption(nextItem.text)) {
+                                        queue.removeFirst()
+                                        currentBatch.append("\n\n").append(nextItem.text)
+                                        currentLines += 1.5f + paragraphGapLines
+                                    }
+                                    continue
                                 } else {
-                                    list.add(Pair(chap.title, p))
+                                    // Oversized full-page diagram
+                                    val nextItem = queue.firstOrNull()
+                                    if (nextItem != null && isFigureCaption(nextItem.text)) {
+                                        queue.removeFirst()
+                                        list.add(Pair(chap.title, "$p\n\n${nextItem.text}"))
+                                    } else {
+                                        list.add(Pair(chap.title, p))
+                                    }
+                                    continue
                                 }
-                                continue
                             }
                         }
                     }
@@ -1050,6 +1068,20 @@ object PageCache {
                 }
 
                 flushBatch()
+
+                // Front-matter orphan consolidation: Merge trailing orphan page (< 140 chars with URL/divider/copyright) into previous page
+                val isFrontMatter = !chap.title.contains("Chapter", ignoreCase = true) &&
+                    !chap.title.contains("Part", ignoreCase = true) &&
+                    !chap.title.contains("Book", ignoreCase = true) &&
+                    !chap.title.contains("Act", ignoreCase = true)
+                if (isFrontMatter && list.size >= 2) {
+                    val lastContent = list.last().second.removePrefix("CHAPTER_START:::").removePrefix("TITLE:::").trim()
+                    if (lastContent.length < 140 && (lastContent.contains("www.") || lastContent.contains("http") || lastContent.contains("[DIVIDER]") || lastContent.contains("©") || lastContent.contains("Copyright"))) {
+                        val orphan = list.removeAt(list.size - 1)
+                        val prev = list.removeAt(list.size - 1)
+                        list.add(Pair(prev.first, prev.second + "\n\n" + orphan.second))
+                    }
+                }
             }
         } else {
             // ═════════════════════════════════════════════════════════════════

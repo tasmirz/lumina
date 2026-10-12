@@ -151,10 +151,10 @@ class PageCacheTest {
 
         // Must break into multiple pages (2 to 5 pages)
         assertTrue("Strict paged must break giant paragraph into multiple pages", strictPages.size in 2..5)
-        // No page should exceed target chars budget (up to 1100 chars in portrait)
+        // No page should exceed target chars budget (up to 1300 chars in portrait)
         for (p in strictPages) {
             val content = p.second.removePrefix("CHAPTER_START:::Giant Para::::::")
-            assertTrue("Page content length (${content.length}) must not exceed 1100 chars", content.length <= 1100)
+            assertTrue("Page content length (${content.length}) must not exceed 1300 chars", content.length <= 1300)
         }
     }
 

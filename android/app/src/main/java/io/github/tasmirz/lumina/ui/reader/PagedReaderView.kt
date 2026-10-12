@@ -356,7 +356,7 @@ fun PagedReaderView(
                         )
                 ) {
                     // Option 2: Vertically Center Short Pages
-                    val isShortUnderfilledPage = !isChapterHeaderPage && bodyText.isNotBlank() && pageText.length < 450
+                    val isShortUnderfilledPage = !isChapterHeaderPage && pageText.isNotBlank() && pageText.length < 320
                     val shouldCenter = verticallyCenterPages && readingMode == ReadingMode.PAGED && (
                         isChapterHeaderPage || isShortUnderfilledPage
                     )
