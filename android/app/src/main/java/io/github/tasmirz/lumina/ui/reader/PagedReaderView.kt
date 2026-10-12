@@ -125,7 +125,7 @@ fun PagedReaderView(
                     bottom = if (isLandscape) {
                         progressBottomInset + 20.dp + (verticalPadding * 0.25f).dp
                     } else {
-                        progressBottomInset + pagedBottomClearanceDp.coerceIn(0, 100).dp + (verticalPadding * 0.30f).dp
+                        progressBottomInset + 36.dp + pagedBottomClearanceDp.coerceIn(0, 100).dp + (verticalPadding * 0.30f).dp
                     },
                     start = effectiveStartPadding,
                     end = effectiveEndPadding

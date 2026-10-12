@@ -87,8 +87,8 @@ object PageCache {
         } catch (_: Exception) { null }
     }
 
-    // Bumped to v55_ to calibrate inline math, table horizontal scroll, visual filters and paged bottom clearance
-    private const val CACHE_VERSION = "v56_"
+    // Bumped to v58_ to calibrate slim bottom progress bar pill, last line breathing clearance, and responsive tables
+    private const val CACHE_VERSION = "v58_"
 
     data class DeviceMetrics(
         val charsPerLine: Int,
@@ -349,7 +349,7 @@ object PageCache {
         val verticalMargin = if (isLandscape) {
             56 + (verticalPaddingDp * 0.3f).toInt()
         } else {
-            88 + pagedBottomClearanceDp.coerceIn(0, 100) + (verticalPaddingDp * 0.35f).toInt()
+            104 + pagedBottomClearanceDp.coerceIn(0, 100) + (verticalPaddingDp * 0.35f).toInt()
         }
 
         // Bottom safety buffer: 0.8% in portrait, 0.5% in landscape to ensure maximum usable reading height

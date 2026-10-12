@@ -95,12 +95,12 @@ fun ReaderBottomDock(
         enter = slideInVertically { it },
         exit = slideOutVertically { it },
         modifier = modifier
-            .padding(start = 20.dp, end = 20.dp, bottom = progressBottomInset + 10.dp)
+            .padding(start = 24.dp, end = 24.dp, bottom = progressBottomInset + 6.dp)
     ) {
         Surface(
-            shape = RoundedCornerShape(20.dp),
+            shape = RoundedCornerShape(14.dp),
             color = MaterialTheme.colorScheme.surface,
-            shadowElevation = 6.dp,
+            shadowElevation = 5.dp,
             border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
             modifier = Modifier
                 .fillMaxWidth()
@@ -132,7 +132,7 @@ fun ReaderBottomDock(
             ) {
                 // Dynamic rail height: expands from 3.5.dp to 7.dp while scrubbing or long-pressing
                 val animatedRailHeight by animateDpAsState(
-                    targetValue = if (isScrubbing || isLongPressingProgress) 7.dp else 3.5.dp,
+                    targetValue = if (isScrubbing || isLongPressingProgress) 6.dp else 3.dp,
                     animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
                     label = "railHeight"
                 )
@@ -141,7 +141,7 @@ fun ReaderBottomDock(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 6.dp),
+                        .padding(horizontal = 12.dp, vertical = 2.5.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -156,17 +156,17 @@ fun ReaderBottomDock(
                     Text(
                         text = "$displayedPct%",
                         fontFamily = FontFamily.SansSerif,
-                        fontSize = 11.sp,
+                        fontSize = 10.sp,
                         fontWeight = if (isScrubbing || isLongPressingProgress) FontWeight.Normal else FontWeight.Light,
                         color = if (isScrubbing || isLongPressingProgress) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
                     )
-                    Spacer(modifier = Modifier.width(10.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
 
                     // YouTube-like seekable rail with magnetic snap to last read / saved location
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .height(28.dp)
+                            .height(18.dp)
                             .onGloballyPositioned { coordinates ->
                                 railWidthPx = coordinates.size.width.toFloat().coerceAtLeast(1f)
                             }
@@ -309,12 +309,12 @@ fun ReaderBottomDock(
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth(readTillFraction)
-                                .height(animatedRailHeight + 6.dp),
+                                .height(animatedRailHeight + 4.dp),
                             contentAlignment = Alignment.CenterEnd
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(if (isScrubbing && kotlin.math.abs(scrubPercent - currentReadTillPct) <= 3.5f) 9.dp else 6.dp)
+                                    .size(if (isScrubbing && kotlin.math.abs(scrubPercent - currentReadTillPct) <= 3.5f) 7.dp else 5.dp)
                                     .clip(CircleShape)
                                     .background(if (isScrubbing && kotlin.math.abs(scrubPercent - currentReadTillPct) <= 3.5f) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary)
                             )
@@ -325,12 +325,12 @@ fun ReaderBottomDock(
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth(currentFraction)
-                                    .height(16.dp),
+                                    .height(14.dp),
                                 contentAlignment = Alignment.CenterEnd
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(12.dp)
+                                        .size(10.dp)
                                         .clip(CircleShape)
                                         .background(MaterialTheme.colorScheme.primary)
                                 )
@@ -338,7 +338,7 @@ fun ReaderBottomDock(
                         }
                     }
 
-                    Spacer(modifier = Modifier.width(10.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = if (isLongPressingProgress && progressHoldAnim.value > 0.05f) {
                             "Saving..."
@@ -348,7 +348,7 @@ fun ReaderBottomDock(
                             if (readTimeLeft.isNotBlank()) readTimeLeft else activeChapterTitle
                         },
                         fontFamily = FontFamily.SansSerif,
-                        fontSize = 10.5.sp,
+                        fontSize = 9.5.sp,
                         fontWeight = if (isScrubbing || isLongPressingProgress) FontWeight.Normal else FontWeight.Light,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,

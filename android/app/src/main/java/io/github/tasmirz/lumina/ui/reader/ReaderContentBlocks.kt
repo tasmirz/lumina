@@ -54,11 +54,15 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -487,41 +491,54 @@ fun ReaderTableCard(
     val screenWidth = configuration.screenWidthDp.dp
     val screenHeight = configuration.screenHeightDp.dp
     val usableWidth = (screenWidth - 24.dp).coerceAtLeast(280.dp)
+    val contentWidth = (usableWidth - 16.dp).coerceAtLeast(280.dp)
 
-    val colWidths = remember(headers, rows, totalCols, isEquationTable, screenWidth) {
-        (0 until totalCols).map { c ->
-            val hasImgInCol = rows.any { it.getOrNull(c)?.let { cell -> cell.contains("__IMG_TOKEN_START__") || cell.contains("[IMG:") || cell.contains("[INLINE_IMG:") } == true }
-            val maxLen = maxOf(
+    val colWidths = remember(headers, rows, totalCols, isEquationTable, contentWidth, screenWidth) {
+        val maxLens = (0 until totalCols).map { c ->
+            maxOf(
                 headers.getOrNull(c)?.length ?: 0,
                 rows.maxOfOrNull { it.getOrNull(c)?.length ?: 0 } ?: 0
             )
-            if (isEquationTable) {
+        }
+        val totalMaxLen = maxLens.sum().coerceAtLeast(1)
+
+        if (isEquationTable) {
+            (0 until totalCols).map { c ->
+                val hasImgInCol = rows.any { it.getOrNull(c)?.let { cell -> cell.contains("__IMG_TOKEN_START__") || cell.contains("[IMG:") || cell.contains("[INLINE_IMG:") } == true }
                 if (totalCols == 1) {
                     usableWidth
                 } else {
                     if (hasImgInCol) {
                         (screenWidth - 80.dp).coerceAtLeast(240.dp)
                     } else {
-                        maxOf(44.dp, minOf(72.dp, (maxLen * 9.0f).dp))
+                        maxOf(44.dp, minOf(72.dp, (maxLens[c] * 9.0f).dp))
                     }
                 }
-            } else if (totalCols == 1) {
-                320.dp
-            } else if (totalCols == 2) {
-                if (hasImgInCol) {
-                    320.dp
-                } else if (maxLen <= 8) {
-                    maxOf(64.dp, (maxLen * 8.5f).dp)
-                } else {
-                    maxOf(150.dp, minOf(340.dp, (maxLen * 6.8f).dp))
-                }
-            } else {
-                if (hasImgInCol) {
-                    280.dp
-                } else if (maxLen <= 8) {
-                    maxOf(68.dp, (maxLen * 8.2f).dp)
-                } else {
-                    maxOf(140.dp, minOf(360.dp, (maxLen * 7.0f).dp))
+            }
+        } else if (totalCols == 1) {
+            listOf(usableWidth)
+        } else if (totalCols == 2) {
+            val ratio0 = (maxLens[0].toFloat() / totalMaxLen).coerceIn(0.30f, 0.48f)
+            val w0 = (contentWidth * ratio0).coerceIn(90.dp, 160.dp)
+            val w1 = (contentWidth - w0).coerceAtLeast(140.dp)
+            listOf(w0, w1)
+        } else if (totalCols == 3 && totalMaxLen <= 80 && maxLens.all { it <= 40 }) {
+            // Standard 3-column table (like Summary Comparison Matrix: Property | Naive Bayes | Logistic Regression)
+            // Fits cleanly on screen without truncation or horizontal scrolling
+            val w0 = (contentWidth * 0.30f).coerceIn(84.dp, 110.dp)
+            val w1 = (contentWidth * 0.35f).coerceIn(96.dp, 125.dp)
+            val w2 = (contentWidth - w0 - w1).coerceAtLeast(96.dp)
+            listOf(w0, w1, w2)
+        } else {
+            // Multi-column (4+ cols or wide 3-col tables): responsive column sizing with horizontal scroll
+            (0 until totalCols).map { c ->
+                val len = maxLens[c]
+                when {
+                    len <= 6 -> maxOf(56.dp, (len * 7.5f).dp)
+                    len <= 14 -> maxOf(78.dp, (len * 7.0f).dp)
+                    len <= 26 -> maxOf(105.dp, (len * 6.5f).dp)
+                    len <= 45 -> maxOf(145.dp, (len * 5.8f).dp)
+                    else -> minOf(220.dp, maxOf(165.dp, (len * 5.2f).dp))
                 }
             }
         }
@@ -538,7 +555,7 @@ fun ReaderTableCard(
         r.getOrNull(0)?.let { it.length < 50 && !isCodeBlock(it) && !it.contains("\n") } == true
     }
 
-    val tableWidth = if (isSingleColCentered) usableWidth else maxOf(usableWidth, totalTableWidth)
+    val tableWidth = if (isSingleColCentered) usableWidth else maxOf(contentWidth, totalTableWidth)
 
     val maxTableHeight = if (isPagedMode && !isEquationTable) (screenHeight * 0.62f).coerceAtLeast(200.dp) else androidx.compose.ui.unit.Dp.Unspecified
 
@@ -571,16 +588,37 @@ fun ReaderTableCard(
     }
 
     Column(modifier = modifier.fillMaxWidth().padding(vertical = if (isEquationTable) 6.dp else 10.dp)) {
-        if (titleText.isNotBlank()) {
-            Text(
-                text = titleText,
-                fontFamily = FontFamily.SansSerif,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Normal,
-                letterSpacing = 0.5.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 6.dp, start = 4.dp)
-            )
+        if (titleText.isNotBlank() || (!isSingleColCentered && totalTableWidth > contentWidth)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 6.dp, start = 4.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                if (titleText.isNotBlank()) {
+                    Text(
+                        text = titleText,
+                        fontFamily = FontFamily.SansSerif,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Normal,
+                        letterSpacing = 0.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                } else {
+                    androidx.compose.foundation.layout.Spacer(modifier = Modifier.width(1.dp))
+                }
+                if (!isSingleColCentered && totalTableWidth > contentWidth) {
+                    Text(
+                        text = "⟷ Scroll columns",
+                        fontFamily = FontFamily.SansSerif,
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.Light,
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.75f)
+                    )
+                }
+            }
         }
         Card(
             modifier = Modifier.fillMaxWidth(),
@@ -592,6 +630,9 @@ fun ReaderTableCard(
         ) {
             val vScrollState = rememberScrollState()
             val hScrollState = rememberScrollState()
+            val coroutineScope = rememberCoroutineScope()
+            val viewConfig = LocalViewConfiguration.current
+            val touchSlop = viewConfig.touchSlop
 
             val tableContainerModifier = if (isPagedMode && !isEquationTable) {
                 Modifier
@@ -614,7 +655,46 @@ fun ReaderTableCard(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .then(if (isSingleColCentered) Modifier else Modifier.horizontalScroll(hScrollState)),
+                        .then(
+                            if (isSingleColCentered) Modifier
+                            else Modifier
+                                .horizontalScroll(hScrollState)
+                                .pointerInput(totalTableWidth > contentWidth) {
+                                    if (totalTableWidth > contentWidth) {
+                                        awaitEachGesture {
+                                            val down = awaitFirstDown(requireUnconsumed = false)
+                                            var isHorizontalDrag = false
+                                            while (true) {
+                                                val event = awaitPointerEvent()
+                                                val drag = event.changes.firstOrNull() ?: break
+                                                if (!drag.pressed) break
+                                                val dx = drag.position.x - down.position.x
+                                                val dy = drag.position.y - down.position.y
+                                                if (!isHorizontalDrag) {
+                                                    if (kotlin.math.abs(dx) > touchSlop && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.15f) {
+                                                        val canScrollLeft = hScrollState.value > 0
+                                                        val canScrollRight = hScrollState.value < hScrollState.maxValue
+                                                        if ((dx < 0 && canScrollRight) || (dx > 0 && canScrollLeft)) {
+                                                            isHorizontalDrag = true
+                                                        }
+                                                    }
+                                                }
+                                                if (isHorizontalDrag) {
+                                                    val deltaX = drag.positionChange().x
+                                                    val canScrollLeft = hScrollState.value > 0
+                                                    val canScrollRight = hScrollState.value < hScrollState.maxValue
+                                                    if ((deltaX < 0 && canScrollRight) || (deltaX > 0 && canScrollLeft)) {
+                                                        drag.consume()
+                                                        coroutineScope.launch {
+                                                            hScrollState.scrollBy(-deltaX)
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                        ),
                     contentAlignment = if (isSingleColCentered || isEquationTable) Alignment.Center else Alignment.CenterStart
                 ) {
                     Column(
@@ -625,6 +705,7 @@ fun ReaderTableCard(
                             Row(
                                 modifier = Modifier
                                     .width(tableWidth)
+                                    .height(IntrinsicSize.Min)
                                     .drawBehind {
                                         drawLine(outlineColor, Offset(0f, size.height), Offset(size.width, size.height), strokeWidth = 1.dp.toPx())
                                     }
@@ -637,6 +718,7 @@ fun ReaderTableCard(
                                     Box(
                                         modifier = Modifier
                                             .width(colWidths[c])
+                                            .fillMaxHeight()
                                             .then(
                                                 if (showColDivider) {
                                                     Modifier.drawBehind {
@@ -644,7 +726,7 @@ fun ReaderTableCard(
                                                     }
                                                 } else Modifier
                                             )
-                                            .padding(horizontal = 10.dp, vertical = 9.dp),
+                                            .padding(horizontal = 8.dp, vertical = 7.dp),
                                         contentAlignment = Alignment.TopStart
                                     ) {
                                         TableCellContent(
@@ -669,6 +751,7 @@ fun ReaderTableCard(
                             Row(
                                 modifier = Modifier
                                     .width(tableWidth)
+                                    .height(IntrinsicSize.Min)
                                     .then(
                                         if (!isSingleColCentered && !isEquationTable && !isLastRow) {
                                             Modifier.drawBehind {
@@ -677,7 +760,7 @@ fun ReaderTableCard(
                                         } else Modifier
                                     )
                                     .background(rowBg),
-                                verticalAlignment = Alignment.CenterVertically,
+                                verticalAlignment = Alignment.Top,
                                 horizontalArrangement = if (isSingleColCentered || (isEquationTable && totalCols == 1)) Arrangement.Center else Arrangement.Start
                             ) {
                                 for (c in 0 until totalCols) {
@@ -697,6 +780,7 @@ fun ReaderTableCard(
                                                     Modifier.width(colWidths[c])
                                                 }
                                             )
+                                            .fillMaxHeight()
                                             .then(
                                                 if (showColDivider) {
                                                     Modifier.drawBehind {
@@ -705,12 +789,12 @@ fun ReaderTableCard(
                                                 } else Modifier
                                             )
                                             .padding(
-                                                horizontal = if (isEquationTable) 4.dp else 10.dp,
-                                                vertical = if (isEquationTable) 4.dp else 8.dp
+                                                horizontal = if (isEquationTable) 4.dp else 8.dp,
+                                                vertical = if (isEquationTable) 4.dp else 7.dp
                                             ),
                                         contentAlignment = cellAlignment
                                     ) {
-                                         val cellIsCode = isCodeBlock(cellText)
+                                        val cellIsCode = isCodeBlock(cellText)
                                         TableCellContent(
                                             text = cellText,
                                             style = if (isSingleColCentered || isEquationTable) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
@@ -728,6 +812,32 @@ fun ReaderTableCard(
                             }
                         }
                     }
+                }
+            }
+
+            if (!isSingleColCentered && !isEquationTable && totalTableWidth > contentWidth && hScrollState.maxValue > 0) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 4.dp)
+                        .height(3.dp)
+                        .clip(RoundedCornerShape(1.5.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+                ) {
+                    val scrollFraction = (hScrollState.value.toFloat() / hScrollState.maxValue.toFloat()).coerceIn(0f, 1f)
+                    val thumbWidthRatio = (contentWidth / tableWidth).coerceIn(0.18f, 0.75f)
+                    val availableTrackWidth = (contentWidth - 28.dp).coerceAtLeast(40.dp)
+                    val thumbWidth = availableTrackWidth * thumbWidthRatio
+                    val thumbOffset = (availableTrackWidth - thumbWidth) * scrollFraction
+
+                    Box(
+                        modifier = Modifier
+                            .offset(x = thumbOffset)
+                            .width(thumbWidth)
+                            .fillMaxHeight()
+                            .clip(RoundedCornerShape(1.5.dp))
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.55f))
+                    )
                 }
             }
         }
@@ -840,25 +950,29 @@ private fun TableCellContent(
         val bmp = io.github.tasmirz.lumina.ui.components.rememberBookImage(imgPath, isInlineImage = true)
         val colorFilter = io.github.tasmirz.lumina.ui.components.getColorFilterForMode(imageFilterMode)
 
-        val fontScale = (style.fontSize.value / 16f).coerceIn(0.85f, 2.5f)
+        val fontScale = (style.fontSize.value / 14f).coerceIn(0.85f, 2.0f)
         val ar = if (bmp != null && bmp.height > 0) {
             bmp.width.toFloat() / bmp.height.toFloat()
         } else {
             3.5f
         }
 
-        val targetHeight = when {
-            ar > 7.0f -> (54 * fontScale).dp
-            ar > 4.5f -> (72 * fontScale).dp
-            ar > 2.2f -> (96 * fontScale).dp
-            else -> (124 * fontScale).dp
+        val targetHeight = if (isEquation) {
+            when {
+                ar > 7.0f -> (54 * fontScale).dp
+                ar > 4.5f -> (72 * fontScale).dp
+                ar > 2.2f -> (96 * fontScale).dp
+                else -> (124 * fontScale).dp
+            }
+        } else {
+            (24 * fontScale).dp.coerceIn(18.dp, 36.dp)
         }
-        val targetWidth = (targetHeight.value * ar).dp.coerceIn(60.dp, 580.dp)
+        val targetWidth = (targetHeight.value * ar).dp.coerceIn(20.dp, if (isEquation) 580.dp else 160.dp)
 
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = if (isEquation) Arrangement.Center else Arrangement.Start,
-            modifier = modifier.then(if (isEquation) Modifier.wrapContentSize() else Modifier.fillMaxWidth())
+            modifier = modifier.then(if (isEquation) Modifier.wrapContentSize() else Modifier.wrapContentWidth())
         ) {
             if (bmp != null) {
                 val clickableModifier = if (onOpenLightbox != null) {
@@ -866,34 +980,21 @@ private fun TableCellContent(
                 } else {
                     Modifier
                 }
-                if (isEquation) {
-                    Image(
-                        bitmap = bmp.asImageBitmap(),
-                        contentDescription = "Equation",
-                        contentScale = ContentScale.Fit,
-                        colorFilter = colorFilter,
-                        modifier = Modifier
-                            .size(width = targetWidth, height = targetHeight)
-                            .then(clickableModifier)
-                    )
-                } else {
-                    Image(
-                        bitmap = bmp.asImageBitmap(),
-                        contentDescription = "Table image",
-                        contentScale = ContentScale.Fit,
-                        colorFilter = colorFilter,
-                        modifier = Modifier
-                            .then(if (remainingText.isNotBlank()) Modifier.weight(1f, fill = false) else Modifier.fillMaxWidth())
-                            .heightIn(min = 48.dp, max = 220.dp)
-                            .padding(end = if (remainingText.isNotBlank()) 6.dp else 0.dp)
-                            .then(clickableModifier)
-                    )
-                }
+                Image(
+                    bitmap = bmp.asImageBitmap(),
+                    contentDescription = if (isEquation) "Equation" else "Table image",
+                    contentScale = ContentScale.Fit,
+                    colorFilter = colorFilter,
+                    modifier = Modifier
+                        .size(width = targetWidth, height = targetHeight)
+                        .padding(end = if (remainingText.isNotBlank()) 4.dp else 0.dp)
+                        .then(clickableModifier)
+                )
             } else {
                 Box(
                     modifier = Modifier
-                        .height(if (isEquation) targetHeight else 36.dp)
-                        .width(if (isEquation) targetWidth else 80.dp)
+                        .height(targetHeight)
+                        .width(targetWidth)
                         .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f), RoundedCornerShape(4.dp))
                 )
             }
