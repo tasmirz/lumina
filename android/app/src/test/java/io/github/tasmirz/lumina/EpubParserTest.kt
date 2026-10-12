@@ -539,6 +539,39 @@ class EpubParserTest {
         assertEquals("Nineteen Eighty-Four", io.github.tasmirz.lumina.ui.reader.sanitizeDisplayTitle("Nineteen Eighty-Four.EPUB"))
         assertEquals("NLP Lab 3: Word Embeddings", io.github.tasmirz.lumina.ui.reader.sanitizeDisplayTitle("NLP Lab 3_ Word Embeddings"))
     }
+
+    @Test
+    fun testParseHtmlTableFiltersEmptyRows() {
+        val tableHtml = """
+            <table>
+                <tr><th>Model</th><th>Params</th><th>Accuracy</th></tr>
+                <tr class="vspace"><td> </td><td> </td><td> </td></tr>
+                <tr><td>Model 2</td><td>3.59M</td><td>85.2%</td></tr>
+                <tr class="vspace"><td>&nbsp;</td><td></td><td>   </td></tr>
+                <tr><td>Model 10</td><td>16.33M</td><td>91.4%</td></tr>
+            </table>
+        """.trimIndent()
+        val json = EpubParser.parseHtmlTable(tableHtml)
+        org.junit.Assert.assertNotNull(json)
+        val obj = org.json.JSONObject(json!!)
+        val rows = obj.getJSONArray("rows")
+        assertEquals(2, rows.length())
+        assertEquals("Model 2", rows.getJSONArray(0).getString(0))
+        assertEquals("Model 10", rows.getJSONArray(1).getString(0))
+    }
+
+    @Test
+    fun testCleanHtmlToParagraphsAbstractSplit() {
+        val html = """
+            <div class="abstract">
+                <p>_____________________________________________________ <span class="abstractTitle">Abstract—</span>Clickbait headlines in contemporary digital news.</p>
+            </div>
+        """.trimIndent()
+        val paras = EpubParser.cleanHtmlToParagraphs(html)
+        println("PARAS: " + paras.joinToString(" || "))
+        assertTrue(paras.contains("[DIVIDER]"))
+        assertTrue(paras.any { it.startsWith("Abstract—") && it.contains("Clickbait headlines") })
+    }
 }
 
 

@@ -87,8 +87,8 @@ object PageCache {
         } catch (_: Exception) { null }
     }
 
-    // Bumped to v50_ to ensure keep-with-next table heading pagination and eliminate orphan table headers
-    private const val CACHE_VERSION = "v50_"
+    // Bumped to v52_ to refresh table typography, SVG equations and full-width block figures
+    private const val CACHE_VERSION = "v54_"
 
     data class DeviceMetrics(
         val charsPerLine: Int,
@@ -243,21 +243,22 @@ object PageCache {
 
     fun isDivider(text: String): Boolean {
         val trimmed = text.trim()
-        return trimmed == "⁂" || trimmed == "[DIVIDER]" || trimmed == "* * *" || trimmed == "***"
+        return trimmed == "[DIVIDER]" || trimmed == "⁂" || trimmed == "* * *" || trimmed == "***"
     }
 
     fun isFigureCaption(text: String): Boolean {
-        val trimmed = text.trim()
+        val trimmed = text.trim().replace('\u00A0', ' ')
         if (trimmed.isEmpty() || trimmed.startsWith("[TABLE:") || trimmed.startsWith("[IMG:") || trimmed.startsWith("[VERSE:") || trimmed.startsWith("[QUOTE:")) {
             return false
         }
-        if (trimmed.length > 320) return false
-        return trimmed.startsWith("Figure ", ignoreCase = true) ||
-                trimmed.startsWith("Figure.", ignoreCase = true) ||
-                trimmed.startsWith("Fig. ", ignoreCase = true) ||
+        if (trimmed.length > 380) return false
+        val regex = "^(?:Figure|Fig\\.?|Illustration|Diagram|Photo|Image|Plate|Chart|Table)\\s*[:\\d\\.\\-].*".toRegex(RegexOption.IGNORE_CASE)
+        return regex.containsMatchIn(trimmed) ||
+                trimmed.startsWith("Figure", ignoreCase = true) ||
+                trimmed.startsWith("Fig.", ignoreCase = true) ||
                 trimmed.startsWith("Fig ", ignoreCase = true) ||
-                trimmed.startsWith("Illustration ", ignoreCase = true) ||
-                trimmed.startsWith("Diagram ", ignoreCase = true) ||
+                trimmed.startsWith("Illustration", ignoreCase = true) ||
+                trimmed.startsWith("Diagram", ignoreCase = true) ||
                 trimmed.startsWith("Photo ", ignoreCase = true) ||
                 trimmed.startsWith("Image ", ignoreCase = true)
     }
@@ -289,9 +290,9 @@ object PageCache {
         // In portrait: top padding (statusBarTopInset + 66.dp + verticalPadding * 0.5f) + bottom padding (progressBottomInset + 68.dp + verticalPadding * 0.35f) + column padding (4.dp)
         // gives ~216-230dp total vertical chrome.
         val verticalMargin = if (isLandscape) {
-            96 + (verticalPaddingDp * 0.5f).toInt()
+            104 + (verticalPaddingDp * 0.5f).toInt()
         } else {
-            176 + (verticalPaddingDp * 0.7f).toInt()
+            180 + (verticalPaddingDp * 0.7f).toInt()
         }
 
         // Bottom safety buffer: 3.5% in portrait, 3.0% in landscape to guarantee the last line never touches the dock or gets cut off
@@ -831,7 +832,7 @@ object PageCache {
                     } else if (p.startsWith("[VERSE:") && p.endsWith("]")) {
                         p.removePrefix("[VERSE:").removeSuffix("]").trim()
                     } else if (p == "[DIVIDER]") {
-                        "⁂"
+                        "[DIVIDER]"
                     } else {
                         p
                     }
@@ -923,6 +924,11 @@ object PageCache {
                         val linesForThisText = availableLines - blankLinesBefore
 
                         if (fillPageToBottom && linesForThisText >= 1f) {
+                            if (!item.isContinuation && isHeadingCandidate(effectiveP) && currentBatch.isNotEmpty()) {
+                                flushBatch()
+                                queue.addFirst(item)
+                                continue
+                            }
                             // Break text to fill remaining lines on current page
                             val maxCharsToFit = (linesForThisText * effectiveCharsPerLine).toInt()
                             if (maxCharsToFit < 35 && currentBatch.isNotEmpty()) {
@@ -1019,12 +1025,21 @@ object PageCache {
                     }
                 }
 
-                paragraphs.forEach { p ->
+                var pIdx = 0
+                while (pIdx < paragraphs.size) {
+                    val p = paragraphs[pIdx]
                     if (p.startsWith("[IMG:") && p.endsWith("]")) {
                         flushBatch(isChapterHeader = isFirstPageOfChapter)
                         isFirstPageOfChapter = false
-                        list.add(Pair(chap.title, p))
-                        return@forEach
+                        val nextP = paragraphs.getOrNull(pIdx + 1)
+                        if (nextP != null && isFigureCaption(nextP)) {
+                            list.add(Pair(chap.title, "$p\n\n$nextP"))
+                            pIdx += 2
+                        } else {
+                            list.add(Pair(chap.title, p))
+                            pIdx += 1
+                        }
+                        continue
                     }
 
                     if (p.startsWith("[TABLE:") && p.endsWith("]")) {
@@ -1033,7 +1048,8 @@ object PageCache {
                         if (currentBatch.length + tableChars <= target) {
                             if (currentBatch.isNotEmpty()) currentBatch.append("\n\n")
                             currentBatch.append(p)
-                            return@forEach
+                            pIdx += 1
+                            continue
                         } else {
                             val batchStr = currentBatch.toString().trimEnd()
                             val lastSep = batchStr.lastIndexOf("\n\n")
@@ -1048,13 +1064,15 @@ object PageCache {
                                         flushBatch(isChapterHeader = isFirstPageOfChapter)
                                         isFirstPageOfChapter = false
                                         currentBatch.append(prevPara).append("\n\n").append(candidateHeading).append("\n\n").append(p)
-                                        return@forEach
+                                        pIdx += 1
+                                        continue
                                     } else {
                                         currentBatch.setLength(lastSep)
                                         flushBatch(isChapterHeader = isFirstPageOfChapter)
                                         isFirstPageOfChapter = false
                                         currentBatch.append(candidateHeading).append("\n\n").append(p)
-                                        return@forEach
+                                        pIdx += 1
+                                        continue
                                     }
                                 }
                             }
@@ -1063,10 +1081,12 @@ object PageCache {
                             isFirstPageOfChapter = false
                             if (tableChars <= targetCharsPerPage) {
                                 currentBatch.append(p)
-                                return@forEach
+                                pIdx += 1
+                                continue
                             } else {
                                 list.add(Pair(chap.title, p))
-                                return@forEach
+                                pIdx += 1
+                                continue
                             }
                         }
                     }
@@ -1077,10 +1097,11 @@ object PageCache {
                     } else if (p.startsWith("[VERSE:") && p.endsWith("]")) {
                         p.removePrefix("[VERSE:").removeSuffix("]").trim()
                     } else if (p == "[DIVIDER]") {
-                        "⁂"
+                        "[DIVIDER]"
                     } else {
                         p
                     }
+                    pIdx += 1
                     val target = if (isFirstPageOfChapter) chapFirstPageTarget else targetCharsPerPage
 
                     if (currentBatch.isEmpty()) {

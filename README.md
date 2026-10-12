@@ -49,6 +49,11 @@ Get the latest production-ready release of Lumina for Android:
 
 ## 🚀 What's New in Recent Updates
 
+- **📐 Mathematical Formula Sizing & Table Equation Scaling (v0.0.11-beta)**: Equation tables automatically scale to 540dp width with horizontal scrolling, and dividers between equations and equation labels `(1)` / `(4)` are omitted for seamless reading.
+- **📏 Clean Section Dividers (v0.0.11-beta)**: Completely removed ornamental asterism triangles (`⁂`), replacing them with subtle 42dp × 1dp divider lines across all reading modes.
+- **⏱️ Configurable Auto-Save Dwell Time & Smart Reading Cadence (v0.0.11-beta)**: Direct numeric input dialog and steppers (1..60s, default 5s) in Advanced Settings, with smart cadence detection across consecutive pages to commit progress even after skipping front-matter.
+- **🔄 In-Gallery EPUB Re-Parsing (v0.0.11-beta)**: Long-press any book card in the main library gallery to re-parse book content from source without losing bookmarks or reading progress.
+- **🔍 Zero-Shadow Image Zoom & Figure Expansion (v0.0.11-beta)**: Figures expand to full width without edge cropping, with shadowless pinch-to-zoom.
 - **🎙️ Human-Like Edge Neural TTS**: High-definition, human-cadence text-to-speech engine powered by `EdgeTtsService`. Streams crystal-clear narration with curated natural voices (Jenny, Guy, Aria, Sonia, Christopher) over lightweight WebSockets without heavy third-party SDKs, with seamless automatic fallback to system TTS when offline.
 - **🛡️ Bulletproof Audio Concurrency & Teardown**: Introduced monotonic audio session tokens (`currentAudioSessionId`) and managed coroutine jobs that completely eliminate dual-stream audio bugs during rapid paragraph skipping. Lifecycle-aware listeners (`ON_STOP`/`ON_DESTROY`) and BackHandler integration prevent lingering "zombie" playback after dismissing the player.
 - **📖 Pure Distraction-Free Auto-Scroll**: When auto-scroll starts, all reader chrome (headers, footers, orb, docks) smoothly recedes for total visual immersion. The floating pill features minimal `11.sp` speed text (e.g. `1.0x`), and tapping the banner directly cycles through speeds (0.5x → 3.0x) without bulky buttons or toggles.

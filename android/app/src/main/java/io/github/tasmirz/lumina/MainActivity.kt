@@ -356,6 +356,18 @@ class MainActivity : ComponentActivity() {
                                     onResetProgress = { bookId ->
                                         bookRepository.updateReadingPosition(bookId, 0, 0, 0, 0)
                                     },
+                                    onReparseBook = { bookId ->
+                                        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                                            val updated = bookRepository.reparseBook(bookId)
+                                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                                if (updated != null) {
+                                                    android.widget.Toast.makeText(this@MainActivity, "Re-parsed \"${updated.title}\"", android.widget.Toast.LENGTH_SHORT).show()
+                                                } else {
+                                                    android.widget.Toast.makeText(this@MainActivity, "Failed to re-parse book", android.widget.Toast.LENGTH_SHORT).show()
+                                                }
+                                            }
+                                        }
+                                    },
                                     onAddEpubClick = {
                                         showAddBookSheet = true
                                     },

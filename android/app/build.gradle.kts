@@ -11,8 +11,8 @@ android {
         applicationId = "io.github.tasmirz.lumina"
         minSdk = 24
         targetSdk = 36
-        versionCode = 10
-        versionName = "0.0.10-beta"
+        versionCode = 11
+        versionName = "0.0.11-beta"
     }
 
     buildTypes {
@@ -91,4 +91,7 @@ dependencies {
   implementation(libs.androidx.navigation3.ui)
   implementation(libs.androidx.navigation3.runtime)
   implementation(libs.androidx.lifecycle.viewmodel.navigation3)
+
+  // SVG rendering for math formulas & diagrams
+  implementation("com.caverock:androidsvg-aar:1.4")
 }

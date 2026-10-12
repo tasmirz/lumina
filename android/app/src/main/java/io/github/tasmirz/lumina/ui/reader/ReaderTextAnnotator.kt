@@ -418,16 +418,22 @@ fun rememberInlineContentMap(
             } catch (_: Exception) { null }
 
             val aspectRatio = if (bmp != null && bmp.height > 0) {
-                (bmp.width.toFloat() / bmp.height.toFloat()).coerceIn(0.4f, 8.0f)
+                (bmp.width.toFloat() / bmp.height.toFloat()).coerceIn(0.4f, 15.0f)
             } else {
                 io.github.tasmirz.lumina.ui.components.inlineAspectRatios[absPath]
                     ?: io.github.tasmirz.lumina.ui.components.inlineAspectRatios[item.path]
                     ?: io.github.tasmirz.lumina.ui.components.inlineAspectRatios[cleanPath]
                     ?: 1.0f
             }
-            val h = (baseFontSize * 1.0f).sp
-            val rawWValue = (baseFontSize * 1.0f * aspectRatio).coerceAtMost(baseFontSize * 3.5f)
-            val horizontalPaddingSp = (baseFontSize * 0.14f).coerceIn(2.5f, 5.0f)
+            // Allow wide equations (like D = (w_1, ..., w_n) with aspect ratio ~9.1) up to 10.0x font size without shrinking height
+            val maxInlineWidth = baseFontSize * 10.0f
+            val rawWValue = (baseFontSize * 1.0f * aspectRatio).coerceAtMost(maxInlineWidth)
+            val h = if (aspectRatio > 10.0f) {
+                (baseFontSize * (maxInlineWidth / (baseFontSize * aspectRatio))).sp
+            } else {
+                (baseFontSize * 1.0f).sp
+            }
+            val horizontalPaddingSp = (baseFontSize * 0.12f).coerceIn(2.0f, 4.0f)
             val placeholderWidth = (rawWValue + horizontalPaddingSp * 2).sp
 
             item.id to InlineTextContent(

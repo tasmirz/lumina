@@ -264,6 +264,15 @@ fun AdvancedSettingsScreen(
     val pagedSwipeThresholdState = repository?.pagedSwipeThreshold?.collectAsState(initial = 0.08f)
     val pagedSwipeThreshold = pagedSwipeThresholdState?.value ?: 0.08f
 
+    val autoSaveDwellSecondsState = repository?.autoSaveDwellSeconds?.collectAsState(initial = 5)
+    val autoSaveDwellSeconds = autoSaveDwellSecondsState?.value ?: 5
+
+    val smartConsecutiveAutoSaveState = repository?.smartConsecutiveAutoSave?.collectAsState(initial = true)
+    val smartConsecutiveAutoSave = smartConsecutiveAutoSaveState?.value ?: true
+
+    val autoSaveConsecutivePagesState = repository?.autoSaveConsecutivePages?.collectAsState(initial = 3)
+    val autoSaveConsecutivePages = autoSaveConsecutivePagesState?.value ?: 3
+
     val allowTableSplittingState = repository?.allowTableSplitting?.collectAsState(initial = true)
     val allowTableSplitting = allowTableSplittingState?.value ?: true
 
@@ -323,6 +332,10 @@ fun AdvancedSettingsScreen(
     val customEndpoints = customEndpointsState?.value ?: emptyList()
     var showEndpointDialog by remember { mutableStateOf(false) }
     var editingEndpoint by remember { mutableStateOf<CustomCatalogEndpoint?>(null) }
+    var showDwellInputDialog by remember { mutableStateOf(false) }
+    var dwellInputText by remember { mutableStateOf("") }
+    var showConsecutiveInputDialog by remember { mutableStateOf(false) }
+    var consecutiveInputText by remember { mutableStateOf("") }
 
     val customTexturesState = repository?.customTextures?.collectAsState(initial = emptyList())
     val customTextures = customTexturesState?.value ?: emptyList()
@@ -2755,6 +2768,191 @@ fun AdvancedSettingsScreen(
                             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
                         )
 
+                        // Auto-Save Dwell Time & Smart Reading Cadence
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Page Auto-Save Dwell Time",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Normal,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "Reading time required per page before progress is committed (default: 5 seconds)",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Light,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Surface(
+                                    onClick = {
+                                        val newSec = (autoSaveDwellSeconds - 1).coerceAtLeast(1)
+                                        repository?.setAutoSaveDwellSeconds(newSec)
+                                    },
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text("-", fontSize = 14.sp, fontWeight = FontWeight.Normal, color = MaterialTheme.colorScheme.onSurface)
+                                    }
+                                }
+                                Surface(
+                                    onClick = {
+                                        dwellInputText = autoSaveDwellSeconds.toString()
+                                        showDwellInputDialog = true
+                                    },
+                                    shape = RoundedCornerShape(6.dp),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                                    color = MaterialTheme.colorScheme.surface,
+                                    modifier = Modifier.widthIn(min = 44.dp).height(28.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 6.dp)) {
+                                        Text(
+                                            text = "${autoSaveDwellSeconds}s",
+                                            fontSize = 11.5.sp,
+                                            fontWeight = FontWeight.Normal,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+                                Surface(
+                                    onClick = {
+                                        val newSec = (autoSaveDwellSeconds + 1).coerceAtMost(60)
+                                        repository?.setAutoSaveDwellSeconds(newSec)
+                                    },
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text("+", fontSize = 14.sp, fontWeight = FontWeight.Normal, color = MaterialTheme.colorScheme.onSurface)
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Smart Front-Matter Cadence Switch
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Smart Front-Matter Cadence",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Normal,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "Auto-detects active reading after skipping front-matter pages (cover, contents) if consecutive pages are read steadily",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Light,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = smartConsecutiveAutoSave,
+                                onCheckedChange = { repository?.setSmartConsecutiveAutoSave(it) }
+                            )
+                        }
+
+                        if (smartConsecutiveAutoSave) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Consecutive Steady Pages Threshold",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Normal,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = "Number of consecutive pages read at dwell pace to trigger auto-save (default: 3 pages)",
+                                        fontSize = 9.5.sp,
+                                        fontWeight = FontWeight.Light,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Surface(
+                                        onClick = {
+                                            val newPages = (autoSaveConsecutivePages - 1).coerceAtLeast(2)
+                                            repository?.setAutoSaveConsecutivePages(newPages)
+                                        },
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                        modifier = Modifier.size(26.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Text("-", fontSize = 13.sp, fontWeight = FontWeight.Normal, color = MaterialTheme.colorScheme.onSurface)
+                                        }
+                                    }
+                                    Surface(
+                                        onClick = {
+                                            consecutiveInputText = autoSaveConsecutivePages.toString()
+                                            showConsecutiveInputDialog = true
+                                        },
+                                        shape = RoundedCornerShape(6.dp),
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                                        color = MaterialTheme.colorScheme.surface,
+                                        modifier = Modifier.widthIn(min = 58.dp).height(26.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 4.dp)) {
+                                            Text(
+                                                text = "$autoSaveConsecutivePages pages",
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Normal,
+                                                color = MaterialTheme.colorScheme.secondary
+                                            )
+                                        }
+                                    }
+                                    Surface(
+                                        onClick = {
+                                            val newPages = (autoSaveConsecutivePages + 1).coerceAtMost(10)
+                                            repository?.setAutoSaveConsecutivePages(newPages)
+                                        },
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                        modifier = Modifier.size(26.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Text("+", fontSize = 13.sp, fontWeight = FontWeight.Normal, color = MaterialTheme.colorScheme.onSurface)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        HorizontalDivider(
+                            modifier = Modifier.padding(vertical = 12.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+                        )
+
                         // Orb Quick Actions Selection
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -4117,6 +4315,116 @@ fun AdvancedSettingsScreen(
             dismissButton = {
                 TextButton(onClick = { showCssImportDialog = false }) {
                     Text("Cancel", fontSize = 12.sp)
+                }
+            }
+        )
+    }
+
+    // Auto-Save Dwell Time Dialog
+    if (showDwellInputDialog) {
+        AlertDialog(
+            onDismissRequest = { showDwellInputDialog = false },
+            title = {
+                Text(
+                    text = "Auto-Save Dwell Time",
+                    fontFamily = FontFamily.Serif,
+                    fontWeight = FontWeight.Normal,
+                    fontSize = 16.sp
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Enter reading dwell duration required per page in seconds (1 to 60):",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Light,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = dwellInputText,
+                        onValueChange = { str ->
+                            if (str.all { it.isDigit() } && str.length <= 2) {
+                                dwellInputText = str
+                            }
+                        },
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                        ),
+                        singleLine = true,
+                        placeholder = { Text("5", fontSize = 13.sp, fontWeight = FontWeight.Light) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val sec = dwellInputText.toIntOrNull()?.coerceIn(1, 60) ?: 5
+                        repository?.setAutoSaveDwellSeconds(sec)
+                        showDwellInputDialog = false
+                    }
+                ) {
+                    Text("Save", fontSize = 12.sp, fontWeight = FontWeight.Normal)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDwellInputDialog = false }) {
+                    Text("Cancel", fontSize = 12.sp, fontWeight = FontWeight.Normal)
+                }
+            }
+        )
+    }
+
+    // Auto-Save Consecutive Pages Dialog
+    if (showConsecutiveInputDialog) {
+        AlertDialog(
+            onDismissRequest = { showConsecutiveInputDialog = false },
+            title = {
+                Text(
+                    text = "Consecutive Pages Threshold",
+                    fontFamily = FontFamily.Serif,
+                    fontWeight = FontWeight.Normal,
+                    fontSize = 16.sp
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Enter number of consecutive pages read steadily to trigger auto-save (2 to 10):",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Light,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = consecutiveInputText,
+                        onValueChange = { str ->
+                            if (str.all { it.isDigit() } && str.length <= 2) {
+                                consecutiveInputText = str
+                            }
+                        },
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                        ),
+                        singleLine = true,
+                        placeholder = { Text("3", fontSize = 13.sp, fontWeight = FontWeight.Light) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val pages = consecutiveInputText.toIntOrNull()?.coerceIn(2, 10) ?: 3
+                        repository?.setAutoSaveConsecutivePages(pages)
+                        showConsecutiveInputDialog = false
+                    }
+                ) {
+                    Text("Save", fontSize = 12.sp, fontWeight = FontWeight.Normal)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConsecutiveInputDialog = false }) {
+                    Text("Cancel", fontSize = 12.sp, fontWeight = FontWeight.Normal)
                 }
             }
         )

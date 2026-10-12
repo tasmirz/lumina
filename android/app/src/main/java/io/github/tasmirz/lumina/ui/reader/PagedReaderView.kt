@@ -123,9 +123,9 @@ fun PagedReaderView(
                     bottom = if (isLandscape) {
                         progressBottomInset + 36.dp + (verticalPadding * 0.25f).dp
                     } else {
-                        if (readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL) progressBottomInset + 48.dp + (verticalPadding * 0.35f).dp
-                        else if (isUiVisible) progressBottomInset + 64.dp + (verticalPadding * 0.35f).dp
-                        else progressBottomInset + 24.dp + (verticalPadding * 0.35f).dp
+                        if (readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL) progressBottomInset + 76.dp + (verticalPadding * 0.35f).dp
+                        else if (isUiVisible) progressBottomInset + 76.dp + (verticalPadding * 0.35f).dp
+                        else progressBottomInset + 36.dp + (verticalPadding * 0.35f).dp
                     },
                     start = effectiveStartPadding,
                     end = effectiveEndPadding
@@ -236,7 +236,7 @@ fun PagedReaderView(
                     InlineReaderImage(
                         bitmap = bitmap,
                         imgPath = imgPath,
-                        widthFraction = inlineImageWidthFraction,
+                        widthFraction = 1.0f,
                         onOpenLightbox = onOpenLightbox,
                         onTap = onToggleControls
                     )
@@ -440,17 +440,20 @@ fun PagedReaderView(
                                         isActiveSearchMatch = isActiveMatch
                                     )
                                 }
+                                val blockInlineImages = remember(block.text) { extractInlineImages(block.text) }
+                                val blockInlineContentMap = rememberInlineContentMap(blockInlineImages, fontSize)
+                                val blockTextAlign = if (blockInlineImages.isNotEmpty()) TextAlign.Start else contentTextAlign
                                 SelectionContainer(
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Text(
                                         text = blockAnnotated,
-                                        inlineContent = pagedInlineContentMap,
+                                        inlineContent = blockInlineContentMap,
                                         fontFamily = fontFamily,
                                         fontSize = fontSize.sp,
                                         lineHeight = (fontSize * lineHeightMultiplier).sp,
                                         letterSpacing = letterSpacing.sp,
-                                        textAlign = contentTextAlign,
+                                        textAlign = blockTextAlign,
                                         color = MaterialTheme.colorScheme.onBackground,
                                         modifier = Modifier.fillMaxWidth()
                                     )
@@ -468,10 +471,13 @@ fun PagedReaderView(
                                 InlineReaderImage(
                                     bitmap = bitmap,
                                     imgPath = block.path,
-                                    widthFraction = inlineImageWidthFraction,
+                                    widthFraction = 1.0f,
                                     onOpenLightbox = onOpenLightbox,
                                     onTap = onToggleControls
                                 )
+                            }
+                            is PageBlock.Divider -> {
+                                ReaderDivider()
                             }
                         }
                     }

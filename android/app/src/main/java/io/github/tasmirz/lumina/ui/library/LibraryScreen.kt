@@ -71,6 +71,7 @@ fun LibraryScreen(
     onNavigateToScene: ((bookId: String, chapterIndex: Int) -> Unit)? = null,
     onDeleteBook: (String) -> Unit = {},
     onResetProgress: (String) -> Unit = {},
+    onReparseBook: (String) -> Unit = {},
     onAddEpubClick: () -> Unit,
     onAddToWishlist: (title: String, author: String, notes: String) -> Unit = { _, _, _ -> },
     onRemoveFromWishlist: (String) -> Unit = {},
@@ -1493,7 +1494,7 @@ fun LibraryScreen(
                                                 Text("TAP TO OPEN", fontFamily = FontFamily.SansSerif, fontSize = 11.sp, fontWeight = FontWeight.Normal, letterSpacing = 0.5.sp, color = MaterialTheme.colorScheme.secondary, modifier = Modifier.clickable { onBookSelect(activeBook.id) })
                                             }
                                             Spacer(modifier = Modifier.height(6.dp))
-                                            Card(modifier = Modifier.fillMaxWidth().clickable { onBookSelect(activeBook.id) }, shape = RoundedCornerShape(16.dp),
+                                            Card(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).combinedClickable(onClick = { onBookSelect(activeBook.id) }, onLongClick = { bookForContextMenu = activeBook }), shape = RoundedCornerShape(16.dp),
                                                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)) {
                                                 Row(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                                                     BookCoverImage(source = activeBook.coverUrl, titleFallback = activeBook.title, authorFallback = activeBook.author,
@@ -1666,6 +1667,9 @@ fun LibraryScreen(
                 },
                 onResetProgress = {
                     onResetProgress(targetBook.id)
+                },
+                onReparse = {
+                    onReparseBook(targetBook.id)
                 },
                 onDelete = {
                     bookToDelete = targetBook

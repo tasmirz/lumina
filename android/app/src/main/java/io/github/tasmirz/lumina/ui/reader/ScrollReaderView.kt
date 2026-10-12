@@ -187,7 +187,7 @@ fun ScrollReaderView(
                         InlineReaderImage(
                             bitmap = bitmap,
                             imgPath = imgPath,
-                            widthFraction = inlineImageWidthFraction,
+                            widthFraction = 1.0f,
                             onOpenLightbox = onOpenLightbox,
                             onTap = onToggleControls
                         )
@@ -273,12 +273,13 @@ fun ScrollReaderView(
                                         isActiveSearchMatch = isActiveMatch
                                     )
                                 }
+                                val paraTextAlign = if (inlineImages.isNotEmpty()) TextAlign.Start else contentTextAlign
                                 Text(
                                     text = annotatedText,
                                     inlineContent = inlineContentMap,
                                     lineHeight = (fontSize * lineHeightMultiplier).sp,
                                     letterSpacing = letterSpacing.sp,
-                                    textAlign = contentTextAlign,
+                                    textAlign = paraTextAlign,
                                     modifier = Modifier.fillMaxWidth()
                                 )
                             } else {

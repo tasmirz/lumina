@@ -40,13 +40,40 @@ private val coverDownloadSemaphore = Semaphore(3)
 
 internal val inlineAspectRatios = java.util.concurrent.ConcurrentHashMap<String, Float>()
 
+fun decodeSvgBitmap(file: File, maxW: Int = 1440, maxH: Int = 1440): Bitmap? {
+    return try {
+        java.io.FileInputStream(file).use { fis ->
+            val svg = com.caverock.androidsvg.SVG.getFromInputStream(fis)
+            val docW = if (svg.documentWidth > 0) svg.documentWidth else svg.documentViewBox?.width() ?: 300f
+            val docH = if (svg.documentHeight > 0) svg.documentHeight else svg.documentViewBox?.height() ?: 100f
+            if (docW <= 0 || docH <= 0) return null
+
+            val scale = minOf(maxW.toFloat() / docW, maxH.toFloat() / docH).coerceIn(0.1f, 4.0f)
+            val targetW = (docW * scale).toInt().coerceIn(1, 2560)
+            val targetH = (docH * scale).toInt().coerceIn(1, 2560)
+
+            val bmp = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
+            val canvas = android.graphics.Canvas(bmp)
+            svg.renderToCanvas(canvas, android.graphics.RectF(0f, 0f, targetW.toFloat(), targetH.toFloat()))
+            bmp
+        }
+    } catch (_: Throwable) {
+        null
+    }
+}
+
 internal fun decodeSampledInlineBitmap(file: File, maxDimension: Int = 360): Bitmap? {
+    if (file.name.endsWith(".svg", ignoreCase = true)) {
+        return decodeSvgBitmap(file, 1440, 1440)
+    }
     return try {
         val opt = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.absolutePath, opt)
         val origW = opt.outWidth
         val origH = opt.outHeight
-        if (origW <= 0 || origH <= 0) return null
+        if (origW <= 0 || origH <= 0) {
+            return decodeSvgBitmap(file, 1440, 1440)
+        }
 
         var sample = 1
         while (origW / (sample * 2) >= maxDimension || origH / (sample * 2) >= maxDimension) {
@@ -85,12 +112,14 @@ fun prewarmInlineBitmaps(imagePaths: List<String>) {
                 if (file.exists() && file.length() > 0) {
                     val absPath = file.absolutePath
                     if (bitmapCache.get(absPath) == null && bitmapCache.get(rawPath) == null) {
-                        val decoded = decodeSampledInlineBitmap(file, maxDimension = 360)
+                        val isSvg = file.name.endsWith(".svg", ignoreCase = true)
+                        val maxDim = if (isSvg) 1440 else 360
+                        val decoded = decodeSampledInlineBitmap(file, maxDimension = maxDim)
                         if (decoded != null) {
                             bitmapCache.put(absPath, decoded)
                             bitmapCache.put(rawPath, decoded)
                             if (decoded.height > 0) {
-                                val ar = (decoded.width.toFloat() / decoded.height.toFloat()).coerceIn(0.4f, 8.0f)
+                                val ar = (decoded.width.toFloat() / decoded.height.toFloat()).coerceIn(0.4f, 15.0f)
                                 inlineAspectRatios[absPath] = ar
                                 inlineAspectRatios[rawPath] = ar
                             }
@@ -109,12 +138,17 @@ private fun sha256Hex(input: String): String {
 }
 
 private fun decodeSampledBitmapFromFile(file: File, maxWidth: Int = 280, maxHeight: Int = 420): Bitmap? {
+    if (file.name.endsWith(".svg", ignoreCase = true)) {
+        return decodeSvgBitmap(file, maxOf(maxWidth, 1440), maxOf(maxHeight, 1440))
+    }
     return try {
         val opt = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.absolutePath, opt)
         val origW = opt.outWidth
         val origH = opt.outHeight
-        if (origW <= 0 || origH <= 0) return null
+        if (origW <= 0 || origH <= 0) {
+            return decodeSvgBitmap(file, maxOf(maxWidth, 1440), maxOf(maxHeight, 1440))
+        }
 
         var sample = 1
         while (origW / (sample * 2) >= maxWidth || origH / (sample * 2) >= maxHeight) {
@@ -331,7 +365,7 @@ fun rememberBookImage(source: String, isInlineImage: Boolean = false): Bitmap? {
                         val fallbackFile = if (parent != null && parent.exists() && parent.isDirectory) {
                             val candidates = parent.listFiles { f ->
                                 val ext = f.extension.lowercase()
-                                (ext == "png" || ext == "jpg" || ext == "jpeg" || ext == "webp") && f.length() > 0
+                                (ext == "png" || ext == "jpg" || ext == "jpeg" || ext == "webp" || ext == "svg") && f.length() > 0
                             } ?: emptyArray()
 
                             val keywords = targetBase.split('_', '-').filter { it.length >= 3 && !it.startsWith("custom") }

@@ -128,6 +128,15 @@ class BookRepository private constructor(private val context: Context) {
     private val _pagedSwipeThreshold = MutableStateFlow(prefs.getFloat("paged_swipe_threshold", 0.08f))
     val pagedSwipeThreshold: StateFlow<Float> = _pagedSwipeThreshold.asStateFlow()
 
+    private val _autoSaveDwellSeconds = MutableStateFlow(prefs.getInt("auto_save_dwell_seconds", 5).coerceIn(1, 60))
+    val autoSaveDwellSeconds: StateFlow<Int> = _autoSaveDwellSeconds.asStateFlow()
+
+    private val _smartConsecutiveAutoSave = MutableStateFlow(prefs.getBoolean("smart_consecutive_auto_save", true))
+    val smartConsecutiveAutoSave: StateFlow<Boolean> = _smartConsecutiveAutoSave.asStateFlow()
+
+    private val _autoSaveConsecutivePages = MutableStateFlow(prefs.getInt("auto_save_consecutive_pages", 3).coerceIn(2, 10))
+    val autoSaveConsecutivePages: StateFlow<Int> = _autoSaveConsecutivePages.asStateFlow()
+
     private val _allowTableSplitting = MutableStateFlow(prefs.getBoolean("allow_table_splitting", true))
     val allowTableSplitting: StateFlow<Boolean> = _allowTableSplitting.asStateFlow()
 
@@ -418,6 +427,9 @@ class BookRepository private constructor(private val context: Context) {
             adaptiveVerticalSpacing = prefs.getBoolean("adaptive_vertical_spacing", false),
             goldenRatioChapterOpeners = prefs.getBoolean("golden_ratio_chapter_openers", false),
             pagedSwipeThreshold = prefs.getFloat("paged_swipe_threshold", 0.08f),
+            autoSaveDwellSeconds = prefs.getInt("auto_save_dwell_seconds", 5).coerceIn(1, 60),
+            smartConsecutiveAutoSave = prefs.getBoolean("smart_consecutive_auto_save", true),
+            autoSaveConsecutivePages = prefs.getInt("auto_save_consecutive_pages", 3).coerceIn(2, 10),
             allowTableSplitting = prefs.getBoolean("allow_table_splitting", true),
             showStartupLoadingScreen = prefs.getBoolean("show_startup_loading_screen", false),
             uncachedBookOpenMode = try { UncachedBookOpenMode.valueOf(prefs.getString("uncached_book_open_mode", UncachedBookOpenMode.INSTANT_ACTIVE_FIRST.name) ?: UncachedBookOpenMode.INSTANT_ACTIVE_FIRST.name) } catch (_: Exception) { UncachedBookOpenMode.INSTANT_ACTIVE_FIRST },
@@ -797,6 +809,29 @@ class BookRepository private constructor(private val context: Context) {
         persistSettingToDb("paged_swipe_threshold", clamped.toString())
     }
 
+    fun setAutoSaveDwellSeconds(seconds: Int) {
+        val clamped = seconds.coerceIn(1, 60)
+        _autoSaveDwellSeconds.value = clamped
+        updateReaderSettings { it.copy(autoSaveDwellSeconds = clamped) }
+        prefs.edit().putInt("auto_save_dwell_seconds", clamped).apply()
+        persistSettingToDb("auto_save_dwell_seconds", clamped.toString())
+    }
+
+    fun setSmartConsecutiveAutoSave(enabled: Boolean) {
+        _smartConsecutiveAutoSave.value = enabled
+        updateReaderSettings { it.copy(smartConsecutiveAutoSave = enabled) }
+        prefs.edit().putBoolean("smart_consecutive_auto_save", enabled).apply()
+        persistSettingToDb("smart_consecutive_auto_save", enabled.toString())
+    }
+
+    fun setAutoSaveConsecutivePages(pages: Int) {
+        val clamped = pages.coerceIn(2, 10)
+        _autoSaveConsecutivePages.value = clamped
+        updateReaderSettings { it.copy(autoSaveConsecutivePages = clamped) }
+        prefs.edit().putInt("auto_save_consecutive_pages", clamped).apply()
+        persistSettingToDb("auto_save_consecutive_pages", clamped.toString())
+    }
+
     fun setAllowTableSplitting(enabled: Boolean) {
         _allowTableSplitting.value = enabled
         updateReaderSettings { it.copy(allowTableSplitting = enabled) }
@@ -945,6 +980,9 @@ class BookRepository private constructor(private val context: Context) {
         settings.put("adaptive_vertical_spacing", _adaptiveVerticalSpacing.value)
         settings.put("golden_ratio_chapter_openers", _goldenRatioChapterOpeners.value)
         settings.put("paged_swipe_threshold", _pagedSwipeThreshold.value.toDouble())
+        settings.put("auto_save_dwell_seconds", _autoSaveDwellSeconds.value)
+        settings.put("smart_consecutive_auto_save", _smartConsecutiveAutoSave.value)
+        settings.put("auto_save_consecutive_pages", _autoSaveConsecutivePages.value)
         settings.put("show_startup_loading_screen", _showStartupLoadingScreen.value)
         settings.put("uncached_book_open_mode", _uncachedBookOpenMode.value.name)
         settings.put("assistant_orb_style", _assistantOrbStyle.value)

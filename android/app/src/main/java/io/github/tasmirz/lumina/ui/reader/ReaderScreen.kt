@@ -455,6 +455,12 @@ fun ReaderScreen(
     val goldenRatioChapterOpeners = goldenRatioChapterOpenersState?.value ?: false
     val pagedSwipeThresholdState = repository?.pagedSwipeThreshold?.collectAsState(initial = 0.08f)
     val pagedSwipeThreshold = pagedSwipeThresholdState?.value ?: 0.08f
+    val autoSaveDwellSecondsState = repository?.autoSaveDwellSeconds?.collectAsState(initial = 5)
+    val autoSaveDwellSeconds = autoSaveDwellSecondsState?.value ?: 5
+    val smartConsecutiveAutoSaveState = repository?.smartConsecutiveAutoSave?.collectAsState(initial = true)
+    val smartConsecutiveAutoSave = smartConsecutiveAutoSaveState?.value ?: true
+    val autoSaveConsecutivePagesState = repository?.autoSaveConsecutivePages?.collectAsState(initial = 3)
+    val autoSaveConsecutivePages = autoSaveConsecutivePagesState?.value ?: 3
     val paragraphSpacingState = repository?.paragraphSpacingMultiplier?.collectAsState(initial = 1.2f)
     val paragraphSpacingMultiplier = paragraphSpacingState?.value ?: 1.2f
     val assistantOrbStyleState = repository?.assistantOrbStyle?.collectAsState(initial = "DOCK_DOT")
@@ -966,12 +972,19 @@ fun ReaderScreen(
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             val imgPaths = mutableListOf<String>()
             val currentChap = book.chapters.getOrNull(currentVisibleChapterIdx)
+            val tokenImgRegex = "__IMG_TOKEN_START__(.*?)__IMG_TOKEN_END__|\\[IMG:([^\\]]+)\\]|\\[INLINE_IMG:([^\\]]+)\\]".toRegex()
             currentChap?.paragraphs?.forEach { p ->
                 if (p.contains("[INLINE_IMG:")) {
                     extractInlineImages(p).forEach { imgPaths.add(it.path) }
                 }
                 if (p.startsWith("[IMG:") && p.endsWith("]")) {
                     imgPaths.add(p.removePrefix("[IMG:").removeSuffix("]"))
+                }
+                if (p.startsWith("[TABLE:") || p.contains("__IMG_TOKEN_START__")) {
+                    tokenImgRegex.findAll(p).forEach { m ->
+                        val path = m.groupValues[1].ifBlank { m.groupValues[2].ifBlank { m.groupValues[3] } }.trim()
+                        if (path.isNotBlank()) imgPaths.add(path)
+                    }
                 }
             }
             val nextChap = book.chapters.getOrNull(currentVisibleChapterIdx + 1)
@@ -981,6 +994,12 @@ fun ReaderScreen(
                 }
                 if (p.startsWith("[IMG:") && p.endsWith("]")) {
                     imgPaths.add(p.removePrefix("[IMG:").removeSuffix("]"))
+                }
+                if (p.startsWith("[TABLE:") || p.contains("__IMG_TOKEN_START__")) {
+                    tokenImgRegex.findAll(p).forEach { m ->
+                        val path = m.groupValues[1].ifBlank { m.groupValues[2].ifBlank { m.groupValues[3] } }.trim()
+                        if (path.isNotBlank()) imgPaths.add(path)
+                    }
                 }
             }
             if (imgPaths.isNotEmpty()) {
@@ -1057,6 +1076,8 @@ fun ReaderScreen(
     }
     var lastVerifiedReadPage by rememberSaveable(book.id) { mutableIntStateOf(initialVerifiedPage) }
     var lastVerifiedScrollPos by rememberSaveable(book.id) { mutableIntStateOf(book.scrollPos) }
+    var consecutiveSteadyPages by rememberSaveable(book.id) { mutableIntStateOf(0) }
+    var lastDwellPage by rememberSaveable(book.id) { mutableIntStateOf(-1) }
 
     // Detect font zoom or screen rotation changes to trigger re-anchoring to the exact reading position
     LaunchedEffect(fontSize, isLandscape) {
@@ -2176,8 +2197,9 @@ fun ReaderScreen(
                                 }
 
                                 val finalTitle = book.chapters.getOrNull(currentChap)?.title ?: "Chapter 1"
+                                val scrollDwellMs = (autoSaveDwellSeconds.coerceIn(1, 60) * 1000L)
                                 if (firstIndex <= lastVerifiedScrollPos + 4 || (lastVerifiedScrollPos == 0 && firstIndex == 0)) {
-                                    delay(4700)
+                                    delay(scrollDwellMs)
                                     lastVerifiedScrollPos = maxOf(lastVerifiedScrollPos, firstIndex)
                                     onPositionChange(currentChap, 0, firstIndex, overallProgress)
                                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -2192,6 +2214,18 @@ fun ReaderScreen(
                                     delay(1200)
                                     val verifiedProg = ((lastVerifiedScrollPos.toFloat() / totalParas) * 100).toInt().coerceIn(0, 100)
                                     onPositionChange(currentChap, 0, firstIndex, verifiedProg)
+                                } else if (smartConsecutiveAutoSave) {
+                                    delay(scrollDwellMs)
+                                    lastVerifiedScrollPos = firstIndex
+                                    onPositionChange(currentChap, 0, firstIndex, overallProgress)
+                                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                        repository?.updateLastReadBookmark(
+                                            bookId = book.id,
+                                            chapterTitle = finalTitle,
+                                            pageNumber = 1,
+                                            paragraphSnippet = paraText.take(150).ifBlank { "Chapter ${currentChap + 1}, paragraph ${paraIdx + 1}" }
+                                        )
+                                    }
                                 }
                             }
                     }
@@ -2342,13 +2376,16 @@ fun ReaderScreen(
                             }
 
                             // DWELL GUARD & INCREASING ORDER CHECK:
-                            // Issue #COLLECT-20261011-174342:
-                            // Clicking the bar or random scrubbing jumps the viewport but does NOT count as read.
-                            // Advancing the reading amount / read-till requires sequential page progression
-                            // (e.g. 20 -> 21 -> 22) with at least 5s dwell time on each page.
+                            // Issue #COLLECT-20261011-174342 & #COLLECT-20261012-071956-01:
+                            // Configurable dwell time (default: 5s).
+                            // Sequential read commits progress. If reader skips front-matter (covers, TOC),
+                            // steady reading of consecutive pages detects active reading and commits position.
+                            val pageDwellMs = (autoSaveDwellSeconds.coerceIn(1, 60) * 1000L)
                             if (currentPage == lastVerifiedReadPage + 1 || (lastVerifiedReadPage == 0 && currentPage == 0)) {
-                                delay(5000L)
+                                delay(pageDwellMs)
                                 lastVerifiedReadPage = currentPage
+                                consecutiveSteadyPages = 0
+                                lastDwellPage = currentPage
                                 repository?.setVerifiedPage(book.id, currentPage)
                                 onPositionChange(chapIdx, currentPage, 0, progress)
                                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -2373,10 +2410,29 @@ fun ReaderScreen(
                                         paragraphSnippet = cleanSnippet.take(150).ifBlank { "Page ${currentPage + 1}" }
                                     )
                                 }
-                            } else {
-                                // Random drop / jump (e.g. scrubbing to page 50 from 20):
-                                // DOES NOT count as read! Do not advance lastVerifiedReadPage or reading progress.
-                                // Preserves verified reading position and allows double-tap to return.
+                            } else if (smartConsecutiveAutoSave) {
+                                // Skipped ahead (e.g. skipped front-matter from page 0 to 4):
+                                delay(pageDwellMs)
+                                if (lastDwellPage >= 0 && currentPage == lastDwellPage + 1) {
+                                    consecutiveSteadyPages += 1
+                                } else {
+                                    consecutiveSteadyPages = 1
+                                }
+                                lastDwellPage = currentPage
+
+                                if (consecutiveSteadyPages >= autoSaveConsecutivePages) {
+                                    lastVerifiedReadPage = currentPage
+                                    repository?.setVerifiedPage(book.id, currentPage)
+                                    onPositionChange(chapIdx, currentPage, 0, progress)
+                                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                        repository?.updateLastReadBookmark(
+                                            bookId = book.id,
+                                            chapterTitle = book.chapters.getOrNull(chapIdx)?.title ?: "Chapter ${chapIdx + 1}",
+                                            pageNumber = currentPage + 1,
+                                            paragraphSnippet = cleanSnippet.take(150).ifBlank { "Page ${currentPage + 1}" }
+                                        )
+                                    }
+                                }
                             }
                         }
                     }

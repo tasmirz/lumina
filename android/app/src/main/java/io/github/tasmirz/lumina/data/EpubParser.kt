@@ -894,7 +894,7 @@ object EpubParser {
         return resolved.joinToString("/")
     }
 
-    private fun parseHtmlTable(tableHtml: String): String? {
+    internal fun parseHtmlTable(tableHtml: String): String? {
         return try {
             val headers = mutableListOf<String>()
             val rows = mutableListOf<List<String>>()
@@ -908,7 +908,7 @@ object EpubParser {
 
             var firstRowIsHeader = false
             val firstThs = thRegex.findAll(allRows[0]).map { cleanCellText(it.groupValues[1]) }.toList()
-            if (firstThs.isNotEmpty()) {
+            if (firstThs.isNotEmpty() && firstThs.any { it.isNotBlank() }) {
                 headers.addAll(firstThs)
                 firstRowIsHeader = true
             }
@@ -916,11 +916,11 @@ object EpubParser {
             for (i in (if (firstRowIsHeader) 1 else 0) until allRows.size) {
                 val rowHtml = allRows[i]
                 val cells = tdRegex.findAll(rowHtml).map { cleanCellText(it.groupValues[1]) }.toList()
-                if (cells.isNotEmpty()) {
+                if (cells.isNotEmpty() && cells.any { it.isNotBlank() }) {
                     rows.add(cells)
                 } else {
                     val rowThs = thRegex.findAll(rowHtml).map { cleanCellText(it.groupValues[1]) }.toList()
-                    if (rowThs.isNotEmpty()) {
+                    if (rowThs.isNotEmpty() && rowThs.any { it.isNotBlank() }) {
                         rows.add(rowThs)
                     }
                 }
@@ -1090,8 +1090,18 @@ object EpubParser {
     }
 
     private fun cleanCellText(cellHtml: String): String {
+        var html = cellHtml
+        val imgMatch = "__IMG_TOKEN_START__(.*?)__IMG_TOKEN_END__|<(?:img|image)\\s+[^>]*(?:xlink:href|src|href)=[\"']([^\"']+)[\"'][^>]*>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)).find(html)
+        val extractedImgToken = if (imgMatch != null) {
+            val path = imgMatch.groupValues[1].ifBlank { imgMatch.groupValues[2] }.trim()
+            if (path.isNotBlank()) "[IMG:$path]" else null
+        } else null
+        if (imgMatch != null) {
+            html = html.replace(imgMatch.value, " ")
+        }
+
         val mathRegex = "<math\\b[^>]*>(.*?)</math>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
-        val mathProcessed = mathRegex.replace(cellHtml) { match ->
+        val mathProcessed = mathRegex.replace(html) { match ->
             transformMathML(match.value)
         }
         val supRegex = "(?i)<sup\\b[^>]*>(.*?)</sup>".toRegex(RegexOption.DOT_MATCHES_ALL)
@@ -1110,10 +1120,15 @@ object EpubParser {
             .replace("<br\\s*/?>".toRegex(RegexOption.IGNORE_CASE), " ")
             .replace("<[^>]+>".toRegex(), " ")
         val decoded = decodeHtmlEntities(text).replace("\\s+".toRegex(), " ").trim()
-        return cleanLatexMath(decoded)
+        val cleaned = cleanLatexMath(decoded)
+        return if (extractedImgToken != null) {
+            if (cleaned.isNotBlank()) "$extractedImgToken $cleaned" else extractedImgToken
+        } else {
+            cleaned
+        }
     }
 
-    private fun cleanHtmlToParagraphs(html: String): List<String> {
+    internal fun cleanHtmlToParagraphs(html: String): List<String> {
         // 0. Drop cap / Initial letter un-wrapping to prevent word fragmentation (e.g. "T o", "I T")
         val dropcapRegex = "(?i)<span\\b[^>]*class=[\"'][^\"']*(?:dropcap|letra|initial)[^\"']*[\"'][^>]*>\\s*([^<]+?)\\s*</span>\\s*".toRegex()
         val dropcapCleaned = dropcapRegex.replace(html) { match ->
@@ -1161,13 +1176,19 @@ object EpubParser {
             }
         }
 
-        // 5. Scene Dividers / Thematic breaks (<hr>, asterisms, thoughtbreaks)
-        val dividerRegex = "(?i)(?:<hr\\b[^>]*>|<(?:p|div)\\b[^>]*class=[\"'][^\"']*(?:asterism|thoughtbreak|scene-break)[^\"']*[^>]*>.*?</(?:p|div)>)".toRegex(RegexOption.DOT_MATCHES_ALL)
+        // 5. Scene Dividers / Thematic breaks (<hr>, asterisms, thoughtbreaks, or long runs of underscores/hyphens)
+        val dividerRegex = "(?i)(?:<hr\\b[^>]*>|<(?:p|div)\\b[^>]*class=[\"'][^\"']*(?:asterism|thoughtbreak|scene-break)[^\"']*[^>]*>.*?</(?:p|div)>|_{4,}|-{4,})".toRegex(RegexOption.DOT_MATCHES_ALL)
         val dividerProcessed = dividerRegex.replace(tableProcessed, "\n\n__DIVIDER_TOKEN__\n\n")
+
+        // Ensure "Abstract" preceded by any rule, underscores, or dashes starts cleanly as its own paragraph
+        val abstractRegex = "(?i)(?<=[—_\\-]{2,}|__DIVIDER_TOKEN__)\\s*(Abstract[—–:\\s])".toRegex()
+        val abstractProcessed = abstractRegex.replace(dividerProcessed) { match ->
+            "\n\n__DIVIDER_TOKEN__\n\n${match.groupValues[1]}"
+        }
 
         // 6. Verse / Drama / Poetry / Preformatted text (<pre>, .drama, .poem, .verse, .stanza)
         val verseRegex = "(?i)<(pre|div|p|blockquote)\\b[^>]*(?:class=[\"'][^\"']*(?:drama|poem|verse|stanza)[^\"']*|pre)[^>]*>(.*?)</\\1>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
-        val verseProcessed = verseRegex.replace(dividerProcessed) { match ->
+        val verseProcessed = verseRegex.replace(abstractProcessed) { match ->
             val rawInner = match.groupValues[2]
             val brToNewline = rawInner.replace("<br\\s*/?>".toRegex(RegexOption.IGNORE_CASE), "\n")
             val stripped = brToNewline.replace("<[^>]+>".toRegex(), "")
@@ -1332,7 +1353,8 @@ object EpubParser {
     fun isSceneDividerGlyph(text: String): Boolean {
         val t = text.trim()
         if (t == "⁂" || t == "* * *" || t == "***" || t == "---" || t == "— — —" || t == "• • •" || t == "~ ~ ~" || t == "*  *  *") return true
-        if (t.length in 3..20 && "^(?:[\\*⁂•~\\-—]\\s*){3,7}$".toRegex().matches(t)) return true
+        if (t.matches("^[_\u2014\\-—]{3,}$".toRegex())) return true
+        if (t.length in 3..20 && "^(?:[\\*⁂•~\\-—_]\\s*){3,7}$".toRegex().matches(t)) return true
         return false
     }
 
