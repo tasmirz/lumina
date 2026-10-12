@@ -12,6 +12,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateRotation
 import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -19,13 +20,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -188,11 +192,255 @@ data class TableParsedInfo(
 
 private val tableJsonCache = android.util.LruCache<String, TableParsedInfo>(64)
 
+private val PRECOMPILED_CODE_KEYWORDS = listOf(
+    Regex("""\bimport\s+[a-zA-Z_]"""),
+    Regex("""\bfrom\s+[a-zA-Z_.]+\s+import\b"""),
+    Regex("""\bclass\s+[a-zA-Z_][a-zA-Z0-9_]*\s*[:\(]"""),
+    Regex("""\bdef\s+[a-zA-Z_][a-zA-Z0-9_]*\s*\("""),
+    Regex("""\breturn\b"""),
+    Regex("""\btorch\."""),
+    Regex("""\bnn\.Module\b"""),
+    Regex("""\bself\."""),
+    Regex("""\bprint\s*\("""),
+    Regex("""\boptimizer\."""),
+    Regex("""\bloss\."""),
+    Regex("""\bnp\."""),
+    Regex("""\brange\s*\("""),
+    Regex("""\blen\s*\("""),
+    Regex("""\bitertools\."""),
+    Regex("""\brandom\."""),
+    Regex("""#\s+.*"""),
+    Regex("""\bfor\s+[a-zA-Z_][a-zA-Z0-9_,\s]*\s+in\s+"""),
+    Regex("""\bwhile\s+.*:"""),
+    Regex("""\bif\s+.*:"""),
+    Regex("""\belif\s+.*:"""),
+    Regex("""\belse\s*:"""),
+    Regex("""\bwith\s+.*:"""),
+    Regex("""\btry\s*:"""),
+    Regex("""\bexcept\s*.*:""")
+)
+private val ASSIGN_PATTERN = Regex("""\b[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*[\[\{\(\"\'0-9a-zA-Z_]""")
+private val isCodeBlockCache = android.util.LruCache<String, Boolean>(512)
+
+fun isCodeBlock(text: String): Boolean {
+    val s = text.trim()
+    if (s.length < 15) return false
+    if (s.startsWith("```")) return true
+    val cached = isCodeBlockCache.get(s)
+    if (cached != null) return cached
+
+    var matchCount = 0
+    for (kw in PRECOMPILED_CODE_KEYWORDS) {
+        if (kw.containsMatchIn(s)) {
+            matchCount++
+            if (matchCount >= 2) {
+                isCodeBlockCache.put(s, true)
+                return true
+            }
+        }
+    }
+
+    val assignments = ASSIGN_PATTERN.findAll(s).count()
+    val result = assignments >= 2
+    isCodeBlockCache.put(s, result)
+    return result
+}
+
+fun formatCodeBlock(text: String): String {
+    val s = text.trim()
+    if (s.count { it == '\n' } >= 3) return s
+
+    val chars = s.toCharArray()
+    val out = StringBuilder()
+    var depth = 0
+    var inQuote = false
+    var quoteChar = ' '
+    var inComment = false
+    var i = 0
+
+    val keywords = listOf(
+        "class ", "def ", "return ", "import ", "from ", "for ", "while ",
+        "if ", "elif ", "else:", "with ", "try:", "except ", "finally:",
+        "super()."
+    )
+
+    val assignRegex = Regex("""^[a-zA-Z_][a-zA-Z0-9_]{0,30}\s*=\s*[^=]""")
+    val callRegex = Regex("""^[a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*\s*\(""")
+
+    while (i < chars.size) {
+        val c = chars[i]
+
+        if (inComment) {
+            if (c == '\n') {
+                inComment = false
+                out.append(c)
+                i++
+                continue
+            }
+            if (i > 0 && chars[i - 1] == ' ') {
+                val tail = s.substring(i)
+                val hasResumeKw = keywords.any { tail.startsWith(it) }
+                val hasResumeAssign = assignRegex.containsMatchIn(tail)
+                if (hasResumeKw || hasResumeAssign) {
+                    inComment = false
+                    out.append('\n')
+                    continue
+                }
+            }
+            out.append(c)
+            i++
+            continue
+        }
+
+        if (inQuote) {
+            out.append(c)
+            if (c == '\\' && i + 1 < chars.size) {
+                i++
+                out.append(chars[i])
+            } else if (c == quoteChar) {
+                inQuote = false
+            }
+            i++
+            continue
+        }
+
+        if (c == '#') {
+            inComment = true
+            if (out.isNotEmpty() && out.last() != '\n') {
+                out.append('\n')
+            }
+            out.append(c)
+            i++
+            continue
+        }
+
+        if (c == '"' || c == '\'') {
+            inQuote = true
+            quoteChar = c
+            out.append(c)
+            i++
+            continue
+        }
+
+        if (c == '(' || c == '[' || c == '{') {
+            depth++
+            out.append(c)
+            i++
+            continue
+        }
+
+        if (c == ')' || c == ']' || c == '}') {
+            depth = maxOf(0, depth - 1)
+            out.append(c)
+            i++
+            continue
+        }
+
+        if (depth == 0 && (c == ' ' || c == ':')) {
+            var prevChar = ' '
+            for (k in out.length - 1 downTo 0) {
+                if (out[k] != ' ') {
+                    prevChar = out[k]
+                    break
+                }
+            }
+
+            val isAfterOp = prevChar in "=+-*/,([{\\"
+
+            if (!isAfterOp) {
+                val tail = s.substring(i + 1).trimStart()
+
+                val hasKw = keywords.any { tail.startsWith(it) }
+                val hasAssign = assignRegex.containsMatchIn(tail) && !tail.startsWith("==")
+                val hasCall = callRegex.containsMatchIn(tail) && (prevChar in ")]\"'0123456789" || prevChar.isLetterOrDigit())
+                val isComp = tail.startsWith("for ") && (prevChar in "\"\'0123456789])}")
+
+                if ((hasKw || hasAssign || hasCall) && !isComp) {
+                    if (c == ':') {
+                        out.append(":\n")
+                        while (i + 1 < chars.size && chars[i + 1] == ' ') i++
+                        i++
+                        continue
+                    } else {
+                        out.append('\n')
+                        i++
+                        continue
+                    }
+                }
+            }
+        }
+
+        out.append(c)
+        i++
+    }
+
+    val rawLines = out.toString().split('\n').map { it.trim() }.filter { it.isNotEmpty() }
+    val indented = mutableListOf<String>()
+    var indentLevel = 0
+
+    for (line in rawLines) {
+        val curIndent = when {
+            line.startsWith("elif ") || line.startsWith("else:") || line.startsWith("except ") || line.startsWith("finally:") -> maxOf(0, indentLevel - 1)
+            line.startsWith("class ") -> 0
+            line.startsWith("def ") -> minOf(indentLevel, 1)
+            else -> indentLevel
+        }
+
+        indented.add("    ".repeat(curIndent) + line)
+
+        indentLevel = when {
+            line.endsWith(":") -> curIndent + 1
+            line.startsWith("return ") || line == "pass" || line == "break" || line == "continue" -> maxOf(0, indentLevel - 1)
+            else -> curIndent
+        }
+    }
+
+    return indented.joinToString("\n")
+}
+
+@Composable
+fun ReaderCodeCard(
+    code: String,
+    modifier: Modifier = Modifier
+) {
+    val formattedCode = remember(code) { formatCodeBlock(code) }
+    val hScrollState = rememberScrollState()
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f)
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(hScrollState)
+                .padding(horizontal = 14.dp, vertical = 12.dp)
+        ) {
+            Text(
+                text = formattedCode,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 12.5.sp,
+                fontWeight = FontWeight.Normal,
+                lineHeight = 18.sp,
+                letterSpacing = 0.sp,
+                textAlign = TextAlign.Start,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.92f)
+            )
+        }
+    }
+}
+
 @Composable
 fun ReaderTableCard(
     tableToken: String,
     modifier: Modifier = Modifier,
-    isPagedMode: Boolean = true
+    isPagedMode: Boolean = true,
+    imageFilterMode: io.github.tasmirz.lumina.model.ImageFilterMode = io.github.tasmirz.lumina.model.ImageFilterMode.ORIGINAL,
+    onOpenLightbox: ((Bitmap, String) -> Unit)? = null
 ) {
     val jsonStr = tableToken.removePrefix("[TABLE:").removeSuffix("]")
     val parsedData = remember(jsonStr) {
@@ -231,11 +479,16 @@ fun ReaderTableCard(
     }
     if (totalCols == 0) return
 
-    val isEquationTable = headers.isEmpty() && rows.isNotEmpty() && rows.all { r ->
+    val isEquationTable = caption.isBlank() && headers.isEmpty() && rows.isNotEmpty() && totalCols <= 2 && rows.any { r ->
         r.any { cell -> cell.contains("__IMG_TOKEN_START__") || cell.contains("[IMG:") || cell.contains("[INLINE_IMG:") }
     }
 
-    val colWidths = remember(headers, rows, totalCols, isEquationTable) {
+    val configuration = LocalConfiguration.current
+    val screenWidth = configuration.screenWidthDp.dp
+    val screenHeight = configuration.screenHeightDp.dp
+    val usableWidth = (screenWidth - 24.dp).coerceAtLeast(280.dp)
+
+    val colWidths = remember(headers, rows, totalCols, isEquationTable, screenWidth) {
         (0 until totalCols).map { c ->
             val hasImgInCol = rows.any { it.getOrNull(c)?.let { cell -> cell.contains("__IMG_TOKEN_START__") || cell.contains("[IMG:") || cell.contains("[INLINE_IMG:") } == true }
             val maxLen = maxOf(
@@ -243,10 +496,14 @@ fun ReaderTableCard(
                 rows.maxOfOrNull { it.getOrNull(c)?.length ?: 0 } ?: 0
             )
             if (isEquationTable) {
-                if (hasImgInCol) {
-                    540.dp
+                if (totalCols == 1) {
+                    usableWidth
                 } else {
-                    maxOf(48.dp, minOf(80.dp, (maxLen * 10.0f).dp))
+                    if (hasImgInCol) {
+                        (screenWidth - 80.dp).coerceAtLeast(240.dp)
+                    } else {
+                        maxOf(44.dp, minOf(72.dp, (maxLen * 9.0f).dp))
+                    }
                 }
             } else if (totalCols == 1) {
                 320.dp
@@ -254,27 +511,37 @@ fun ReaderTableCard(
                 if (hasImgInCol) {
                     320.dp
                 } else if (maxLen <= 8) {
-                    maxOf(52.dp, (maxLen * 8.5f).dp)
+                    maxOf(64.dp, (maxLen * 8.5f).dp)
                 } else {
-                    maxOf(140.dp, minOf(300.dp, (maxLen * 6.0f).dp))
+                    maxOf(150.dp, minOf(340.dp, (maxLen * 6.8f).dp))
                 }
             } else {
                 if (hasImgInCol) {
                     280.dp
                 } else if (maxLen <= 8) {
-                    maxOf(56.dp, (maxLen * 7.5f).dp)
+                    maxOf(68.dp, (maxLen * 8.2f).dp)
                 } else {
-                    maxOf(130.dp, minOf(300.dp, (maxLen * 6.2f).dp))
+                    maxOf(140.dp, minOf(360.dp, (maxLen * 7.0f).dp))
                 }
             }
         }
     }
 
-    val configuration = LocalConfiguration.current
-    val screenHeight = configuration.screenHeightDp.dp
-    val maxTableHeight = if (isPagedMode) (screenHeight * 0.62f).coerceAtLeast(200.dp) else androidx.compose.ui.unit.Dp.Unspecified
+    val totalTableWidth = remember(colWidths) { colWidths.fold(0.dp) { acc, w -> acc + w } }
 
-    val isSingleColCentered = headers.isEmpty() && totalCols == 1 && !isEquationTable
+    val isCodeTable = !isEquationTable && headers.isEmpty() && totalCols == 1 && run {
+        val combinedText = rows.joinToString("\n") { it.getOrNull(0) ?: "" }
+        isCodeBlock(combinedText)
+    }
+
+    val isSingleColCentered = headers.isEmpty() && totalCols == 1 && !isEquationTable && !isCodeTable && rows.all { r ->
+        r.getOrNull(0)?.let { it.length < 50 && !isCodeBlock(it) && !it.contains("\n") } == true
+    }
+
+    val tableWidth = if (isSingleColCentered) usableWidth else maxOf(usableWidth, totalTableWidth)
+
+    val maxTableHeight = if (isPagedMode && !isEquationTable) (screenHeight * 0.62f).coerceAtLeast(200.dp) else androidx.compose.ui.unit.Dp.Unspecified
+
     val outlineColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.40f)
 
     val titleText = when {
@@ -284,7 +551,26 @@ fun ReaderTableCard(
         else -> ""
     }
 
-    Column(modifier = modifier.fillMaxWidth().padding(vertical = 10.dp)) {
+    if (isCodeTable) {
+        val codeText = rows.joinToString("\n") { it.getOrNull(0) ?: "" }
+        Column(modifier = modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+            if (titleText.isNotBlank()) {
+                Text(
+                    text = titleText,
+                    fontFamily = FontFamily.SansSerif,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Normal,
+                    letterSpacing = 0.5.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 6.dp, start = 4.dp)
+                )
+            }
+            ReaderCodeCard(code = codeText)
+        }
+        return
+    }
+
+    Column(modifier = modifier.fillMaxWidth().padding(vertical = if (isEquationTable) 6.dp else 10.dp)) {
         if (titleText.isNotBlank()) {
             Text(
                 text = titleText,
@@ -300,138 +586,146 @@ fun ReaderTableCard(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(8.dp),
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+                containerColor = if (isEquationTable) Color.Transparent else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
             ),
-            border = BorderStroke(1.dp, outlineColor)
+            border = if (isEquationTable) null else BorderStroke(1.dp, outlineColor)
         ) {
-        val vScrollState = rememberScrollState()
-        val hScrollState = rememberScrollState()
+            val vScrollState = rememberScrollState()
+            val hScrollState = rememberScrollState()
 
-        val tableContainerModifier = if (isPagedMode) {
-            Modifier
-                .heightIn(max = maxTableHeight)
-                .verticalScroll(vScrollState)
-        } else {
-            Modifier
-        }
+            val tableContainerModifier = if (isPagedMode && !isEquationTable) {
+                Modifier
+                    .heightIn(max = maxTableHeight)
+                    .verticalScroll(vScrollState)
+            } else {
+                Modifier
+            }
 
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .then(tableContainerModifier)
-                .padding(vertical = 6.dp, horizontal = 8.dp),
-            contentAlignment = if (isSingleColCentered) Alignment.Center else Alignment.CenterStart
-        ) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .then(if (isSingleColCentered) Modifier else Modifier.horizontalScroll(hScrollState)),
-                contentAlignment = if (isSingleColCentered) Alignment.Center else Alignment.CenterStart
+                    .then(tableContainerModifier)
+                    .padding(
+                        vertical = if (isEquationTable) 4.dp else 6.dp,
+                        horizontal = if (isEquationTable) 0.dp else 8.dp
+                    ),
+                contentAlignment = if (isSingleColCentered || isEquationTable) Alignment.Center else Alignment.CenterStart
             ) {
-                Column(
-                    modifier = if (isSingleColCentered) Modifier.fillMaxWidth() else Modifier.wrapContentWidth(),
-                    horizontalAlignment = if (isSingleColCentered) Alignment.CenterHorizontally else Alignment.Start
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(if (isSingleColCentered) Modifier else Modifier.horizontalScroll(hScrollState)),
+                    contentAlignment = if (isSingleColCentered || isEquationTable) Alignment.Center else Alignment.CenterStart
                 ) {
-                    if (headers.isNotEmpty()) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(IntrinsicSize.Min)
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.50f), shape = RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp)),
-                            verticalAlignment = Alignment.Top
-                        ) {
-                            for (c in 0 until totalCols) {
-                                val headerText = headers.getOrNull(c) ?: ""
-                                Box(
-                                    modifier = Modifier
-                                        .width(colWidths[c])
-                                        .fillMaxHeight()
-                                        .padding(horizontal = 10.dp, vertical = 9.dp),
-                                    contentAlignment = Alignment.TopStart
-                                ) {
-                                    TableCellContent(
-                                        text = headerText,
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.Normal,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                }
-                                if (c < totalCols - 1) {
+                    Column(
+                        modifier = if (isSingleColCentered) Modifier.fillMaxWidth() else Modifier.width(tableWidth),
+                        horizontalAlignment = if (isSingleColCentered || isEquationTable) Alignment.CenterHorizontally else Alignment.Start
+                    ) {
+                        if (headers.isNotEmpty()) {
+                            Row(
+                                modifier = Modifier
+                                    .width(tableWidth)
+                                    .drawBehind {
+                                        drawLine(outlineColor, Offset(0f, size.height), Offset(size.width, size.height), strokeWidth = 1.dp.toPx())
+                                    }
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.50f), shape = RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp)),
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                for (c in 0 until totalCols) {
+                                    val headerText = headers.getOrNull(c) ?: ""
+                                    val showColDivider = c < totalCols - 1
                                     Box(
                                         modifier = Modifier
-                                            .width(0.8.dp)
-                                            .fillMaxHeight()
-                                            .background(outlineColor)
-                                    )
-                                }
-                            }
-                        }
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(1.dp)
-                                .background(outlineColor)
-                        )
-                    }
-
-                    rows.forEachIndexed { rowIdx, rowCells ->
-                        val rowBg = if (!isSingleColCentered && rowIdx % 2 == 1) {
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f)
-                        } else {
-                            Color.Transparent
-                        }
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(IntrinsicSize.Min)
-                                .background(rowBg),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = if (isSingleColCentered) Arrangement.Center else Arrangement.Start
-                        ) {
-                            for (c in 0 until totalCols) {
-                                val cellText = rowCells.getOrNull(c) ?: ""
-                                val cellAlignment = when {
-                                    isEquationTable && c == 1 -> Alignment.CenterEnd
-                                    isEquationTable || isSingleColCentered -> Alignment.Center
-                                    else -> Alignment.TopStart
-                                }
-                                Box(
-                                    modifier = Modifier
-                                        .then(if (isSingleColCentered) Modifier.fillMaxWidth() else Modifier.width(colWidths[c]))
-                                        .fillMaxHeight()
-                                        .padding(horizontal = 10.dp, vertical = 8.dp),
-                                    contentAlignment = cellAlignment
-                                ) {
-                                    TableCellContent(
-                                        text = cellText,
-                                        style = if (isSingleColCentered || isEquationTable) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
-                                        fontWeight = FontWeight.Normal,
-                                        letterSpacing = if (isSingleColCentered) 1.5.sp else 0.sp,
-                                        textAlign = if (isSingleColCentered) TextAlign.Center else if (isEquationTable && c == 1) TextAlign.End else TextAlign.Start,
-                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.92f),
-                                        modifier = if (isSingleColCentered) Modifier.fillMaxWidth() else Modifier
-                                    )
-                                }
-                                if (!isSingleColCentered && c < totalCols - 1) {
-                                    val isEquationColDivider = isEquationTable && c == 0 && totalCols == 2
-                                    if (!isEquationColDivider) {
-                                        Box(
-                                            modifier = Modifier
-                                                .width(0.8.dp)
-                                                .fillMaxHeight()
-                                                .background(outlineColor)
+                                            .width(colWidths[c])
+                                            .then(
+                                                if (showColDivider) {
+                                                    Modifier.drawBehind {
+                                                        drawLine(outlineColor, Offset(size.width, 0f), Offset(size.width, size.height), strokeWidth = 0.8.dp.toPx())
+                                                    }
+                                                } else Modifier
+                                            )
+                                            .padding(horizontal = 10.dp, vertical = 9.dp),
+                                        contentAlignment = Alignment.TopStart
+                                    ) {
+                                        TableCellContent(
+                                            text = headerText,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Normal,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            imageFilterMode = imageFilterMode
                                         )
                                     }
                                 }
                             }
                         }
-                        if (!isSingleColCentered && !isEquationTable && rowIdx < rows.size - 1) {
-                            Box(
+
+                        rows.forEachIndexed { rowIdx, rowCells ->
+                            val rowBg = if (!isSingleColCentered && !isEquationTable && rowIdx % 2 == 1) {
+                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f)
+                            } else {
+                                Color.Transparent
+                            }
+                            val isLastRow = rowIdx == rows.size - 1
+                            Row(
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(0.6.dp)
-                                    .background(outlineColor.copy(alpha = 0.40f))
-                            )
+                                    .width(tableWidth)
+                                    .then(
+                                        if (!isSingleColCentered && !isEquationTable && !isLastRow) {
+                                            Modifier.drawBehind {
+                                                drawLine(outlineColor.copy(alpha = 0.40f), Offset(0f, size.height), Offset(size.width, size.height), strokeWidth = 0.6.dp.toPx())
+                                            }
+                                        } else Modifier
+                                    )
+                                    .background(rowBg),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = if (isSingleColCentered || (isEquationTable && totalCols == 1)) Arrangement.Center else Arrangement.Start
+                            ) {
+                                for (c in 0 until totalCols) {
+                                    val cellText = rowCells.getOrNull(c) ?: ""
+                                    val cellAlignment = when {
+                                        isEquationTable && c == 1 -> Alignment.CenterEnd
+                                        isEquationTable || isSingleColCentered -> Alignment.Center
+                                        else -> Alignment.TopStart
+                                    }
+                                    val showColDivider = !isSingleColCentered && !isEquationTable && c < totalCols - 1 && !(isEquationTable && c == 0 && totalCols == 2)
+                                    Box(
+                                        modifier = Modifier
+                                            .then(
+                                                if (isSingleColCentered || (isEquationTable && totalCols == 1)) {
+                                                    Modifier.fillMaxWidth()
+                                                } else {
+                                                    Modifier.width(colWidths[c])
+                                                }
+                                            )
+                                            .then(
+                                                if (showColDivider) {
+                                                    Modifier.drawBehind {
+                                                        drawLine(outlineColor, Offset(size.width, 0f), Offset(size.width, size.height), strokeWidth = 0.8.dp.toPx())
+                                                    }
+                                                } else Modifier
+                                            )
+                                            .padding(
+                                                horizontal = if (isEquationTable) 4.dp else 10.dp,
+                                                vertical = if (isEquationTable) 4.dp else 8.dp
+                                            ),
+                                        contentAlignment = cellAlignment
+                                    ) {
+                                         val cellIsCode = isCodeBlock(cellText)
+                                        TableCellContent(
+                                            text = cellText,
+                                            style = if (isSingleColCentered || isEquationTable) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.Normal,
+                                            letterSpacing = if (isSingleColCentered && !cellIsCode) 1.5.sp else 0.sp,
+                                            textAlign = if (cellIsCode) TextAlign.Start else if (isSingleColCentered || (isEquationTable && totalCols == 1)) TextAlign.Center else if (isEquationTable && c == 1) TextAlign.End else TextAlign.Start,
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.92f),
+                                            modifier = if (isSingleColCentered || (isEquationTable && totalCols == 1)) Modifier.fillMaxWidth() else Modifier,
+                                            isEquation = isEquationTable,
+                                            imageFilterMode = imageFilterMode,
+                                            onOpenLightbox = onOpenLightbox
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -439,9 +733,86 @@ fun ReaderTableCard(
         }
     }
 }
-}
 
 private val tableCellCache = android.util.LruCache<String, androidx.compose.ui.text.AnnotatedString>(256)
+private val TABLE_IMG_REGEX = "__IMG_TOKEN_START__(.*?)__IMG_TOKEN_END__|\\[IMG:([^\\]]+)\\]|\\[INLINE_IMG:([^\\]]+)\\]".toRegex()
+
+@Composable
+fun ReaderFormulaRow(
+    bullet: String = "",
+    imgPath: String,
+    fontSize: Int,
+    fontFamily: FontFamily = FontFamily.Default,
+    imageFilterMode: io.github.tasmirz.lumina.model.ImageFilterMode = io.github.tasmirz.lumina.model.ImageFilterMode.ORIGINAL,
+    onOpenLightbox: (Bitmap, String) -> Unit,
+    modifier: Modifier = Modifier
+) = ReaderFormulaRow(bullet, imgPath, fontSize.toFloat(), fontFamily, imageFilterMode, onOpenLightbox, modifier)
+
+@Composable
+fun ReaderFormulaRow(
+    bullet: String = "",
+    imgPath: String,
+    fontSize: Float,
+    fontFamily: FontFamily = FontFamily.Default,
+    imageFilterMode: io.github.tasmirz.lumina.model.ImageFilterMode = io.github.tasmirz.lumina.model.ImageFilterMode.ORIGINAL,
+    onOpenLightbox: (Bitmap, String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val cleanPath = remember(imgPath) { imgPath.removePrefix("file://").replace("\\/", "/") }
+    val bitmap = io.github.tasmirz.lumina.ui.components.rememberBookImage(cleanPath, isInlineImage = true)
+    val ar = if (bitmap != null && bitmap.height > 0) {
+        bitmap.width.toFloat() / bitmap.height.toFloat()
+    } else 3.5f
+
+    // Calculate height so formula text matches surrounding body font size (~16sp)
+    val fontScale = (fontSize / 16f).coerceIn(0.85f, 2.5f)
+    val targetHeight = (28 * fontScale).dp.coerceIn(24.dp, 56.dp)
+    val targetWidth = (targetHeight.value * ar).dp
+    val colorFilter = io.github.tasmirz.lumina.ui.components.getColorFilterForMode(imageFilterMode)
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = (fontSize * 0.30f).dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (bullet.isNotBlank()) {
+            Text(
+                text = "$bullet  ",
+                fontFamily = fontFamily,
+                fontSize = fontSize.sp,
+                fontWeight = FontWeight.Normal,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+        }
+        Box(
+            modifier = Modifier
+                .weight(1f, fill = false)
+                .horizontalScroll(rememberScrollState())
+        ) {
+            if (bitmap != null) {
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = "Mathematical Expression",
+                    contentScale = ContentScale.Fit,
+                    colorFilter = colorFilter,
+                    modifier = Modifier
+                        .size(width = targetWidth, height = targetHeight)
+                        .clickable { onOpenLightbox(bitmap, cleanPath) }
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(width = 140.dp, height = targetHeight)
+                        .background(
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f),
+                            RoundedCornerShape(4.dp)
+                        )
+                )
+            }
+        }
+    }
+}
 
 @Composable
 private fun TableCellContent(
@@ -451,39 +822,78 @@ private fun TableCellContent(
     letterSpacing: TextUnit = 0.sp,
     textAlign: TextAlign = TextAlign.Start,
     color: Color = MaterialTheme.colorScheme.onSurface,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isEquation: Boolean = false,
+    imageFilterMode: io.github.tasmirz.lumina.model.ImageFilterMode = io.github.tasmirz.lumina.model.ImageFilterMode.ORIGINAL,
+    onOpenLightbox: ((Bitmap, String) -> Unit)? = null
 ) {
     val imgMatch = remember(text) {
-        "__IMG_TOKEN_START__(.*?)__IMG_TOKEN_END__|\\[IMG:([^\\]]+)\\]|\\[INLINE_IMG:([^\\]]+)\\]".toRegex().find(text)
+        TABLE_IMG_REGEX.find(text)
     }
 
     if (imgMatch != null) {
-        val imgPath = imgMatch.groupValues[1].ifBlank { imgMatch.groupValues[2].ifBlank { imgMatch.groupValues[3] } }.trim()
+        val rawImgPath = imgMatch.groupValues[1].ifBlank { imgMatch.groupValues[2].ifBlank { imgMatch.groupValues[3] } }.trim()
+        val imgPath = remember(rawImgPath) { rawImgPath.replace("\\/", "/") }
         val remainingText = remember(text, imgMatch) {
             text.replace(imgMatch.value, "").trim()
         }
         val bmp = io.github.tasmirz.lumina.ui.components.rememberBookImage(imgPath, isInlineImage = true)
+        val colorFilter = io.github.tasmirz.lumina.ui.components.getColorFilterForMode(imageFilterMode)
+
+        val fontScale = (style.fontSize.value / 16f).coerceIn(0.85f, 2.5f)
+        val ar = if (bmp != null && bmp.height > 0) {
+            bmp.width.toFloat() / bmp.height.toFloat()
+        } else {
+            3.5f
+        }
+
+        val targetHeight = when {
+            ar > 7.0f -> (54 * fontScale).dp
+            ar > 4.5f -> (72 * fontScale).dp
+            ar > 2.2f -> (96 * fontScale).dp
+            else -> (124 * fontScale).dp
+        }
+        val targetWidth = (targetHeight.value * ar).dp.coerceIn(60.dp, 580.dp)
 
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Start,
-            modifier = modifier.fillMaxWidth()
+            horizontalArrangement = if (isEquation) Arrangement.Center else Arrangement.Start,
+            modifier = modifier.then(if (isEquation) Modifier.wrapContentSize() else Modifier.fillMaxWidth())
         ) {
             if (bmp != null) {
-                Image(
-                    bitmap = bmp.asImageBitmap(),
-                    contentDescription = "Equation",
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier
-                        .then(if (remainingText.isNotBlank()) Modifier.weight(1f, fill = false) else Modifier.fillMaxWidth())
-                        .heightIn(min = 48.dp, max = 220.dp)
-                        .padding(end = if (remainingText.isNotBlank()) 6.dp else 0.dp)
-                )
+                val clickableModifier = if (onOpenLightbox != null) {
+                    Modifier.clickable { onOpenLightbox(bmp, imgPath) }
+                } else {
+                    Modifier
+                }
+                if (isEquation) {
+                    Image(
+                        bitmap = bmp.asImageBitmap(),
+                        contentDescription = "Equation",
+                        contentScale = ContentScale.Fit,
+                        colorFilter = colorFilter,
+                        modifier = Modifier
+                            .size(width = targetWidth, height = targetHeight)
+                            .then(clickableModifier)
+                    )
+                } else {
+                    Image(
+                        bitmap = bmp.asImageBitmap(),
+                        contentDescription = "Table image",
+                        contentScale = ContentScale.Fit,
+                        colorFilter = colorFilter,
+                        modifier = Modifier
+                            .then(if (remainingText.isNotBlank()) Modifier.weight(1f, fill = false) else Modifier.fillMaxWidth())
+                            .heightIn(min = 48.dp, max = 220.dp)
+                            .padding(end = if (remainingText.isNotBlank()) 6.dp else 0.dp)
+                            .then(clickableModifier)
+                    )
+                }
             } else {
                 Box(
                     modifier = Modifier
-                        .height(36.dp)
-                        .width(80.dp)
+                        .height(if (isEquation) targetHeight else 36.dp)
+                        .width(if (isEquation) targetWidth else 80.dp)
                         .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f), RoundedCornerShape(4.dp))
                 )
             }
@@ -546,10 +956,23 @@ private fun TableCellContent(
             text
         }
     }
-    val parsed = remember(cleanedText) { parseTextFormatting(cleanedText) }
+    val isCode = remember(cleanedText) { isCodeBlock(cleanedText) }
+    val textToRender = remember(cleanedText, isCode) {
+        if (isCode) formatCodeBlock(cleanedText) else cleanedText
+    }
+    val parsed = remember(textToRender) { parseTextFormatting(textToRender) }
     val baseFontSize = style.fontSize
-    val annot = remember(cleanedText, baseFontSize, color) {
-        val cacheKey = "$cleanedText|${baseFontSize.value}|${color.value}"
+    val effectiveStyle = if (isCode) {
+        style.copy(
+            fontFamily = FontFamily.Monospace,
+            fontSize = if (style.fontSize.isSpecified) style.fontSize * 0.90f else 12.sp,
+            letterSpacing = 0.sp
+        )
+    } else {
+        style
+    }
+    val annot = remember(textToRender, baseFontSize, color, isCode) {
+        val cacheKey = "$textToRender|${baseFontSize.value}|${color.value}|$isCode"
         tableCellCache.get(cacheKey) ?: run {
             val built = if (parsed.spans.isNotEmpty()) {
                 buildAnnotatedString {
@@ -577,7 +1000,7 @@ private fun TableCellContent(
                     }
                 }
             } else {
-                androidx.compose.ui.text.AnnotatedString(cleanedText)
+                androidx.compose.ui.text.AnnotatedString(textToRender)
             }
             tableCellCache.put(cacheKey, built)
             built
@@ -586,10 +1009,10 @@ private fun TableCellContent(
 
     Text(
         text = annot,
-        style = style,
+        style = effectiveStyle,
         fontWeight = fontWeight,
-        letterSpacing = letterSpacing,
-        textAlign = textAlign,
+        letterSpacing = if (isCode) 0.sp else letterSpacing,
+        textAlign = if (isCode) TextAlign.Start else textAlign,
         color = color,
         modifier = modifier
     )
@@ -682,6 +1105,7 @@ fun InlineReaderImage(
     bitmap: Bitmap?,
     imgPath: String,
     widthFraction: Float,
+    imageFilterMode: io.github.tasmirz.lumina.model.ImageFilterMode = io.github.tasmirz.lumina.model.ImageFilterMode.ORIGINAL,
     modifier: Modifier = Modifier,
     onOpenLightbox: (Bitmap, String) -> Unit,
     onTap: () -> Unit
@@ -803,10 +1227,12 @@ fun InlineReaderImage(
                 baseModifier.clip(RoundedCornerShape(if (isSmallIcon) 4.dp else 8.dp))
             }
 
+            val colorFilter = io.github.tasmirz.lumina.ui.components.getColorFilterForMode(imageFilterMode)
             Image(
                 bitmap = bitmap.asImageBitmap(),
                 contentDescription = "Illustration",
                 contentScale = ContentScale.Fit,
+                colorFilter = colorFilter,
                 modifier = finalImageModifier
                     .graphicsLayer {
                         scaleX = scale

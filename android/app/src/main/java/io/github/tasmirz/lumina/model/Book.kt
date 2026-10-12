@@ -327,7 +327,10 @@ data class ReaderSettings(
     val orbOpacity: Float = 0.85f,
     val preferredLanguage: String = "auto",
     val openLibraryApiKey: String = "",
-    val customEndpoints: List<CustomCatalogEndpoint> = emptyList()
+    val customEndpoints: List<CustomCatalogEndpoint> = emptyList(),
+    val imageFilterMode: ImageFilterMode = ImageFilterMode.ORIGINAL,
+    val invertScreen: Boolean = false,
+    val pagedBottomClearanceDp: Int = 28
 )
 
 data class CustomCatalogEndpoint(
@@ -339,4 +342,11 @@ data class CustomCatalogEndpoint(
     val authHeader: String = "Authorization",
     val isEnabled: Boolean = true
 )
+
+enum class ImageFilterMode(val displayName: String) {
+    ORIGINAL("Original"),
+    INVERT("Invert Colors"),
+    GRAYSCALE("Grayscale"),
+    SEPIA("Warm Sepia")
+}
 

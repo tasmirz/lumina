@@ -65,6 +65,8 @@ fun PagedReaderView(
     pagedSwipeThreshold: Float,
     horizontalPadding: Int,
     verticalPadding: Int,
+    pagedBottomClearanceDp: Int = 28,
+    imageFilterMode: io.github.tasmirz.lumina.model.ImageFilterMode = io.github.tasmirz.lumina.model.ImageFilterMode.ORIGINAL,
     statusBarTopInset: Dp,
     progressBottomInset: Dp,
     effectiveStartPadding: Dp,
@@ -114,18 +116,16 @@ fun PagedReaderView(
                 .fillMaxSize()
                 .padding(
                     top = if (isLandscape) {
-                        statusBarTopInset + 36.dp + (verticalPadding * 0.25f).dp
+                        statusBarTopInset + 28.dp + (verticalPadding * 0.25f).dp
                     } else {
-                        if (readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL) statusBarTopInset + 66.dp + (verticalPadding * 0.5f).dp
-                        else if (isUiVisible) statusBarTopInset + 66.dp + (verticalPadding * 0.5f).dp
-                        else (verticalPadding * 0.5f).dp
+                        if (readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL) statusBarTopInset + 48.dp + (verticalPadding * 0.4f).dp
+                        else if (isUiVisible) statusBarTopInset + 48.dp + (verticalPadding * 0.4f).dp
+                        else (verticalPadding * 0.4f).dp
                     },
                     bottom = if (isLandscape) {
-                        progressBottomInset + 36.dp + (verticalPadding * 0.25f).dp
+                        progressBottomInset + 20.dp + (verticalPadding * 0.25f).dp
                     } else {
-                        if (readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL) progressBottomInset + 76.dp + (verticalPadding * 0.35f).dp
-                        else if (isUiVisible) progressBottomInset + 76.dp + (verticalPadding * 0.35f).dp
-                        else progressBottomInset + 36.dp + (verticalPadding * 0.35f).dp
+                        progressBottomInset + pagedBottomClearanceDp.coerceIn(0, 100).dp + (verticalPadding * 0.30f).dp
                     },
                     start = effectiveStartPadding,
                     end = effectiveEndPadding
@@ -217,6 +217,8 @@ fun PagedReaderView(
                     ReaderTableCard(
                         tableToken = content,
                         isPagedMode = (readingMode == ReadingMode.PAGED),
+                        imageFilterMode = imageFilterMode,
+                        onOpenLightbox = onOpenLightbox,
                         modifier = Modifier.fillMaxWidth()
                     )
                     // Generous bottom clear area for effortless horizontal page swiping
@@ -237,6 +239,7 @@ fun PagedReaderView(
                         bitmap = bitmap,
                         imgPath = imgPath,
                         widthFraction = 1.0f,
+                        imageFilterMode = imageFilterMode,
                         onOpenLightbox = onOpenLightbox,
                         onTap = onToggleControls
                     )
@@ -296,7 +299,7 @@ fun PagedReaderView(
                 val activeSearchQ = if (showInBookSearchDialog) inBookSearchQuery.trim() else ""
 
                 val pagedInlineImages = remember(pageText) { extractInlineImages(pageText) }
-                val pagedInlineContentMap = rememberInlineContentMap(pagedInlineImages, fontSize)
+                val pagedInlineContentMap = rememberInlineContentMap(pagedInlineImages, fontSize.toFloat(), imageFilterMode)
 
                 // Effective blocks handling Option 3 (Adaptive Vertical Justification)
                 val pagedBlocks = remember(pageText, adaptiveVerticalSpacing) {
@@ -427,42 +430,60 @@ fun PagedReaderView(
 
                         when (block) {
                             is PageBlock.Text -> {
-                                val blockAnnotated = remember(block.text, matchingBookmarks, fontSize, fontFamily, onBgColor, isDropCap, activeSearchQ, isActiveMatch) {
-                                    buildHighlightedAnnotatedString(
-                                        text = block.text,
-                                        matchingBookmarks = matchingBookmarks,
-                                        onBookmarkClick = onBookmarkClick,
-                                        isDropCap = isDropCap && blockIdx == 0,
-                                        baseFontFamily = fontFamily,
-                                        baseFontSize = fontSize.sp,
-                                        baseTextColor = onBgColor,
-                                        searchQuery = activeSearchQ,
-                                        isActiveSearchMatch = isActiveMatch
-                                    )
+                                val formulaMatch = remember(block.text) {
+                                    "^(?:([•\\-\\*\u2022])\\s*)?\\[(?:INLINE_)?IMG:([^\\]]+)\\]\\s*$".toRegex().find(block.text.trim())
                                 }
-                                val blockInlineImages = remember(block.text) { extractInlineImages(block.text) }
-                                val blockInlineContentMap = rememberInlineContentMap(blockInlineImages, fontSize)
-                                val blockTextAlign = if (blockInlineImages.isNotEmpty()) TextAlign.Start else contentTextAlign
-                                SelectionContainer(
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text(
-                                        text = blockAnnotated,
-                                        inlineContent = blockInlineContentMap,
+                                if (formulaMatch != null) {
+                                    val bullet = formulaMatch.groupValues[1]
+                                    val imgPath = formulaMatch.groupValues[2]
+                                    ReaderFormulaRow(
+                                        bullet = bullet,
+                                        imgPath = imgPath,
+                                        fontSize = fontSize,
                                         fontFamily = fontFamily,
-                                        fontSize = fontSize.sp,
-                                        lineHeight = (fontSize * lineHeightMultiplier).sp,
-                                        letterSpacing = letterSpacing.sp,
-                                        textAlign = blockTextAlign,
-                                        color = MaterialTheme.colorScheme.onBackground,
-                                        modifier = Modifier.fillMaxWidth()
+                                        imageFilterMode = imageFilterMode,
+                                        onOpenLightbox = onOpenLightbox
                                     )
+                                } else {
+                                    val blockAnnotated = remember(block.text, matchingBookmarks, fontSize, fontFamily, onBgColor, isDropCap, activeSearchQ, isActiveMatch) {
+                                        buildHighlightedAnnotatedString(
+                                            text = block.text,
+                                            matchingBookmarks = matchingBookmarks,
+                                            onBookmarkClick = onBookmarkClick,
+                                            isDropCap = isDropCap && blockIdx == 0,
+                                            baseFontFamily = fontFamily,
+                                            baseFontSize = fontSize.sp,
+                                            baseTextColor = onBgColor,
+                                            searchQuery = activeSearchQ,
+                                            isActiveSearchMatch = isActiveMatch
+                                        )
+                                    }
+                                    val blockInlineImages = remember(block.text) { extractInlineImages(block.text) }
+                                    val blockInlineContentMap = rememberInlineContentMap(blockInlineImages, fontSize.toFloat(), imageFilterMode)
+                                    val blockTextAlign = if (blockInlineImages.isNotEmpty()) TextAlign.Start else contentTextAlign
+                                    SelectionContainer(
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            text = blockAnnotated,
+                                            inlineContent = blockInlineContentMap,
+                                            fontFamily = fontFamily,
+                                            fontSize = fontSize.sp,
+                                            lineHeight = (fontSize * lineHeightMultiplier).sp,
+                                            letterSpacing = letterSpacing.sp,
+                                            textAlign = blockTextAlign,
+                                            color = MaterialTheme.colorScheme.onBackground,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    }
                                 }
                             }
                             is PageBlock.Table -> {
                                 ReaderTableCard(
                                     tableToken = block.token,
                                     isPagedMode = (readingMode == ReadingMode.PAGED),
+                                    imageFilterMode = imageFilterMode,
+                                    onOpenLightbox = onOpenLightbox,
                                     modifier = Modifier.fillMaxWidth()
                                 )
                             }
@@ -472,6 +493,7 @@ fun PagedReaderView(
                                     bitmap = bitmap,
                                     imgPath = block.path,
                                     widthFraction = 1.0f,
+                                    imageFilterMode = imageFilterMode,
                                     onOpenLightbox = onOpenLightbox,
                                     onTap = onToggleControls
                                 )

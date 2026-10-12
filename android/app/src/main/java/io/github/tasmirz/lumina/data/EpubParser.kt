@@ -1116,11 +1116,15 @@ object EpubParser {
             val unicode = if (inner.length == 1) toUnicodeSubscript(inner) else null
             unicode ?: "[sub]$inner[/sub]"
         }
-        val text = subSupProcessed
-            .replace("<br\\s*/?>".toRegex(RegexOption.IGNORE_CASE), " ")
+        val htmlWithBreaks = subSupProcessed
+            .replace("<br\\s*/?>".toRegex(RegexOption.IGNORE_CASE), "___BR_TOKEN___")
+            .replace("</(?:p|div|tr|li|blockquote)>".toRegex(RegexOption.IGNORE_CASE), "___BR_TOKEN___")
             .replace("<[^>]+>".toRegex(), " ")
-        val decoded = decodeHtmlEntities(text).replace("\\s+".toRegex(), " ").trim()
-        val cleaned = cleanLatexMath(decoded)
+        val decoded = decodeHtmlEntities(htmlWithBreaks)
+            .replace("[ \t\r\n]+".toRegex(), " ")
+            .replace("___BR_TOKEN___", "\n")
+        val cleanedLines = decoded.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        val cleaned = cleanLatexMath(cleanedLines.joinToString("\n").trim())
         return if (extractedImgToken != null) {
             if (cleaned.isNotBlank()) "$extractedImgToken $cleaned" else extractedImgToken
         } else {

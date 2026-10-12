@@ -40,6 +40,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import io.github.tasmirz.lumina.model.ImageFilterMode
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculatePan
@@ -208,167 +211,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.launch
-internal fun cleanAlpha(s: String): String = s.lowercase()
-    .replace(Regex("[^a-z0-9\\s]"), " ")
-    .replace(Regex("\\s+"), " ")
-    .trim()
 
-internal fun findPageForLocation(
-    pages: List<Pair<String, String>>,
-    chapterIdx: Int,
-    chapters: List<Chapter>,
-    paraIdx: Int,
-    topSnippet: String
-): Int {
-    if (pages.isEmpty()) return 0
-    val targetChapter = chapters.getOrNull(chapterIdx)
-    val chapterTitle = targetChapter?.title ?: ""
-
-    fun clean(s: String) = s.replace("“", "\"")
-        .replace("”", "\"")
-        .replace("‘", "'")
-        .replace("’", "'")
-        .replace("—", "-")
-        .replace("–", "-")
-        .replace(Regex("\\s+"), " ")
-        .trim()
-        .lowercase()
-
-    val cleanedSnippet = clean(topSnippet.trim())
-    val alphaSnippet = cleanAlpha(topSnippet.trim())
-
-    val chapterStarts = ArrayList<Int>()
-    pages.forEachIndexed { idx, (_, content) ->
-        if (content.startsWith("CHAPTER_START:::")) {
-            chapterStarts.add(idx)
-        }
-    }
-    val firstPageOfChap = chapterStarts.getOrNull(chapterIdx)
-        ?: pages.indexOfFirst { it.first.equals(chapterTitle, ignoreCase = true) }
-    val lastPageOfChap = if (chapterStarts.isNotEmpty() && chapterIdx in chapterStarts.indices) {
-        val nextStart = chapterStarts.getOrNull(chapterIdx + 1) ?: pages.size
-        (nextStart - 1).coerceAtLeast(firstPageOfChap)
-    } else {
-        pages.indexOfLast { it.first.equals(chapterTitle, ignoreCase = true) }
-    }
-
-    // 1. Try finding page by snippet within the target chapter range
-    if (cleanedSnippet.isNotBlank() && firstPageOfChap in pages.indices && lastPageOfChap in pages.indices && firstPageOfChap <= lastPageOfChap) {
-        for (len in listOf(40, 30, 20, 14)) {
-            val snip = cleanedSnippet.take(len).trim()
-            if (snip.length >= 12) {
-                for (p in firstPageOfChap..lastPageOfChap) {
-                    if (clean(pages[p].second).contains(snip)) return p
-                }
-            }
-        }
-        for (len in listOf(40, 30, 20, 14)) {
-            val snip = alphaSnippet.take(len).trim()
-            if (snip.length >= 12) {
-                for (p in firstPageOfChap..lastPageOfChap) {
-                    if (cleanAlpha(pages[p].second).contains(snip)) return p
-                }
-            }
-        }
-    }
-
-    // Fallback: Global search across all pages by snippet (in case chapter title naming slightly differs)
-    if (cleanedSnippet.isNotBlank()) {
-        for (len in listOf(30, 20, 14)) {
-            val snip = cleanedSnippet.take(len).trim()
-            if (snip.length >= 12) {
-                val foundGlobal = pages.indexOfFirst { clean(it.second).contains(snip) }
-                if (foundGlobal >= 0) return foundGlobal
-            }
-        }
-        for (len in listOf(30, 20, 14)) {
-            val snip = alphaSnippet.take(len).trim()
-            if (snip.length >= 12) {
-                val foundGlobal = pages.indexOfFirst { cleanAlpha(it.second).contains(snip) }
-                if (foundGlobal >= 0) return foundGlobal
-            }
-        }
-    }
-
-    // 2. Try finding page by paragraph text within target chapter range
-    val rawPara = targetChapter?.paragraphs?.getOrNull(paraIdx)?.trim() ?: ""
-    val cleanedPara = clean(rawPara)
-    val alphaPara = cleanAlpha(rawPara)
-    if (cleanedPara.isNotBlank() && firstPageOfChap in pages.indices && lastPageOfChap in pages.indices && firstPageOfChap <= lastPageOfChap) {
-        for (len in listOf(35, 24, 16)) {
-            val paraSnip = cleanedPara.take(len).trim()
-            if (paraSnip.length >= 12) {
-                for (p in firstPageOfChap..lastPageOfChap) {
-                    if (clean(pages[p].second).contains(paraSnip)) return p
-                }
-            }
-        }
-        for (len in listOf(35, 24, 16)) {
-            val paraSnip = alphaPara.take(len).trim()
-            if (paraSnip.length >= 12) {
-                for (p in firstPageOfChap..lastPageOfChap) {
-                    if (cleanAlpha(pages[p].second).contains(paraSnip)) return p
-                }
-            }
-        }
-    }
-
-    // 3. If it's the very start of chapter, return first page of chapter
-    if (paraIdx == 0 && firstPageOfChap >= 0) {
-        return firstPageOfChap
-    }
-
-    // 4. Estimate page within the chapter proportionally
-    if (firstPageOfChap >= 0 && lastPageOfChap >= firstPageOfChap) {
-        val chapPageCount = lastPageOfChap - firstPageOfChap + 1
-        val totalParasInChap = maxOf(targetChapter?.paragraphs?.size ?: 1, 1)
-        val estimatedOffset = ((paraIdx.toFloat() / totalParasInChap) * chapPageCount).toInt()
-        return (firstPageOfChap + estimatedOffset).coerceIn(firstPageOfChap, lastPageOfChap)
-    }
-
-    return 0
-}
-
-private fun findScrollIndexForLocation(
-    chapterIdx: Int,
-    paraIdx: Int,
-    topSnippet: String,
-    chapters: List<Chapter>,
-    chapterOffsets: IntArray
-): Int {
-    if (chapters.isEmpty()) return 0
-    val safeChapIdx = chapterIdx.coerceIn(0, chapters.size - 1)
-    val chapter = chapters[safeChapIdx]
-    val chapStartOffset = chapterOffsets.getOrElse(safeChapIdx) { 0 }
-
-    if (chapter.paragraphs.isEmpty()) {
-        return chapStartOffset
-    }
-
-    var safeParaIdx = paraIdx.coerceIn(0, chapter.paragraphs.size - 1)
-    if (topSnippet.isNotBlank()) {
-        val snippet = topSnippet.take(30).trim()
-        val cleanSnip = cleanAlpha(snippet)
-        val foundIdx = chapter.paragraphs.indexOfFirst { p ->
-            val cp = cleanAlpha(p)
-            cp.contains(cleanSnip.take(20)) || (cleanSnip.length >= 10 && cp.contains(cleanSnip.take(10)))
-        }
-        if (foundIdx >= 0) {
-            safeParaIdx = foundIdx
-        }
-    }
-
-    return chapStartOffset + 1 + safeParaIdx
-}
-
-private fun Context.findActivity(): Activity? {
-    var ctx = this
-    while (ctx is ContextWrapper) {
-        if (ctx is Activity) return ctx
-        ctx = ctx.baseContext
-    }
-    return null
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -441,6 +284,12 @@ fun ReaderScreen(
     val horizontalPadding = horizontalPaddingState?.value ?: 22
     val verticalPaddingState = repository?.verticalPadding?.collectAsState(initial = 0)
     val verticalPadding = verticalPaddingState?.value ?: 0
+    val pagedBottomClearanceDpState = repository?.pagedBottomClearanceDp?.collectAsState(initial = 28)
+    val pagedBottomClearanceDp = pagedBottomClearanceDpState?.value ?: 28
+    val imageFilterModeState = repository?.imageFilterMode?.collectAsState(initial = ImageFilterMode.ORIGINAL)
+    val imageFilterMode = imageFilterModeState?.value ?: ImageFilterMode.ORIGINAL
+    val invertScreenState = repository?.invertScreen?.collectAsState(initial = false)
+    val invertScreen = invertScreenState?.value ?: false
     val pagedSafeLinesToRemoveState = repository?.pagedSafeLinesToRemove?.collectAsState(initial = 0)
     val pagedSafeLinesToRemove = pagedSafeLinesToRemoveState?.value ?: 0
     val verticallyCenterPagesState = repository?.verticallyCenterPages?.collectAsState(initial = false)
@@ -509,6 +358,7 @@ fun ReaderScreen(
     var showBookmarkDetailModal by remember { mutableStateOf(false) }
     var showTocSheet by rememberSaveable { mutableStateOf(false) }
     var activeChapterTitle by rememberSaveable(book.id) { mutableStateOf(book.chapters.firstOrNull()?.title ?: "Chapter 1") }
+    var flushPositionAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     LaunchedEffect(book.id) {
         if (book.chapters.none { it.title.equals(activeChapterTitle, ignoreCase = true) }) {
             activeChapterTitle = book.chapters.firstOrNull()?.title ?: "Chapter 1"
@@ -635,6 +485,7 @@ fun ReaderScreen(
     DisposableEffect(Unit) {
         onDispose {
             assistantService.stopListening()
+            flushPositionAction?.invoke()
         }
     }
 
@@ -687,6 +538,7 @@ fun ReaderScreen(
             stopAllAudio()
         } else {
             stopAllAudio()
+            flushPositionAction?.invoke()
             onBackToLibrary()
         }
     }
@@ -866,12 +718,12 @@ fun ReaderScreen(
     val screenWidthDp = configuration.screenWidthDp
     val screenHeightDp = configuration.screenHeightDp
 
-    val currentConfigKey = "${book.id}_${fontSize}_${isLandscape}_${readingMode}_${screenWidthDp}_${screenHeightDp}_${horizontalPadding}_${verticalPadding}_${(lineHeightMultiplier * 100).toInt()}_${(paragraphSpacingMultiplier * 100).toInt()}_${pagedSafeLinesToRemove}_${fillPageToBottom}_${allowTableSplitting}"
+    val currentConfigKey = "${book.id}_${fontSize}_${isLandscape}_${readingMode}_${screenWidthDp}_${screenHeightDp}_${horizontalPadding}_${verticalPadding}_${(lineHeightMultiplier * 100).toInt()}_${(paragraphSpacingMultiplier * 100).toInt()}_${pagedSafeLinesToRemove}_${fillPageToBottom}_${allowTableSplitting}_${pagedBottomClearanceDp}"
     var pagesConfigKey by remember { mutableStateOf(currentConfigKey) }
 
     // Prepared pages for Paged Mode with smart character/sentence budgeting so text never overflows
     // Non-blocking in-memory cache lookup on composition; background precomputation via getOrComputeAsync
-    var pages by remember(book.id, book.chapters.size, fontSize, readingMode, isLandscape, screenWidthDp, screenHeightDp, horizontalPadding, verticalPadding, lineHeightMultiplier, paragraphSpacingMultiplier, pagedSafeLinesToRemove, fillPageToBottom, allowTableSplitting) {
+    var pages by remember(book.id, book.chapters.size, fontSize, readingMode, isLandscape, screenWidthDp, screenHeightDp, horizontalPadding, verticalPadding, lineHeightMultiplier, paragraphSpacingMultiplier, pagedSafeLinesToRemove, fillPageToBottom, allowTableSplitting, pagedBottomClearanceDp) {
         val cached = if (isPagedReading) {
             PageCache.getCached(
                 bookId = book.id,
@@ -887,6 +739,7 @@ fun ReaderScreen(
                 safeLinesToRemove = pagedSafeLinesToRemove,
                 fillPageToBottom = fillPageToBottom,
                 allowTableSplitting = allowTableSplitting,
+                pagedBottomClearanceDp = pagedBottomClearanceDp,
                 context = context
             )
         } else null
@@ -896,7 +749,7 @@ fun ReaderScreen(
         mutableStateOf(cached ?: emptyList())
     }
 
-    LaunchedEffect(book.id, book.chapters.size, fontSize, readingMode, isLandscape, isPagedReading, screenWidthDp, screenHeightDp, horizontalPadding, verticalPadding, lineHeightMultiplier, paragraphSpacingMultiplier, pagedSafeLinesToRemove, fillPageToBottom, allowTableSplitting) {
+    LaunchedEffect(book.id, book.chapters.size, fontSize, readingMode, isLandscape, isPagedReading, screenWidthDp, screenHeightDp, horizontalPadding, verticalPadding, lineHeightMultiplier, paragraphSpacingMultiplier, pagedSafeLinesToRemove, fillPageToBottom, allowTableSplitting, pagedBottomClearanceDp) {
         if (isPagedReading && (pages.isEmpty() || pagesConfigKey != currentConfigKey) && book.chapters.isNotEmpty()) {
             val allPages = PageCache.getOrComputeAsync(
                 bookId = book.id,
@@ -913,6 +766,7 @@ fun ReaderScreen(
                 safeLinesToRemove = pagedSafeLinesToRemove,
                 fillPageToBottom = fillPageToBottom,
                 allowTableSplitting = allowTableSplitting,
+                pagedBottomClearanceDp = pagedBottomClearanceDp,
                 dbHelper = repository?.dbHelper,
                 context = context,
                 activeChapterIndex = book.currentChapter,
@@ -982,7 +836,7 @@ fun ReaderScreen(
                 }
                 if (p.startsWith("[TABLE:") || p.contains("__IMG_TOKEN_START__")) {
                     tokenImgRegex.findAll(p).forEach { m ->
-                        val path = m.groupValues[1].ifBlank { m.groupValues[2].ifBlank { m.groupValues[3] } }.trim()
+                        val path = m.groupValues[1].ifBlank { m.groupValues[2].ifBlank { m.groupValues[3] } }.replace("\\/", "/").trim()
                         if (path.isNotBlank()) imgPaths.add(path)
                     }
                 }
@@ -997,7 +851,7 @@ fun ReaderScreen(
                 }
                 if (p.startsWith("[TABLE:") || p.contains("__IMG_TOKEN_START__")) {
                     tokenImgRegex.findAll(p).forEach { m ->
-                        val path = m.groupValues[1].ifBlank { m.groupValues[2].ifBlank { m.groupValues[3] } }.trim()
+                        val path = m.groupValues[1].ifBlank { m.groupValues[2].ifBlank { m.groupValues[3] } }.replace("\\/", "/").trim()
                         if (path.isNotBlank()) imgPaths.add(path)
                     }
                 }
@@ -1078,6 +932,24 @@ fun ReaderScreen(
     var lastVerifiedScrollPos by rememberSaveable(book.id) { mutableIntStateOf(book.scrollPos) }
     var consecutiveSteadyPages by rememberSaveable(book.id) { mutableIntStateOf(0) }
     var lastDwellPage by rememberSaveable(book.id) { mutableIntStateOf(-1) }
+
+    flushPositionAction = {
+        if (readingMode != ReadingMode.SCROLL && pages.isNotEmpty()) {
+            val cur = pagerState.currentPage
+            if (cur > 0 && cur in lastVerifiedReadPage..(lastVerifiedReadPage + 4)) {
+                lastVerifiedReadPage = cur
+                repository?.setVerifiedPage(book.id, cur)
+                val chap = book.chapters.getOrNull(speakingChapterIdx)
+                val chapTitle = chap?.title ?: "Chapter ${speakingChapterIdx + 1}"
+                repository?.updateLastReadBookmark(
+                    bookId = book.id,
+                    chapterTitle = chapTitle,
+                    pageNumber = cur + 1,
+                    paragraphSnippet = currentTopSnippet.take(150).ifBlank { "Page ${cur + 1}" }
+                )
+            }
+        }
+    }
 
     // Detect font zoom or screen rotation changes to trigger re-anchoring to the exact reading position
     LaunchedEffect(fontSize, isLandscape) {
@@ -1635,146 +1507,37 @@ fun ReaderScreen(
             modifier = modifier
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background)
-                .nestedScroll(nestedScrollConnection)
-                .pointerInput(Unit) {
-                    awaitEachGesture {
-                        awaitFirstDown(requireUnconsumed = false)
-                        var cumulativeZoom = 1.0f
-                        var pinchStarted = false
-                        var currentTargetFontSize = currentFontSize
-
-                        try {
-                            do {
-                                val event = awaitPointerEvent(PointerEventPass.Main)
-                                if (event.changes.any { it.isConsumed }) {
-                                    // Touch was consumed by a child element (e.g. image pinch or button)
-                                    // Do NOT alter text font size!
-                                    continue
-                                }
-                                var pressedCount = 0
-                                var p0: PointerInputChange? = null
-                                var p1: PointerInputChange? = null
-
-                                for (i in event.changes.indices) {
-                                    val c = event.changes[i]
-                                    if (c.pressed) {
-                                        pressedCount++
-                                        if (p0 == null) {
-                                            p0 = c
-                                        } else if (p1 == null) {
-                                            p1 = c
-                                        }
-                                    }
-                                }
-
-                                if (pressedCount >= 2 && p0 != null && p1 != null) {
-                                    val currentDist = kotlin.math.hypot(p0.position.x - p1.position.x, p0.position.y - p1.position.y)
-                                    val prevDist = kotlin.math.hypot(p0.previousPosition.x - p1.previousPosition.x, p0.previousPosition.y - p1.previousPosition.y)
-                                    val avgTouchY = (p0.position.y + p1.position.y) / 2f
-
-                                    if (!pinchStarted) {
-                                        pinchStarted = true
-                                        isPinching = true
-                                        currentTargetFontSize = currentFontSize
-
-                                        if (currentIsPagedReading) {
-                                            val activePages = currentPages
-                                            val curPage = pagerState.currentPage
-                                            if (curPage in activePages.indices) {
-                                                val (cTitle, pageContent) = activePages[curPage]
-                                                val isChapterHeaderPage = pageContent.startsWith("CHAPTER_START:::") || pageContent.startsWith("TITLE:::")
-                                                val pageBody = if (isChapterHeaderPage) pageContent.substringAfterLast(":::") else pageContent
-                                                val cIdx = currentChapters.indexOfFirst { it.title == cTitle }.coerceAtLeast(0)
-                                                val chap = currentChapters.getOrNull(cIdx)
-
-                                                var targetSnippet = ""
-                                                var targetParaIdx = 0
-
-                                                val cleanExact = cleanAlpha(pageBody.take(60))
-                                                val foundIdx = chap?.paragraphs?.indexOfFirst { fullPara ->
-                                                    val cleanFull = cleanAlpha(fullPara)
-                                                    cleanFull.contains(cleanExact.take(25)) || cleanExact.contains(cleanFull.take(25))
-                                                } ?: -1
-                                                if (foundIdx >= 0) {
-                                                    targetParaIdx = foundIdx
-                                                    targetSnippet = chap?.paragraphs?.getOrNull(foundIdx)?.trim()?.take(60) ?: ""
-                                                }
-                                                if (targetSnippet.isBlank()) {
-                                                    targetSnippet = pageBody.trim().take(60)
-                                                }
-
-                                                if (targetSnippet.isNotBlank()) {
-                                                    anchorSnippet = targetSnippet
-                                                    anchorChapterIdx = cIdx
-                                                    anchorParaIdx = targetParaIdx
-                                                    currentTopSnippet = targetSnippet
-                                                }
-                                            }
-                                        } else if (currentReadingMode == ReadingMode.SCROLL) {
-                                            val visibleItems = listState.layoutInfo.visibleItemsInfo
-                                            val viewportH = listState.layoutInfo.viewportSize.height
-                                            val targetY = if (viewportH > 0) viewportH * 0.4f else avgTouchY
-                                            val touchedItem = visibleItems.find { targetY >= it.offset && targetY <= it.offset + it.size }
-                                                ?: visibleItems.firstOrNull()
-
-                                            if (touchedItem != null) {
-                                                val itemIdx = touchedItem.index
-                                                val binIdx = chapterCumulativeParaOffsets.binarySearch(itemIdx)
-                                                val cIdx = if (binIdx >= 0) binIdx else (-binIdx - 2).coerceIn(0, currentChapters.size - 1)
-                                                val pIdx = (itemIdx - chapterCumulativeParaOffsets.getOrElse(cIdx) { 0 } - 1).coerceAtLeast(0)
-                                                val paraText = currentChapters.getOrNull(cIdx)?.paragraphs?.getOrNull(pIdx) ?: ""
-                                                val snip = paraText.trim().take(60)
-
-                                                if (snip.isNotBlank()) {
-                                                    anchorSnippet = snip
-                                                    anchorChapterIdx = cIdx
-                                                    anchorParaIdx = pIdx
-                                                    currentTopSnippet = snip
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    if (prevDist > 0f) {
-                                        val scale = currentDist / prevDist
-                                        cumulativeZoom *= scale
-                                        if (cumulativeZoom > 1.08f) {
-                                            val newSize = (currentTargetFontSize + 1).coerceAtMost(36)
-                                            if (newSize != currentTargetFontSize) {
-                                                currentTargetFontSize = newSize
-                                                currentOnFontSizeChange(newSize)
-                                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                                            }
-                                            cumulativeZoom = 1.0f
-                                        } else if (cumulativeZoom < 0.92f) {
-                                            val newSize = (currentTargetFontSize - 1).coerceAtLeast(12)
-                                            if (newSize != currentTargetFontSize) {
-                                                currentTargetFontSize = newSize
-                                                currentOnFontSizeChange(newSize)
-                                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                                            }
-                                            cumulativeZoom = 1.0f
-                                        }
-                                    }
-
-                                    for (i in event.changes.indices) {
-                                        event.changes[i].consume()
-                                    }
-                                } else if (pinchStarted) {
-                                    // Touch release debounce: consume remaining pointer motion to prevent swipe fling
-                                    for (i in event.changes.indices) {
-                                        event.changes[i].consume()
-                                    }
-                                }
-                            } while (event.changes.any { it.pressed })
-                        } finally {
-                            if (pinchStarted) {
-                                isPinching = false
-                                pendingTargetSync = true
-                            }
-                        }
+                .drawWithContent {
+                    drawContent()
+                    if (invertScreen) {
+                        drawRect(Color.White, blendMode = BlendMode.Difference)
                     }
                 }
+                .nestedScroll(nestedScrollConnection)
+                .readerPinchZoom(
+                    view = view,
+                    currentFontSize = currentFontSize,
+                    currentReadingMode = currentReadingMode,
+                    currentIsPagedReading = currentIsPagedReading,
+                    currentPages = currentPages,
+                    currentChapters = currentChapters,
+                    chapterCumulativeParaOffsets = chapterCumulativeParaOffsets,
+                    pagerState = pagerState,
+                    listState = listState,
+                    currentOnFontSizeChange = currentOnFontSizeChange,
+                    onAnchorUpdated = { snip, cIdx, pIdx ->
+                        anchorSnippet = snip
+                        anchorChapterIdx = cIdx
+                        anchorParaIdx = pIdx
+                        currentTopSnippet = snip
+                    },
+                    onPinchStateChanged = { pinching, reqSync ->
+                        isPinching = pinching
+                        if (reqSync) {
+                            pendingTargetSync = true
+                        }
+                    }
+                )
         ) {
         // Optional Custom Background Image
         if (customBgUri.isNotBlank()) {
@@ -1810,359 +1573,15 @@ fun ReaderScreen(
         }
 
         // Optional Surface Texture Overlay (Grain, Parchment, Linen Weave, Artist Canvas, Kraft Fiber)
-        when (backgroundTexture) {
-            BackgroundTexture.GRAIN -> {
-                val isDark = currentThemeVariant == ThemeVariant.DARK
-                val grainShader = remember(isDark) {
-                    val tile = android.graphics.Bitmap.createBitmap(128, 128, android.graphics.Bitmap.Config.ARGB_8888)
-                    val canvas = android.graphics.Canvas(tile)
-                    val paint = android.graphics.Paint().apply {
-                        isAntiAlias = false
-                    }
-                    val dotColor = if (isDark) android.graphics.Color.WHITE else android.graphics.Color.BLACK
-                    paint.color = dotColor
-                    val maxAlpha = if (isDark) 30 else 42
-                    for (x in 0 until 128 step 2) {
-                        for (y in 0 until 128 step 2) {
-                            val hash = ((x * 374761393 + y * 668265263) xor (x * 1274126177)) and 0x7FFFFFFF
-                            if (hash % 5 <= 1) {
-                                val alpha = (hash % maxAlpha) + 8
-                                paint.alpha = alpha.coerceIn(0, 255)
-                                val r = if (hash % 7 == 0) 1.25f else 0.75f
-                                canvas.drawCircle(x.toFloat(), y.toFloat(), r, paint)
-                            }
-                        }
-                    }
-                    android.graphics.BitmapShader(tile, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
-                }
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val rollX = if (dynamicRollingTexture) (((getTextureScrollOffsetX() % 128) + 128) % 128).toFloat() else 0f
-                    val rollY = if (dynamicRollingTexture) (((getTextureScrollOffsetY() % 128) + 128) % 128).toFloat() else 0f
-                    withTransform({
-                        translate(left = -rollX, top = -rollY)
-                    }) {
-                        drawIntoCanvas { canvas ->
-                            val paint = androidx.compose.ui.graphics.Paint()
-                            paint.asFrameworkPaint().shader = grainShader
-                            canvas.drawRect(0f, 0f, size.width + 128f, size.height + 128f, paint)
-                        }
-                    }
-                }
-            }
-            BackgroundTexture.PARCHMENT -> {
-                val isDark = currentThemeVariant == ThemeVariant.DARK
-                val parchmentShader = remember(isDark) {
-                    val tile = android.graphics.Bitmap.createBitmap(128, 128, android.graphics.Bitmap.Config.ARGB_8888)
-                    val canvas = android.graphics.Canvas(tile)
-                    val paint = android.graphics.Paint().apply {
-                        isAntiAlias = true
-                    }
-                    val fiberColor = if (isDark) android.graphics.Color.rgb(190, 160, 120) else android.graphics.Color.rgb(110, 75, 35)
-                    paint.color = fiberColor
-                    val baseAlpha = if (isDark) 35 else 55
-                    for (i in 0..45) {
-                        val fx = ((i * 37 + 11) % 128).toFloat()
-                        val fy = ((i * 53 + 23) % 128).toFloat()
-                        val len = 8f + ((i * 13) % 22)
-                        val angle = ((i * 41) % 60 - 30) * (Math.PI / 180f)
-                        paint.alpha = (baseAlpha + (i * 7) % 35).coerceIn(0, 255)
-                        paint.strokeWidth = if (i % 3 == 0) 1.2f else 0.7f
-                        val endX = fx + (len * Math.cos(angle)).toFloat()
-                        val endY = fy + (len * Math.sin(angle)).toFloat()
-                        canvas.drawLine(fx, fy, endX, endY, paint)
-                    }
-                    android.graphics.BitmapShader(tile, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
-                }
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(
-                                    (if (isDark) Color(0xFF2E2419) else Color(0xFFE8D5B5)).copy(alpha = 0.20f),
-                                    Color.Transparent,
-                                    (if (isDark) Color(0xFF281E15) else Color(0xFFDEC39B)).copy(alpha = 0.25f)
-                                )
-                            )
-                        )
-                ) {
-                    Canvas(modifier = Modifier.fillMaxSize()) {
-                        val rollX = if (dynamicRollingTexture) (((getTextureScrollOffsetX() % 128) + 128) % 128).toFloat() else 0f
-                        val rollY = if (dynamicRollingTexture) (((getTextureScrollOffsetY() % 128) + 128) % 128).toFloat() else 0f
-                        withTransform({
-                            translate(left = -rollX, top = -rollY)
-                        }) {
-                            drawIntoCanvas { canvas ->
-                                val paint = androidx.compose.ui.graphics.Paint()
-                                paint.asFrameworkPaint().shader = parchmentShader
-                                canvas.drawRect(0f, 0f, size.width + 128f, size.height + 128f, paint)
-                            }
-                        }
-                    }
-                }
-            }
-            BackgroundTexture.LINEN -> {
-                val isDark = currentThemeVariant == ThemeVariant.DARK
-                val linenShader = remember(isDark) {
-                    val tile = android.graphics.Bitmap.createBitmap(48, 48, android.graphics.Bitmap.Config.ARGB_8888)
-                    val canvas = android.graphics.Canvas(tile)
-                    val paint = android.graphics.Paint().apply {
-                        isAntiAlias = true
-                    }
-                    val threadColor = if (isDark) android.graphics.Color.WHITE else android.graphics.Color.BLACK
-                    paint.color = threadColor
-                    val alphaMain = if (isDark) 35 else 48
-                    val alphaSub = if (isDark) 20 else 28
-
-                    for (pos in 0 until 48 step 8) {
-                        paint.alpha = alphaMain
-                        paint.strokeWidth = 1.0f
-                        canvas.drawLine(pos.toFloat(), 0f, pos.toFloat(), 48f, paint)
-                        canvas.drawLine(0f, pos.toFloat(), 48f, pos.toFloat(), paint)
-
-                        paint.alpha = alphaSub
-                        paint.strokeWidth = 0.6f
-                        canvas.drawLine((pos + 4).toFloat(), 0f, (pos + 4).toFloat(), 48f, paint)
-                        canvas.drawLine(0f, (pos + 4).toFloat(), 48f, (pos + 4).toFloat(), paint)
-                    }
-                    android.graphics.BitmapShader(tile, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
-                }
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val rollX = if (dynamicRollingTexture) (((getTextureScrollOffsetX() % 48) + 48) % 48).toFloat() else 0f
-                    val rollY = if (dynamicRollingTexture) (((getTextureScrollOffsetY() % 48) + 48) % 48).toFloat() else 0f
-                    withTransform({
-                        translate(left = -rollX, top = -rollY)
-                    }) {
-                        drawIntoCanvas { canvas ->
-                            val paint = androidx.compose.ui.graphics.Paint()
-                            paint.asFrameworkPaint().shader = linenShader
-                            canvas.drawRect(0f, 0f, size.width + 48f, size.height + 48f, paint)
-                        }
-                    }
-                }
-            }
-            BackgroundTexture.CANVAS -> {
-                val isDark = currentThemeVariant == ThemeVariant.DARK
-                val canvasShader = remember(isDark) {
-                    val tile = android.graphics.Bitmap.createBitmap(36, 36, android.graphics.Bitmap.Config.ARGB_8888)
-                    val canvas = android.graphics.Canvas(tile)
-                    val paint = android.graphics.Paint().apply {
-                        isAntiAlias = true
-                    }
-                    val color = if (isDark) android.graphics.Color.WHITE else android.graphics.Color.BLACK
-                    paint.color = color
-                    val alpha1 = if (isDark) 38 else 50
-                    val alpha2 = if (isDark) 22 else 32
-
-                    paint.strokeWidth = 1.1f
-                    paint.alpha = alpha1
-                    canvas.drawLine(0f, 0f, 36f, 36f, paint)
-                    canvas.drawLine(0f, 36f, 36f, 0f, paint)
-
-                    paint.strokeWidth = 0.7f
-                    paint.alpha = alpha2
-                    canvas.drawLine(18f, 0f, 36f, 18f, paint)
-                    canvas.drawLine(0f, 18f, 18f, 36f, paint)
-                    canvas.drawLine(18f, 0f, 0f, 18f, paint)
-                    canvas.drawLine(36f, 18f, 18f, 36f, paint)
-
-                    android.graphics.BitmapShader(tile, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
-                }
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val rollX = if (dynamicRollingTexture) (((getTextureScrollOffsetX() % 36) + 36) % 36).toFloat() else 0f
-                    val rollY = if (dynamicRollingTexture) (((getTextureScrollOffsetY() % 36) + 36) % 36).toFloat() else 0f
-                    withTransform({
-                        translate(left = -rollX, top = -rollY)
-                    }) {
-                        drawIntoCanvas { canvas ->
-                            val paint = androidx.compose.ui.graphics.Paint()
-                            paint.asFrameworkPaint().shader = canvasShader
-                            canvas.drawRect(0f, 0f, size.width + 36f, size.height + 36f, paint)
-                        }
-                    }
-                }
-            }
-            BackgroundTexture.KRAFT -> {
-                val isDark = currentThemeVariant == ThemeVariant.DARK
-                val kraftShader = remember(isDark) {
-                    val tile = android.graphics.Bitmap.createBitmap(128, 128, android.graphics.Bitmap.Config.ARGB_8888)
-                    val canvas = android.graphics.Canvas(tile)
-                    val paint = android.graphics.Paint().apply {
-                        isAntiAlias = true
-                    }
-                    val darkFleck = if (isDark) android.graphics.Color.rgb(210, 175, 125) else android.graphics.Color.rgb(80, 50, 20)
-                    val lightFleck = if (isDark) android.graphics.Color.rgb(140, 110, 75) else android.graphics.Color.rgb(160, 120, 70)
-
-                    for (i in 0..60) {
-                        val px = ((i * 47 + 7) % 128).toFloat()
-                        val py = ((i * 71 + 19) % 128).toFloat()
-                        paint.color = if (i % 2 == 0) darkFleck else lightFleck
-                        paint.alpha = (30 + (i * 9) % 45).coerceIn(0, 255)
-                        val w = 1.2f + ((i * 3) % 4) * 0.7f
-                        val h = 0.8f + ((i * 5) % 3) * 0.6f
-                        canvas.drawRect(px, py, px + w, py + h, paint)
-                    }
-                    android.graphics.BitmapShader(tile, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
-                }
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background((if (isDark) Color(0xFF382A1C) else Color(0xFFB88C56)).copy(alpha = 0.10f))
-                ) {
-                    Canvas(modifier = Modifier.fillMaxSize()) {
-                        val rollX = if (dynamicRollingTexture) (((getTextureScrollOffsetX() % 128) + 128) % 128).toFloat() else 0f
-                        val rollY = if (dynamicRollingTexture) (((getTextureScrollOffsetY() % 128) + 128) % 128).toFloat() else 0f
-                        withTransform({
-                            translate(left = -rollX, top = -rollY)
-                        }) {
-                            drawIntoCanvas { canvas ->
-                                val paint = androidx.compose.ui.graphics.Paint()
-                                paint.asFrameworkPaint().shader = kraftShader
-                                canvas.drawRect(0f, 0f, size.width + 128f, size.height + 128f, paint)
-                            }
-                        }
-                    }
-                }
-            }
-            BackgroundTexture.RULED_FINE -> {
-                val isDark = currentThemeVariant == ThemeVariant.DARK
-                val ruledFineShader = remember(isDark) {
-                    val tileHeight = 72
-                    val tileWidth = 32
-                    val tile = android.graphics.Bitmap.createBitmap(tileWidth, tileHeight, android.graphics.Bitmap.Config.ARGB_8888)
-                    val canvas = android.graphics.Canvas(tile)
-                    val paint = android.graphics.Paint().apply {
-                        isAntiAlias = true
-                        strokeWidth = 1.0f
-                        color = if (isDark) android.graphics.Color.argb(35, 160, 185, 210) else android.graphics.Color.argb(45, 70, 110, 160)
-                    }
-                    canvas.drawLine(0f, (tileHeight - 1).toFloat(), tileWidth.toFloat(), (tileHeight - 1).toFloat(), paint)
-                    android.graphics.BitmapShader(tile, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
-                }
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val rollY = if (dynamicRollingTexture) (((getTextureScrollOffsetY() % 72) + 72) % 72).toFloat() else 0f
-                    withTransform({
-                        translate(left = 0f, top = -rollY)
-                    }) {
-                        drawIntoCanvas { canvas ->
-                            val paint = androidx.compose.ui.graphics.Paint()
-                            paint.asFrameworkPaint().shader = ruledFineShader
-                            canvas.drawRect(0f, 0f, size.width, size.height + 72f, paint)
-                        }
-                    }
-                }
-            }
-            BackgroundTexture.RULED_WIDE -> {
-                val isDark = currentThemeVariant == ThemeVariant.DARK
-                val ruledWideShader = remember(isDark) {
-                    val tileHeight = 112
-                    val tileWidth = 32
-                    val tile = android.graphics.Bitmap.createBitmap(tileWidth, tileHeight, android.graphics.Bitmap.Config.ARGB_8888)
-                    val canvas = android.graphics.Canvas(tile)
-                    val paint = android.graphics.Paint().apply {
-                        isAntiAlias = true
-                        strokeWidth = 1.2f
-                        color = if (isDark) android.graphics.Color.argb(38, 170, 190, 215) else android.graphics.Color.argb(48, 80, 100, 140)
-                    }
-                    canvas.drawLine(0f, (tileHeight - 1).toFloat(), tileWidth.toFloat(), (tileHeight - 1).toFloat(), paint)
-                    android.graphics.BitmapShader(tile, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
-                }
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val rollY = if (dynamicRollingTexture) (((getTextureScrollOffsetY() % 112) + 112) % 112).toFloat() else 0f
-                    withTransform({
-                        translate(left = 0f, top = -rollY)
-                    }) {
-                        drawIntoCanvas { canvas ->
-                            val paint = androidx.compose.ui.graphics.Paint()
-                            paint.asFrameworkPaint().shader = ruledWideShader
-                            canvas.drawRect(0f, 0f, size.width, size.height + 112f, paint)
-                        }
-                    }
-                }
-            }
-            BackgroundTexture.RULED_GRID -> {
-                val isDark = currentThemeVariant == ThemeVariant.DARK
-                val gridShader = remember(isDark) {
-                    val tileSize = 64
-                    val tile = android.graphics.Bitmap.createBitmap(tileSize, tileSize, android.graphics.Bitmap.Config.ARGB_8888)
-                    val canvas = android.graphics.Canvas(tile)
-                    val paint = android.graphics.Paint().apply {
-                        isAntiAlias = true
-                        strokeWidth = 0.9f
-                        color = if (isDark) android.graphics.Color.argb(30, 160, 185, 210) else android.graphics.Color.argb(40, 75, 105, 150)
-                    }
-                    canvas.drawLine(0f, (tileSize - 1).toFloat(), tileSize.toFloat(), (tileSize - 1).toFloat(), paint)
-                    canvas.drawLine((tileSize - 1).toFloat(), 0f, (tileSize - 1).toFloat(), tileSize.toFloat(), paint)
-                    android.graphics.BitmapShader(tile, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
-                }
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val rollX = if (dynamicRollingTexture) (((getTextureScrollOffsetX() % 64) + 64) % 64).toFloat() else 0f
-                    val rollY = if (dynamicRollingTexture) (((getTextureScrollOffsetY() % 64) + 64) % 64).toFloat() else 0f
-                    withTransform({
-                        translate(left = -rollX, top = -rollY)
-                    }) {
-                        drawIntoCanvas { canvas ->
-                            val paint = androidx.compose.ui.graphics.Paint()
-                            paint.asFrameworkPaint().shader = gridShader
-                            canvas.drawRect(0f, 0f, size.width + 64f, size.height + 64f, paint)
-                        }
-                    }
-                }
-            }
-            BackgroundTexture.CUSTOM -> {
-                val activeTexture = remember(customTextures, selectedCustomTextureId) {
-                    customTextures.find { it.id == selectedCustomTextureId } ?: customTextures.firstOrNull()
-                }
-                if (activeTexture != null) {
-                    val customBitmap = remember(activeTexture.id, activeTexture.imagePath) {
-                        try {
-                            val f = java.io.File(activeTexture.imagePath)
-                            if (f.exists()) {
-                                io.github.tasmirz.lumina.ui.components.bitmapCache.get(f.absolutePath)
-                                    ?: android.graphics.BitmapFactory.decodeFile(f.absolutePath)?.also {
-                                        io.github.tasmirz.lumina.ui.components.bitmapCache.put(f.absolutePath, it)
-                                    }
-                            } else null
-                        } catch (_: Exception) { null }
-                    }
-                    if (customBitmap != null) {
-                        if (activeTexture.isTiled) {
-                            val shader = remember(customBitmap) {
-                                android.graphics.BitmapShader(customBitmap, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
-                            }
-                            Canvas(modifier = Modifier.fillMaxSize()) {
-                                val tileW = customBitmap.width.coerceAtLeast(1)
-                                val tileH = customBitmap.height.coerceAtLeast(1)
-                                val rollX = if (dynamicRollingTexture) (((getTextureScrollOffsetX() % tileW) + tileW) % tileW).toFloat() else 0f
-                                val rollY = if (dynamicRollingTexture) (((getTextureScrollOffsetY() % tileH) + tileH) % tileH).toFloat() else 0f
-                                withTransform({
-                                    translate(left = -rollX, top = -rollY)
-                                }) {
-                                    drawIntoCanvas { canvas ->
-                                        val paint = androidx.compose.ui.graphics.Paint()
-                                        paint.alpha = activeTexture.opacity.coerceIn(0.05f, 1.0f)
-                                        paint.asFrameworkPaint().shader = shader
-                                        canvas.drawRect(0f, 0f, size.width + tileW.toFloat(), size.height + tileH.toFloat(), paint)
-                                    }
-                                }
-                            }
-                        } else {
-                            val imgBitmap = remember(customBitmap) {
-                                customBitmap.asImageBitmap()
-                            }
-                            Canvas(modifier = Modifier.fillMaxSize()) {
-                                drawImage(
-                                    image = imgBitmap,
-                                    dstSize = androidx.compose.ui.unit.IntSize(size.width.toInt(), size.height.toInt()),
-                                    alpha = activeTexture.opacity.coerceIn(0.05f, 1.0f)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-            BackgroundTexture.NONE -> {}
-        }
+        ReaderTextureOverlay(
+            backgroundTexture = backgroundTexture,
+            currentThemeVariant = currentThemeVariant,
+            dynamicRollingTexture = dynamicRollingTexture,
+            getTextureScrollOffsetX = getTextureScrollOffsetX,
+            getTextureScrollOffsetY = getTextureScrollOffsetY,
+            customTextures = customTextures,
+            selectedCustomTextureId = selectedCustomTextureId
+        )
 
         if (readingMode == ReadingMode.SCROLL) {
                     LaunchedEffect(listState) {
@@ -2255,6 +1674,7 @@ fun ReaderScreen(
                         speakingParaIdx = speakingParaIdx,
                         isTtsSpeaking = isTtsSpeaking,
                         inlineImageWidthFraction = inlineImageWidthFraction,
+                        imageFilterMode = imageFilterMode,
                         inBookSearchQuery = inBookSearchQuery,
                         inBookSearchResults = inBookSearchResults,
                         inBookCurrentMatchIndex = inBookCurrentMatchIndex,
@@ -2381,9 +1801,9 @@ fun ReaderScreen(
                             // Sequential read commits progress. If reader skips front-matter (covers, TOC),
                             // steady reading of consecutive pages detects active reading and commits position.
                             val pageDwellMs = (autoSaveDwellSeconds.coerceIn(1, 60) * 1000L)
-                            if (currentPage == lastVerifiedReadPage + 1 || (lastVerifiedReadPage == 0 && currentPage == 0)) {
+                            if (currentPage in (lastVerifiedReadPage + 1)..(lastVerifiedReadPage + 4) || (lastVerifiedReadPage == 0 && currentPage == 0)) {
                                 delay(pageDwellMs)
-                                lastVerifiedReadPage = currentPage
+                                lastVerifiedReadPage = maxOf(lastVerifiedReadPage, currentPage)
                                 consecutiveSteadyPages = 0
                                 lastDwellPage = currentPage
                                 repository?.setVerifiedPage(book.id, currentPage)
@@ -2413,7 +1833,7 @@ fun ReaderScreen(
                             } else if (smartConsecutiveAutoSave) {
                                 // Skipped ahead (e.g. skipped front-matter from page 0 to 4):
                                 delay(pageDwellMs)
-                                if (lastDwellPage >= 0 && currentPage == lastDwellPage + 1) {
+                                if (lastDwellPage >= 0 && currentPage in (lastDwellPage + 1)..(lastDwellPage + 2)) {
                                     consecutiveSteadyPages += 1
                                 } else {
                                     consecutiveSteadyPages = 1
@@ -2451,6 +1871,8 @@ fun ReaderScreen(
                         pagedSwipeThreshold = pagedSwipeThreshold,
                         horizontalPadding = horizontalPadding,
                         verticalPadding = verticalPadding,
+                        pagedBottomClearanceDp = pagedBottomClearanceDp,
+                        imageFilterMode = imageFilterMode,
                         statusBarTopInset = statusBarTopInset,
                         progressBottomInset = progressBottomInset,
                         effectiveStartPadding = effectiveStartPadding,
