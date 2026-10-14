@@ -58,6 +58,7 @@ fun ReaderBottomDock(
     onOpenSearch: () -> Unit = {},
     onOpenBookmarks: () -> Unit,
     onOpenReadingSettings: () -> Unit,
+    landscapeHideProgress: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val view = LocalView.current
@@ -81,7 +82,15 @@ fun ReaderBottomDock(
 
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-    val isVisible = (if (isLandscape) isUiVisible else (isUiVisible || readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL)) && voiceState == AssistantVoiceState.IDLE
+    val isVisible = (if (isLandscape) {
+        if (readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL) {
+            if (landscapeHideProgress) false else isUiVisible
+        } else {
+            isUiVisible
+        }
+    } else {
+        (isUiVisible || readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL)
+    }) && voiceState == AssistantVoiceState.IDLE
 
     LaunchedEffect(showReadTillFeedback) {
         if (showReadTillFeedback) {

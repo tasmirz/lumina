@@ -203,30 +203,45 @@ object BookImportManager {
     }
 
     fun reparseBook(repository: BookRepository, bookId: String): Book? {
-        val book = repository._books.value.find { it.id == bookId } ?: repository.dbHelper.getAllBooks().find { it.id == bookId } ?: return null
-        if (book.filePath.isBlank()) return null
-        val file = File(book.filePath)
-        if (!file.exists() || file.length() == 0L) return null
+        try {
+            val book = repository._books.value.find { it.id == bookId }
+                ?: repository.dbHelper.getAllBooks().find { it.id == bookId }
+                ?: return null
+            if (book.filePath.isBlank()) return null
+            val file = File(book.filePath)
+            if (!file.exists() || file.length() == 0L) return null
 
-        val parsed = file.inputStream().use { stream ->
-            EpubParser.parseEpub(stream, file.name, repository.context, book.id)
+            val parsed = try {
+                file.inputStream().use { stream ->
+                    EpubParser.parseEpub(stream, file.name, repository.context, book.id)
+                }
+            } catch (t: Throwable) {
+                io.github.tasmirz.lumina.util.LuminaLog.e("BookImportManager", "Failed to parse epub during re-parse", t)
+                return null
+            }
+            if (parsed.chapters.isEmpty()) return null
+
+            val clampedCurrentChapter = book.currentChapter.coerceIn(0, (parsed.chapters.size - 1).coerceAtLeast(0))
+
+            val updatedBook = book.copy(
+                title = parsed.title.ifBlank { book.title },
+                author = if (parsed.author != "Unknown Author") parsed.author else book.author,
+                coverUrl = parsed.coverUrl.ifBlank { book.coverUrl },
+                chapters = parsed.chapters,
+                language = parsed.language.ifBlank { book.language },
+                fileSize = file.length(),
+                currentChapter = clampedCurrentChapter
+            )
+
+            PageCache.invalidate(bookId, repository.dbHelper)
+            repository.chapterCache.remove(bookId)
+            repository.dbHelper.saveChaptersForBook(bookId, parsed.chapters)
+            addBook(repository, updatedBook)
+            return updatedBook
+        } catch (t: Throwable) {
+            io.github.tasmirz.lumina.util.LuminaLog.e("BookImportManager", "Error in reparseBook for bookId=$bookId", t)
+            return null
         }
-        if (parsed.chapters.isEmpty()) return null
-
-        val updatedBook = book.copy(
-            title = parsed.title.ifBlank { book.title },
-            author = if (parsed.author != "Unknown Author") parsed.author else book.author,
-            coverUrl = parsed.coverUrl.ifBlank { book.coverUrl },
-            chapters = parsed.chapters,
-            language = parsed.language.ifBlank { book.language },
-            fileSize = file.length()
-        )
-
-        PageCache.invalidate(bookId, repository.dbHelper)
-        repository.chapterCache.remove(bookId)
-        repository.dbHelper.saveChaptersForBook(bookId, parsed.chapters)
-        addBook(repository, updatedBook)
-        return updatedBook
     }
 
     fun removeBook(repository: BookRepository, bookId: String) {

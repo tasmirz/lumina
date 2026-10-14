@@ -805,7 +805,7 @@ fun SettingsThemesTypographySection(
                     )
                     IconButton(
                         onClick = {
-                            val newSize = (currentFontSize + 1).coerceAtMost(36)
+                            val newSize = (currentFontSize + 1).coerceAtMost(48)
                             repository?.setFontSize(newSize)
                             onFontSizeChange(newSize)
                         },
@@ -823,8 +823,8 @@ fun SettingsThemesTypographySection(
                     repository?.setFontSize(s)
                     onFontSizeChange(s)
                 },
-                valueRange = 12f..36f,
-                steps = 23,
+                valueRange = 12f..48f,
+                steps = 35,
                 modifier = Modifier.fillMaxWidth()
             )
 

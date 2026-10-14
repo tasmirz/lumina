@@ -55,6 +55,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
 import io.github.tasmirz.lumina.data.BookRepository
 import io.github.tasmirz.lumina.data.DictionaryService
 import io.github.tasmirz.lumina.data.EpubParser
@@ -223,6 +224,7 @@ class MainActivity : ComponentActivity() {
             var showBookmarksSheet by rememberSaveable { mutableStateOf(false) }
             var showAppearanceSheet by rememberSaveable { mutableStateOf(false) }
             var showAdvancedSettingsScreen by rememberSaveable { mutableStateOf(false) }
+            var previousTabBeforeSettings by rememberSaveable { mutableStateOf(currentTab) }
             var showAddBookSheet by rememberSaveable { mutableStateOf(false) }
             var showNavBarInReader by rememberSaveable { mutableStateOf(false) }
             var isFullscreen by rememberSaveable { mutableStateOf(false) }
@@ -258,12 +260,17 @@ class MainActivity : ComponentActivity() {
             }
 
             var isImportingBook by rememberSaveable { mutableStateOf(false) }
+            var isImportDialogVisible by rememberSaveable { mutableStateOf(false) }
+            var importingBookTitle by rememberSaveable { mutableStateOf<String?>(null) }
 
             // Handle incoming EPUB intent (open from file manager, browser, share sheet)
             LaunchedEffect(pendingImportUri) {
                 val uri = pendingImportUri
                 if (uri != null) {
+                    val rawName = uri.lastPathSegment?.substringAfterLast('/')?.removeSuffix(".epub") ?: "New Book"
+                    importingBookTitle = rawName.replace("_", " ").replace("-", " ")
                     isImportingBook = true
+                    isImportDialogVisible = true
                     try {
                         val importedBook = withContext(Dispatchers.IO) {
                             bookRepository.importEpubFromUri(uri)
@@ -276,6 +283,8 @@ class MainActivity : ComponentActivity() {
                         }
                     } finally {
                         isImportingBook = false
+                        isImportDialogVisible = false
+                        importingBookTitle = null
                         pendingImportUri = null
                     }
                 }
@@ -287,7 +296,10 @@ class MainActivity : ComponentActivity() {
             ) { uri: Uri? ->
                 if (uri != null) {
                     coroutineScope.launch {
+                        val rawName = uri.lastPathSegment?.substringAfterLast('/')?.removeSuffix(".epub") ?: "New Book"
+                        importingBookTitle = rawName.replace("_", " ").replace("-", " ")
                         isImportingBook = true
+                        isImportDialogVisible = true
                         try {
                             val importedBook = withContext(Dispatchers.IO) {
                                 bookRepository.importEpubFromUri(uri)
@@ -300,6 +312,8 @@ class MainActivity : ComponentActivity() {
                             }
                         } finally {
                             isImportingBook = false
+                            isImportDialogVisible = false
+                            importingBookTitle = null
                         }
                     }
                 }
@@ -314,6 +328,7 @@ class MainActivity : ComponentActivity() {
             ) {
                 BackHandler(enabled = showAdvancedSettingsScreen) {
                     showAdvancedSettingsScreen = false
+                    currentTab = previousTabBeforeSettings
                 }
                 BackHandler(enabled = !showAdvancedSettingsScreen && currentTab != ScreenTab.LIBRARY) {
                     currentTab = ScreenTab.LIBRARY
@@ -357,13 +372,20 @@ class MainActivity : ComponentActivity() {
                                         bookRepository.updateReadingPosition(bookId, 0, 0, 0, 0)
                                     },
                                     onReparseBook = { bookId ->
-                                        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-                                            val updated = bookRepository.reparseBook(bookId)
-                                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                                                if (updated != null) {
-                                                    android.widget.Toast.makeText(this@MainActivity, "Re-parsed \"${updated.title}\"", android.widget.Toast.LENGTH_SHORT).show()
-                                                } else {
-                                                    android.widget.Toast.makeText(this@MainActivity, "Failed to re-parse book", android.widget.Toast.LENGTH_SHORT).show()
+                                        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                            try {
+                                                val updated = bookRepository.reparseBook(bookId)
+                                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                                    if (updated != null) {
+                                                        android.widget.Toast.makeText(this@MainActivity, "Re-parsed \"${updated.title}\"", android.widget.Toast.LENGTH_SHORT).show()
+                                                    } else {
+                                                        android.widget.Toast.makeText(this@MainActivity, "Failed to re-parse book", android.widget.Toast.LENGTH_SHORT).show()
+                                                    }
+                                                }
+                                            } catch (t: Throwable) {
+                                                io.github.tasmirz.lumina.util.LuminaLog.e("MainActivity", "Error reparsing book", t)
+                                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                                    android.widget.Toast.makeText(this@MainActivity, "Error re-parsing book", android.widget.Toast.LENGTH_SHORT).show()
                                                 }
                                             }
                                         }
@@ -380,17 +402,18 @@ class MainActivity : ComponentActivity() {
                                     onShareReadingList = {
                                         bookRepository.shareReadingList(this@MainActivity)
                                     },
-                                    triggerSearchFocus = triggerLibrarySearchFocus
+                                    triggerSearchFocus = triggerLibrarySearchFocus,
+                                    importingBookTitle = importingBookTitle
                                 )
                             }
                             ScreenTab.READER -> {
                                 var readerBookWithChapters by remember(activeBook?.id) {
                                     mutableStateOf(
-                                        if (activeBook?.chapters?.isNotEmpty() == true) {
+                                        if (activeBook?.chapters?.any { it.paragraphs.isNotEmpty() } == true) {
                                             activeBook
                                         } else if (activeBook != null) {
                                             val cached = bookRepository.getCachedChapters(activeBook.id)
-                                            if (cached != null && cached.isNotEmpty()) activeBook.copy(chapters = cached) else null
+                                            if (cached != null && cached.any { it.paragraphs.isNotEmpty() }) activeBook.copy(chapters = cached) else null
                                         } else {
                                             null
                                         }
@@ -398,13 +421,13 @@ class MainActivity : ComponentActivity() {
                                 }
                                 LaunchedEffect(activeBook?.id) {
                                     if (activeBook != null) {
-                                        if (readerBookWithChapters?.id == activeBook.id && readerBookWithChapters?.chapters?.isNotEmpty() == true) {
-                                            // Chapters already loaded and up-to-date
-                                        } else if (activeBook.chapters.isNotEmpty()) {
+                                        if (readerBookWithChapters?.id == activeBook.id && readerBookWithChapters?.chapters?.any { it.paragraphs.isNotEmpty() } == true) {
+                                            // Chapters already loaded and up-to-date with full paragraphs
+                                        } else if (activeBook.chapters.any { it.paragraphs.isNotEmpty() }) {
                                             readerBookWithChapters = activeBook
                                         } else {
                                             val cached = bookRepository.getCachedChapters(activeBook.id)
-                                            if (cached != null && cached.isNotEmpty()) {
+                                            if (cached != null && cached.any { it.paragraphs.isNotEmpty() }) {
                                                 readerBookWithChapters = activeBook.copy(chapters = cached)
                                             } else {
                                                 val chaps = withContext(Dispatchers.IO) {
@@ -472,7 +495,10 @@ class MainActivity : ComponentActivity() {
                                         repository = bookRepository,
                                         onThemeFamilyChange = { bookRepository.setThemeFamily(it) },
                                         onThemeVariantChange = { bookRepository.setThemeVariant(it) },
-                                        onOpenAdvancedSettings = { showAdvancedSettingsScreen = true }
+                                        onOpenAdvancedSettings = {
+                                            previousTabBeforeSettings = currentTab
+                                            showAdvancedSettingsScreen = true
+                                        }
                                     )
                                 } else if (activeBook != null) {
                                     StartupLoadingScreen()
@@ -686,7 +712,10 @@ class MainActivity : ComponentActivity() {
                                 onParagraphSpacingChange = { bookRepository.setParagraphSpacing(it) },
                                 currentLanguage = preferredLanguage,
                                 onLanguageChange = { bookRepository.setPreferredLanguage(it) },
-                                onOpenAdvancedSettings = { showAdvancedSettingsScreen = true },
+                                onOpenAdvancedSettings = {
+                                    previousTabBeforeSettings = currentTab
+                                    showAdvancedSettingsScreen = true
+                                },
                                 onDismiss = { showAppearanceSheet = false }
                             )
                         }
@@ -737,7 +766,10 @@ class MainActivity : ComponentActivity() {
                                 onGeminiApiKeyChange = { bookRepository.setGeminiApiKey(it) },
                                 openLibraryApiKey = openLibraryApiKey,
                                 onOpenLibraryApiKeyChange = { bookRepository.setOpenLibraryApiKey(it) },
-                                onBack = { showAdvancedSettingsScreen = false }
+                                onBack = {
+                                    showAdvancedSettingsScreen = false
+                                    currentTab = previousTabBeforeSettings
+                                }
                             )
                         }
 
@@ -768,13 +800,15 @@ class MainActivity : ComponentActivity() {
                             )
                         }
 
-                        // Import Loading Overlay Modal
-                        if (isImportingBook) {
+                        // Import Loading Overlay Modal (allows dismiss on back press or button to continue in background)
+                        if (isImportingBook && isImportDialogVisible) {
                             Dialog(
-                                onDismissRequest = {},
+                                onDismissRequest = {
+                                    isImportDialogVisible = false
+                                },
                                 properties = DialogProperties(
-                                    dismissOnBackPress = false,
-                                    dismissOnClickOutside = false
+                                    dismissOnBackPress = true,
+                                    dismissOnClickOutside = true
                                 )
                             ) {
                                 Surface(
@@ -802,12 +836,23 @@ class MainActivity : ComponentActivity() {
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
                                         Text(
-                                            text = "Reading EPUB archive and extracting chapters...",
+                                            text = "Reading EPUB archive and extracting chapters...\nPress back to let it finish in the background.",
                                             style = MaterialTheme.typography.bodySmall,
                                             fontWeight = FontWeight.Light,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             textAlign = TextAlign.Center
                                         )
+                                        TextButton(
+                                            onClick = { isImportDialogVisible = false },
+                                            modifier = Modifier.padding(top = 4.dp)
+                                        ) {
+                                            Text(
+                                                text = "Continue in Background",
+                                                style = MaterialTheme.typography.labelLarge,
+                                                fontWeight = FontWeight.Normal,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
                                     }
                                 }
                             }

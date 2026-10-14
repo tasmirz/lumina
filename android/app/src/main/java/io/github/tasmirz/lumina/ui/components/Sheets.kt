@@ -582,7 +582,7 @@ fun AppearanceSheet(
     onThemeChange: (ThemeMode) -> Unit = {},
     showAssistant: Boolean = true,
     onToggleAssistant: (Boolean) -> Unit = {},
-    orbSize: OrbSize = OrbSize.NANO,
+    orbSize: OrbSize = OrbSize.DEFAULT,
     onOrbSizeChange: (OrbSize) -> Unit = {},
     orbMenuSize: OrbMenuSize = OrbMenuSize.MEDIUM,
     onOrbMenuSizeChange: (OrbMenuSize) -> Unit = {},

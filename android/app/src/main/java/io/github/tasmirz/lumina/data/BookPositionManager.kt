@@ -100,12 +100,13 @@ object BookPositionManager {
             .putInt("${bookId}_progress", clamped)
             .apply()
 
+        val dynamicTime = computeDynamicTimeRemaining(repository, bookId, clamped)
         repository.repoScope.launch {
             try {
                 val book = repository._books.value.find { it.id == bookId }
                 if (book != null) {
-                    repository.dbHelper.updateReadingProgress(bookId, book.title, book.author, clamped, "${100 - clamped}m left")
-                    repository.dbHelper.updateBookProgress(bookId, chapterIdx, pageIdx, scrollPos, clamped)
+                    repository.dbHelper.updateReadingProgress(bookId, book.title, book.author, clamped, dynamicTime)
+                    repository.dbHelper.updateBookProgress(bookId, chapterIdx, pageIdx, scrollPos, clamped, "Just now", dynamicTime)
                 }
             } catch (_: Exception) {}
         }
@@ -153,6 +154,7 @@ object BookPositionManager {
         repository.readingPositionSaveJob = repository.repoScope.launch {
             kotlinx.coroutines.delay(800)
             try {
+                val dynamicTime = computeDynamicTimeRemaining(repository, bookId, progressPct)
                 val updated = repository._books.value.map {
                     if (it.id == bookId) {
                         it.copy(
@@ -160,7 +162,8 @@ object BookPositionManager {
                             currentPage = pageIdx,
                             scrollPos = scrollPos,
                             progress = progressPct,
-                            lastRead = "Just now"
+                            lastRead = "Just now",
+                            readTimeLeft = dynamicTime
                         )
                     } else it
                 }
@@ -168,11 +171,60 @@ object BookPositionManager {
 
                 val book = updated.find { it.id == bookId }
                 if (book != null) {
-                    repository.dbHelper.updateReadingProgress(bookId, book.title, book.author, progressPct, "${100 - progressPct}m left")
-                    repository.dbHelper.updateBookProgress(bookId, chapterIdx, pageIdx, scrollPos, progressPct)
+                    repository.dbHelper.updateReadingProgress(bookId, book.title, book.author, progressPct, dynamicTime)
+                    repository.dbHelper.updateBookProgress(bookId, chapterIdx, pageIdx, scrollPos, progressPct, "Just now", dynamicTime)
                 }
             } catch (_: Exception) {}
         }
+    }
+
+    fun computeDynamicTimeRemaining(
+        repository: BookRepository,
+        bookId: String,
+        currentProgressPct: Int
+    ): String {
+        val clampedProg = currentProgressPct.coerceIn(0, 100)
+        if (clampedProg >= 100) return "Finished"
+
+        val learnedWpm = repository.prefs.getInt("learned_wpm_${bookId}", repository.prefs.getInt("global_learned_wpm", 220)).coerceIn(80, 800)
+        val book = repository._books.value.find { it.id == bookId }
+
+        val remainingFraction = (100 - clampedProg) / 100.0f
+        val totalCharsEst = if (book != null && book.chapters.isNotEmpty()) {
+            val sum = book.chapters.sumOf { chap -> chap.paragraphs.sumOf { it.length } }
+            if (sum > 500) sum else book.chapters.size * 3200
+        } else {
+            50_000
+        }
+        val remainingChars = (totalCharsEst * remainingFraction).toInt()
+        val charsPerMin = (learnedWpm * 5.0f).coerceAtLeast(300f)
+        val minsLeft = kotlin.math.ceil(remainingChars / charsPerMin).toInt().coerceAtLeast(1)
+
+        return if (minsLeft >= 60) {
+            val hours = minsLeft / 60
+            val remMins = minsLeft % 60
+            if (remMins > 0) "${hours}h ${remMins}m left" else "${hours}h left"
+        } else {
+            "${minsLeft}m left"
+        }
+    }
+
+    fun recordReadingDwell(
+        repository: BookRepository,
+        bookId: String,
+        charsRead: Int,
+        dwellSeconds: Long
+    ) {
+        if (charsRead <= 20 || dwellSeconds < 3L || dwellSeconds > 180L) return
+        val wpmThisSession = ((charsRead / 5.0f) / (dwellSeconds / 60.0f)).toInt().coerceIn(60, 900)
+        val currentLearned = repository.prefs.getInt("learned_wpm_${bookId}", repository.prefs.getInt("global_learned_wpm", 220))
+        // Smooth exponential moving average (EMA alpha = 0.25)
+        val updatedWpm = ((currentLearned * 0.75f) + (wpmThisSession * 0.25f)).toInt().coerceIn(80, 800)
+
+        repository.prefs.edit()
+            .putInt("learned_wpm_${bookId}", updatedWpm)
+            .putInt("global_learned_wpm", updatedWpm)
+            .apply()
     }
 
     fun updateCharacterCheckpoint(

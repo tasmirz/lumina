@@ -53,6 +53,11 @@ class EpubParserTest {
         assertTrue(EpubParser.isHeadingOnly("Nineteen Eighty-Four", "Chapter 1", "Nineteen Eighty-Four", "Part One"))
         assertTrue(EpubParser.isHeadingOnly("Chapter 2", "Chapter 2", "Book Title", ""))
         assertTrue(EpubParser.isHeadingOnly("Chapter IV", "Chapter IV", "Book Title", ""))
+        assertTrue(EpubParser.isHeadingOnly("I.", "I. A SCANDAL IN BOHEMIA", "The Adventures of Sherlock Holmes", ""))
+        assertTrue(EpubParser.isHeadingOnly("A SCANDAL IN BOHEMIA", "I. A SCANDAL IN BOHEMIA", "The Adventures of Sherlock Holmes", ""))
+        assertTrue(EpubParser.isHeadingOnly("ADVENTURE I. A SCANDAL IN BOHEMIA", "I. A SCANDAL IN BOHEMIA", "The Adventures of Sherlock Holmes", ""))
+        assertTrue(EpubParser.isHeadingOnly("IV.", "Chapter IV", "Book Title", ""))
+        assertTrue(EpubParser.isHeadingOnly("III", "Chapter 3", "Book Title", ""))
         org.junit.Assert.assertFalse(EpubParser.isHeadingOnly(
             "It was a bright cold day in April, and the clocks were striking thirteen.",
             "Chapter 1",
@@ -571,6 +576,78 @@ class EpubParserTest {
         println("PARAS: " + paras.joinToString(" || "))
         assertTrue(paras.contains("[DIVIDER]"))
         assertTrue(paras.any { it.startsWith("Abstract—") && it.contains("Clickbait headlines") })
+    }
+
+    @Test
+    fun testParseHtmlTableTheadWithTdAndRowspanTracking() {
+        val tableHtml = """
+            <table>
+              <thead>
+                <tr>
+                  <td>Category</td>
+                  <td>Pattern</td>
+                  <td>Description</td>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td rowspan="2">Metacharacters</td>
+                  <td>.</td>
+                  <td>Matches any character</td>
+                </tr>
+                <tr>
+                  <td>^</td>
+                  <td>Matches start</td>
+                </tr>
+              </tbody>
+            </table>
+        """.trimIndent()
+        val json = EpubParser.parseHtmlTable(tableHtml)
+        org.junit.Assert.assertNotNull(json)
+        val obj = org.json.JSONObject(json!!)
+        val headers = obj.getJSONArray("headers")
+        assertEquals(3, headers.length())
+        assertEquals("Category", headers.getString(0))
+        assertEquals("Pattern", headers.getString(1))
+        assertEquals("Description", headers.getString(2))
+
+        val rows = obj.getJSONArray("rows")
+        assertEquals(2, rows.length())
+
+        val row0 = rows.getJSONArray(0)
+        assertEquals("Metacharacters", row0.getString(0))
+        assertEquals(".", row0.getString(1))
+        assertEquals("Matches any character", row0.getString(2))
+
+        // Row 1 must have 'Metacharacters' filled from rowspan="2"
+        val row1 = rows.getJSONArray(1)
+        assertEquals("Metacharacters", row1.getString(0))
+        assertEquals("^", row1.getString(1))
+        assertEquals("Matches start", row1.getString(2))
+    }
+
+    @Test
+    fun testAbstractRegexLookbehindFixDoesNotThrowPatternSyntaxException() {
+        val rawHtml = """
+            <p>Some previous text</p>
+            <hr />
+            <p>Abstract—This paper proposes a deep learning framework.</p>
+        """.trimIndent()
+        // cleanHtmlToParagraphs should process without throwing PatternSyntaxException
+        val paragraphs = EpubParser.cleanHtmlToParagraphs(rawHtml)
+        assertTrue(paragraphs.any { it.contains("Abstract") })
+    }
+
+    @Test
+    fun testParsePhysMLEEpubIfExists() {
+        val file = java.io.File("/extra/Projects/sp-cup/docs/epubs/PhysMLE_TPAMI_2025.epub")
+        if (file.exists()) {
+            file.inputStream().use { stream ->
+                val book = EpubParser.parseEpub(stream, file.name)
+                assertTrue(book.title.isNotBlank())
+                assertTrue(book.chapters.isNotEmpty())
+            }
+        }
     }
 }
 

@@ -21,6 +21,7 @@ import java.net.HttpURLConnection
 import java.net.SocketTimeoutException
 import java.net.URL
 import java.net.UnknownHostException
+import org.json.JSONObject
 
 data class DownloadProgressState(
     val bookId: String,
@@ -141,13 +142,31 @@ class LuminaDownloadService : Service() {
 
         serviceScope.launch {
             try {
-                val epubDir = LuminaStorageManager.getPersistentEpubDirectory(this@LuminaDownloadService)
                 val sanitized = title.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim()
                 val cleanName = (if (sanitized.isNotBlank()) sanitized else "book_${System.currentTimeMillis()}") + ".epub"
-                var destFile = File(epubDir, "${System.currentTimeMillis()}_$cleanName")
+                val preferredDir = LuminaStorageManager.getPersistentEpubDirectory(this@LuminaDownloadService)
+                var destFile = File(preferredDir, "${System.currentTimeMillis()}_$cleanName")
                 try {
                     destFile.parentFile?.mkdirs()
                 } catch (_: Throwable) {}
+
+                // If preferredDir is read-only or blocked by scoped storage (EPERM), fall back to app external or internal storage
+                val canWritePreferred = try {
+                    if (destFile.parentFile?.canWrite() == true) true
+                    else {
+                        val testFile = File(destFile.parentFile, ".test_perm_${System.currentTimeMillis()}")
+                        if (testFile.createNewFile()) {
+                            testFile.delete()
+                            true
+                        } else false
+                    }
+                } catch (_: Throwable) { false }
+
+                if (!canWritePreferred) {
+                    val fallbackDir = getExternalFilesDir("epubs") ?: File(filesDir, "epubs")
+                    fallbackDir.mkdirs()
+                    destFile = File(fallbackDir, "${System.currentTimeMillis()}_$cleanName")
+                }
 
                 var lastReportedPercent = -2
                 var lastReportedBytes = 0L
@@ -306,6 +325,12 @@ class LuminaDownloadService : Service() {
         }
 
         var currentUrl = downloadUrl.trim()
+        if (currentUrl.contains("archive.org/download/") && currentUrl.endsWith(".epub")) {
+            val resolvedUrl = resolveArchiveEpubUrl(currentUrl)
+            if (resolvedUrl != null) {
+                currentUrl = resolvedUrl
+            }
+        }
         if (currentUrl.contains("standardebooks.org") && !currentUrl.contains("source=download") && currentUrl.endsWith(".epub")) {
             currentUrl = if (currentUrl.contains("?")) "$currentUrl&source=download" else "$currentUrl?source=download"
         }
@@ -385,6 +410,40 @@ class LuminaDownloadService : Service() {
             }
         }
         throw IllegalStateException("Too many redirects encountered while resolving download URL.")
+    }
+
+    private fun resolveArchiveEpubUrl(originalUrl: String): String? {
+        return try {
+            val identifier = originalUrl.substringAfter("archive.org/download/").substringBefore("/")
+            if (identifier.isBlank()) return null
+            val metaUrl = URL("https://archive.org/metadata/$identifier/files")
+            val conn = (metaUrl.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 7000
+                readTimeout = 7000
+                setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36")
+            }
+            if (conn.responseCode != 200) return null
+            val body = conn.inputStream.bufferedReader().use { it.readText() }
+            val json = JSONObject(body)
+            val files = json.optJSONArray("result") ?: return null
+
+            var bestFile: String? = null
+            for (i in 0 until files.length()) {
+                val f = files.getJSONObject(i)
+                val name = f.optString("name", "")
+                val format = f.optString("format", "")
+                if (name.endsWith(".epub", ignoreCase = true) || format.equals("EPUB", ignoreCase = true)) {
+                    bestFile = name
+                    break
+                }
+            }
+
+            if (bestFile != null) {
+                "https://archive.org/download/$identifier/$bestFile"
+            } else null
+        } catch (_: Throwable) {
+            null
+        }
     }
 
     private fun isValidZip(file: File): Boolean {

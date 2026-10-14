@@ -1845,11 +1845,17 @@ class LuminaDatabaseHelper(private val context: Context) : SQLiteOpenHelper(cont
                 cursor.close()
             }
 
-            // 2. High-tolerance fuzzy prefix match: match bookId + chapters + fontSize + orientation + mode
-            // Allows reusing layout cache across minor window insets or padding differences
-            val prefix = if (cacheKey.contains("_strict")) cacheKey.substringBefore("_strict") + "_strict"
-                         else if (cacheKey.contains("_scroll")) cacheKey.substringBefore("_scroll") + "_scroll"
-                         else cacheKey
+            // 2. High-tolerance fuzzy prefix match: match bookId + chapters + fontSize + orientation + mode + safeLinesToRemove
+            // Allows reusing layout cache across minor window insets or padding differences while strictly honoring safeLinesToRemove
+            val prefix = if (cacheKey.contains("_sl")) {
+                cacheKey.substringBefore("_sl") + "_sl" + cacheKey.substringAfter("_sl").substringBefore("_")
+            } else if (cacheKey.contains("_strict")) {
+                cacheKey.substringBefore("_strict") + "_strict"
+            } else if (cacheKey.contains("_scroll")) {
+                cacheKey.substringBefore("_scroll") + "_scroll"
+            } else {
+                cacheKey
+            }
             cursor = db.query(
                 TABLE_PAGE_CACHE,
                 arrayOf(COL_PC_KEY, COL_PC_PAGES_JSON),
@@ -2191,7 +2197,8 @@ class LuminaDatabaseHelper(private val context: Context) : SQLiteOpenHelper(cont
             val array = JSONArray(json)
             for (i in 0 until array.length()) {
                 val obj = array.getJSONObject(i)
-                list.add(Pair(obj.optString("title", ""), obj.optString("content", "")))
+                val body = obj.optString("content", "").ifEmpty { obj.optString("text", "") }
+                list.add(Pair(obj.optString("title", ""), body))
             }
         } catch (_: Exception) {}
         return list

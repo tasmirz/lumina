@@ -66,6 +66,8 @@ fun PagedReaderView(
     horizontalPadding: Int,
     verticalPadding: Int,
     pagedBottomClearanceDp: Int = 28,
+    landscapeHideHeader: Boolean = true,
+    landscapeHideProgress: Boolean = true,
     imageFilterMode: io.github.tasmirz.lumina.model.ImageFilterMode = io.github.tasmirz.lumina.model.ImageFilterMode.ORIGINAL,
     statusBarTopInset: Dp,
     progressBottomInset: Dp,
@@ -105,10 +107,10 @@ fun PagedReaderView(
             beyondViewportPageCount = 1,
             flingBehavior = PagerDefaults.flingBehavior(
                 state = pagerState,
-                snapPositionalThreshold = (pagedSwipeThreshold * 0.70f).coerceIn(0.02f, 0.50f),
+                snapPositionalThreshold = (pagedSwipeThreshold * 0.35f).coerceIn(0.02f, 0.15f),
                 snapAnimationSpec = spring(
                     dampingRatio = Spring.DampingRatioNoBouncy,
-                    stiffness = Spring.StiffnessMedium
+                    stiffness = Spring.StiffnessMediumLow
                 )
             ),
             pageSpacing = (horizontalPadding * 1.5f).dp.coerceAtLeast(32.dp),
@@ -116,16 +118,24 @@ fun PagedReaderView(
                 .fillMaxSize()
                 .padding(
                     top = if (isLandscape) {
-                        statusBarTopInset + 28.dp + (verticalPadding * 0.25f).dp
+                        if (landscapeHideHeader) {
+                            statusBarTopInset + 6.dp + (verticalPadding * 0.25f).dp
+                        } else {
+                            statusBarTopInset + 44.dp + (verticalPadding * 0.25f).dp
+                        }
                     } else {
                         if (readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL) statusBarTopInset + 48.dp + (verticalPadding * 0.4f).dp
                         else if (isUiVisible) statusBarTopInset + 48.dp + (verticalPadding * 0.4f).dp
                         else (verticalPadding * 0.4f).dp
                     },
                     bottom = if (isLandscape) {
-                        progressBottomInset + 20.dp + (verticalPadding * 0.25f).dp
+                        if (landscapeHideProgress) {
+                            progressBottomInset + 4.dp + (verticalPadding * 0.25f).dp
+                        } else {
+                            progressBottomInset + 20.dp + (verticalPadding * 0.25f).dp
+                        }
                     } else {
-                        progressBottomInset + 36.dp + pagedBottomClearanceDp.coerceIn(0, 100).dp + (verticalPadding * 0.30f).dp
+                        progressBottomInset + 20.dp + (pagedBottomClearanceDp.coerceIn(0, 100) * 0.4f).dp + (verticalPadding * 0.25f).dp
                     },
                     start = effectiveStartPadding,
                     end = effectiveEndPadding
@@ -165,9 +175,9 @@ fun PagedReaderView(
                                 }
                             )
                         },
-                    verticalArrangement = Arrangement.Center,
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
+                    Spacer(modifier = Modifier.weight(0.35f).fillMaxWidth())
                     val eyebrowText = if (cSub.isNotBlank() && cSub.startsWith("Part", ignoreCase = true)) {
                         cSub.uppercase()
                     } else {
@@ -199,6 +209,7 @@ fun PagedReaderView(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                    Spacer(modifier = Modifier.weight(0.65f).fillMaxWidth())
                 }
             } else if (content.startsWith("[TABLE:") && content.endsWith("]")) {
                 Column(
@@ -304,11 +315,18 @@ fun PagedReaderView(
                 // Effective blocks handling Option 3 (Adaptive Vertical Justification)
                 val pagedBlocks = remember(pageText, adaptiveVerticalSpacing) {
                     val base = splitPageIntoBlocks(pageText)
-                    if (adaptiveVerticalSpacing && base.size == 1 && base.first() is PageBlock.Text) {
-                        val raw = (base.first() as PageBlock.Text).text
-                        if (raw.contains("\n\n")) {
-                            raw.split("\n\n").filter { it.isNotBlank() }.map { PageBlock.Text(it.trim()) }
-                        } else base
+                    if (adaptiveVerticalSpacing) {
+                        val expanded = mutableListOf<PageBlock>()
+                        for (b in base) {
+                            if (b is PageBlock.Text && b.text.contains("\n\n")) {
+                                b.text.split("\n\n").filter { it.isNotBlank() }.forEach {
+                                    expanded.add(PageBlock.Text(it.trim()))
+                                }
+                            } else {
+                                expanded.add(b)
+                            }
+                        }
+                        expanded
                     } else base
                 }
 
@@ -355,11 +373,10 @@ fun PagedReaderView(
                             } else Modifier
                         )
                 ) {
-                    // Option 2: Vertically Center Short Pages
-                    val isShortUnderfilledPage = !isChapterHeaderPage && pageText.isNotBlank() && pageText.length < 320
-                    val shouldCenter = verticallyCenterPages && readingMode == ReadingMode.PAGED && (
-                        isChapterHeaderPage || isShortUnderfilledPage
-                    )
+                    // Option 2: Vertically Center Short Underfilled Pages (only when page has very short standalone snippet, never for figures or tables, and never in landscape mode where vertical height is limited)
+                    val hasVisualBlocks = pageText.contains("[IMG:") || pageText.contains("[TABLE:")
+                    val isShortUnderfilledPage = !hasVisualBlocks && pageText.isNotBlank() && pageText.length < 320
+                    val shouldCenter = !isLandscape && verticallyCenterPages && readingMode == ReadingMode.PAGED && isShortUnderfilledPage
 
                     // Option 4: Golden Ratio Chapter Openers (~25-33% down the screen)
                     val shouldGoldenRatio = goldenRatioChapterOpeners && !shouldCenter && readingMode == ReadingMode.PAGED && isChapterHeaderPage
@@ -373,7 +390,7 @@ fun PagedReaderView(
                     } else if (shouldGoldenRatio) {
                         Spacer(
                             modifier = Modifier
-                                .weight(0.35f)
+                                .weight(0.12f)
                                 .fillMaxWidth()
                         )
                     }
@@ -382,7 +399,7 @@ fun PagedReaderView(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(top = 4.dp, bottom = 10.dp),
+                                .padding(top = 2.dp, bottom = 22.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             val eyebrowText = if (cSub.isNotBlank() && cSub.startsWith("Part", ignoreCase = true)) {
@@ -419,12 +436,13 @@ fun PagedReaderView(
                         }
                     }
 
+                    val hasImageBlock = pagedBlocks.any { it is PageBlock.Image }
                     pagedBlocks.forEachIndexed { blockIdx, block ->
                         if (adaptiveVerticalSpacing && readingMode == ReadingMode.PAGED && pagedBlocks.size > 1 && blockIdx > 0) {
                             Spacer(
                                 modifier = Modifier
-                                    .weight(0.25f)
-                                    .heightIn(min = 6.dp)
+                                    .weight(if (hasImageBlock) 0.08f else 0.25f)
+                                    .heightIn(min = if (hasImageBlock) 4.dp else 6.dp)
                             )
                         }
 
@@ -433,7 +451,12 @@ fun PagedReaderView(
                                 val formulaMatch = remember(block.text) {
                                     "^(?:([•\\-\\*\u2022])\\s*)?\\[(?:INLINE_)?IMG:([^\\]]+)\\]\\s*$".toRegex().find(block.text.trim())
                                 }
-                                if (formulaMatch != null) {
+                                val singleImgPath = formulaMatch?.groupValues?.get(2)
+                                val hasBullet = formulaMatch?.groupValues?.get(1)?.isNotBlank() == true
+                                val isFormula = remember(singleImgPath, hasBullet) {
+                                    if (singleImgPath.isNullOrBlank()) false else isFormulaImage(singleImgPath, hasBullet)
+                                }
+                                if (formulaMatch != null && isFormula) {
                                     val bullet = formulaMatch.groupValues[1]
                                     val imgPath = formulaMatch.groupValues[2]
                                     ReaderFormulaRow(
@@ -443,6 +466,17 @@ fun PagedReaderView(
                                         fontFamily = fontFamily,
                                         imageFilterMode = imageFilterMode,
                                         onOpenLightbox = onOpenLightbox
+                                    )
+                                } else if (formulaMatch != null && !isFormula) {
+                                    val imgPath = formulaMatch.groupValues[2]
+                                    val bitmap = rememberBookImage(imgPath, isInlineImage = true)
+                                    InlineReaderImage(
+                                        bitmap = bitmap,
+                                        imgPath = imgPath,
+                                        widthFraction = 1.0f,
+                                        imageFilterMode = imageFilterMode,
+                                        onOpenLightbox = onOpenLightbox,
+                                        onTap = onToggleControls
                                     )
                                 } else {
                                     val blockAnnotated = remember(block.text, matchingBookmarks, fontSize, fontFamily, onBgColor, isDropCap, activeSearchQ, isActiveMatch) {
@@ -504,7 +538,12 @@ fun PagedReaderView(
                         }
                     }
 
-                    val bottomWeight = if (shouldGoldenRatio) 0.65f else 1f
+                    val bottomWeight = when {
+                        shouldCenter -> 1.0f
+                        shouldGoldenRatio -> 0.65f
+                        adaptiveVerticalSpacing && pagedBlocks.size > 1 -> 0.05f
+                        else -> 1f
+                    }
                     val tapSpacerModifier = if (readingMode == ReadingMode.PAGED_SCROLL) {
                         Modifier
                             .fillMaxWidth()

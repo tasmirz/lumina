@@ -28,7 +28,7 @@ import java.net.URL
 import java.security.MessageDigest
 
 private val maxMemoryKb = (Runtime.getRuntime().maxMemory() / 1024).toInt()
-private val cacheSizeKb = (maxMemoryKb / 8).coerceIn(4096, 32768)
+private val cacheSizeKb = (maxMemoryKb / 6).coerceIn(8192, 49152)
 
 internal val bitmapCache = object : android.util.LruCache<String, Bitmap>(cacheSizeKb) {
     override fun sizeOf(key: String, value: Bitmap): Int {
@@ -36,6 +36,7 @@ internal val bitmapCache = object : android.util.LruCache<String, Bitmap>(cacheS
     }
 }
 private val failedSources = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
+private val missingFilesCache = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
 private val coverDownloadSemaphore = Semaphore(3)
 
 internal val inlineAspectRatios = java.util.concurrent.ConcurrentHashMap<String, Float>()
@@ -215,8 +216,9 @@ private fun decodeSampledBitmapFromByteArray(bytes: ByteArray, maxWidth: Int = 2
 fun prewarmBookCovers(sources: List<String>, context: android.content.Context) {
     if (sources.isEmpty()) return
     kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
-        sources.take(36).forEach { src ->
-            if (src.isNotBlank() && bitmapCache.get(src) == null && !failedSources.contains(src)) {
+        sources.take(64).forEach { src ->
+            val cleanPath = src.removePrefix("file://").replace("\\/", "/")
+            if (src.isNotBlank() && bitmapCache.get(src) == null && !failedSources.contains(src) && !missingFilesCache.contains(cleanPath)) {
                 try {
                     val decoded: Bitmap? = if (src.startsWith("http://") || src.startsWith("https://")) {
                         val coversDir = File(context.filesDir, "covers")
@@ -232,12 +234,14 @@ fun prewarmBookCovers(sources: List<String>, context: android.content.Context) {
                             }
                         } catch (_: Exception) { null }
                     } else {
-                        val cleanPath = src.removePrefix("file://")
                         val decodedPath = try { java.net.URLDecoder.decode(cleanPath, "UTF-8") } catch (_: Exception) { cleanPath }
                         val file = if (File(cleanPath).exists()) File(cleanPath) else File(decodedPath)
                         if (file.exists() && file.length() > 0) {
                             decodeSampledBitmapFromFile(file, maxWidth = 280, maxHeight = 420)
-                        } else null
+                        } else {
+                            missingFilesCache.add(cleanPath)
+                            null
+                        }
                     }
                     if (decoded != null) {
                         bitmapCache.put(src, decoded)
@@ -366,41 +370,48 @@ fun rememberBookImage(
                     } catch (_: Exception) { null }
                 } else {
                     val cleanPath = source.removePrefix("file://").replace("\\/", "/")
-                    val decodedPath = try { java.net.URLDecoder.decode(cleanPath, "UTF-8") } catch (_: Exception) { cleanPath }
-                    val file = if (File(cleanPath).exists()) File(cleanPath) else File(decodedPath)
-                    if (file.exists() && file.length() > 0) {
-                        decodeSampledBitmapFromFile(file, maxWidth = maxW, maxHeight = maxH)
+                    if (missingFilesCache.contains(cleanPath)) {
+                        null
                     } else {
-                        // Directory fallback: if the exact file path is missing or renamed during EPUB import,
-                        // check the parent directory for best-matching image file
-                        val parent = file.parentFile
-                        val targetBase = file.nameWithoutExtension.lowercase()
-                        val fallbackFile = if (parent != null && parent.exists() && parent.isDirectory) {
-                            val candidates = parent.listFiles { f ->
-                                val ext = f.extension.lowercase()
-                                (ext == "png" || ext == "jpg" || ext == "jpeg" || ext == "webp" || ext == "svg") && f.length() > 0
-                            } ?: emptyArray()
+                        val decodedPath = try { java.net.URLDecoder.decode(cleanPath, "UTF-8") } catch (_: Exception) { cleanPath }
+                        val file = if (File(cleanPath).exists()) File(cleanPath) else File(decodedPath)
+                        if (file.exists() && file.length() > 0) {
+                            decodeSampledBitmapFromFile(file, maxWidth = maxW, maxHeight = maxH)
+                        } else {
+                            // Directory fallback: if the exact file path is missing or renamed during EPUB import,
+                            // check the parent directory for best-matching image file
+                            val parent = file.parentFile
+                            val targetBase = file.nameWithoutExtension.lowercase()
+                            val fallbackFile = if (parent != null && parent.exists() && parent.isDirectory) {
+                                val candidates = parent.listFiles { f ->
+                                    val ext = f.extension.lowercase()
+                                    (ext == "png" || ext == "jpg" || ext == "jpeg" || ext == "webp" || ext == "svg") && f.length() > 0
+                                } ?: emptyArray()
 
-                            val keywords = targetBase.split('_', '-').filter { it.length >= 3 && !it.startsWith("custom") }
-                            candidates.maxByOrNull { cand ->
-                                val candName = cand.nameWithoutExtension.lowercase()
-                                var score = 0
-                                if (candName == targetBase) score += 100
-                                if (candName.contains(targetBase) || targetBase.contains(candName)) score += 50
-                                for (kw in keywords) {
-                                    if (candName.contains(kw)) score += 10
+                                val keywords = targetBase.split('_', '-').filter { it.length >= 3 && !it.startsWith("custom") }
+                                candidates.maxByOrNull { cand ->
+                                    val candName = cand.nameWithoutExtension.lowercase()
+                                    var score = 0
+                                    if (candName == targetBase) score += 100
+                                    if (candName.contains(targetBase) || targetBase.contains(candName)) score += 50
+                                    for (kw in keywords) {
+                                        if (candName.contains(kw)) score += 10
+                                    }
+                                    score
+                                }?.takeIf { cand ->
+                                    val candName = cand.nameWithoutExtension.lowercase()
+                                    candName.contains(targetBase) || targetBase.contains(candName) ||
+                                        keywords.any { candName.contains(it) }
                                 }
-                                score
-                            }?.takeIf { cand ->
-                                val candName = cand.nameWithoutExtension.lowercase()
-                                candName.contains(targetBase) || targetBase.contains(candName) ||
-                                    keywords.any { candName.contains(it) }
-                            }
-                        } else null
+                            } else null
 
-                        if (fallbackFile != null && fallbackFile.exists() && fallbackFile.length() > 0) {
-                            decodeSampledBitmapFromFile(fallbackFile, maxWidth = maxW, maxHeight = maxH)
-                        } else null
+                            if (fallbackFile != null && fallbackFile.exists() && fallbackFile.length() > 0) {
+                                decodeSampledBitmapFromFile(fallbackFile, maxWidth = maxW, maxHeight = maxH)
+                            } else {
+                                missingFilesCache.add(cleanPath)
+                                null
+                            }
+                        }
                     }
                 }
                 if (decoded != null) {

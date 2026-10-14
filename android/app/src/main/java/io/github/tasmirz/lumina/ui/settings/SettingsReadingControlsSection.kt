@@ -36,6 +36,7 @@ import io.github.tasmirz.lumina.model.OrbActionItem
 import io.github.tasmirz.lumina.model.OrbColor
 import io.github.tasmirz.lumina.model.OrbMenuSize
 import io.github.tasmirz.lumina.model.OrbSize
+import io.github.tasmirz.lumina.model.OrbFanDirection
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -56,6 +57,10 @@ fun SettingsReadingControlsSection(
     orbSize: OrbSize,
     orbMenuSize: OrbMenuSize,
     orbEdgeSnap: Boolean,
+    orbSnapThreshold: Float = 0.05f,
+    orbReversePaletteLandscape: Boolean = false,
+    orbReversePalettePortrait: Boolean = false,
+    orbFanDirection: OrbFanDirection = OrbFanDirection.AUTO,
     orbColor: OrbColor,
     customOrbColor: Long,
     orbOpacity: Float,
@@ -596,7 +601,7 @@ fun SettingsReadingControlsSection(
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "Control the size of the docked edge pill and floating orb (default: Nano)",
+                        text = "Control the size of the docked edge pill and floating orb (default: Medium)",
                         fontSize = 10.5.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -718,6 +723,177 @@ fun SettingsReadingControlsSection(
                             checked = orbEdgeSnap,
                             onCheckedChange = { repository?.setOrbEdgeSnap(it) }
                         )
+                    }
+
+                    if (orbEdgeSnap) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                                Text(
+                                    text = "Edge Snap Margin",
+                                    fontWeight = FontWeight.Normal,
+                                    fontSize = 12.sp
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "Snap to edge within this distance, otherwise float",
+                                    fontSize = 10.5.sp,
+                                    lineHeight = 14.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Text(
+                                text = "${(orbSnapThreshold * 100).toInt()}%",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Normal,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Slider(
+                            value = orbSnapThreshold,
+                            onValueChange = { repository?.setOrbSnapThreshold(it) },
+                            valueRange = 0.02f..0.20f,
+                            steps = 17,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Reverse Palette Direction (Landscape)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
+                            Text(
+                                text = "Reverse Palette Direction (Landscape)",
+                                fontWeight = FontWeight.Normal,
+                                fontSize = 12.sp
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = if (orbReversePaletteLandscape) "Menu fans outward in reverse direction of the edge" else "Standard: menu fans inward toward screen center",
+                                fontSize = 10.5.sp,
+                                lineHeight = 14.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = orbReversePaletteLandscape,
+                            onCheckedChange = { repository?.setOrbReversePaletteLandscape(it) }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Reverse Palette Direction (Portrait)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
+                            Text(
+                                text = "Reverse Palette Direction (Portrait)",
+                                fontWeight = FontWeight.Normal,
+                                fontSize = 12.sp
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = if (orbReversePalettePortrait) "Menu fans outward in reverse direction of the edge" else "Standard: menu fans inward toward screen center",
+                                fontSize = 10.5.sp,
+                                lineHeight = 14.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = orbReversePalettePortrait,
+                            onCheckedChange = { repository?.setOrbReversePalettePortrait(it) }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Orb Fan Direction
+                    Text(
+                        text = "Orb Fan Direction",
+                        fontWeight = FontWeight.Normal,
+                        fontSize = 12.sp
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "Radial menu fanning direction: Auto adapts to edge, or force a direction (90° / horizontal)",
+                        fontSize = 10.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(OrbFanDirection.AUTO, OrbFanDirection.RIGHT, OrbFanDirection.LEFT).forEach { dir ->
+                            val isSelected = orbFanDirection == dir
+                            Surface(
+                                onClick = { repository?.setOrbFanDirection(dir) },
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                                ),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Box(
+                                    modifier = Modifier.padding(vertical = 8.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = dir.displayName,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Normal,
+                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(OrbFanDirection.DOWN, OrbFanDirection.UP).forEach { dir ->
+                            val isSelected = orbFanDirection == dir
+                            Surface(
+                                onClick = { repository?.setOrbFanDirection(dir) },
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                                ),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Box(
+                                    modifier = Modifier.padding(vertical = 8.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = dir.displayName,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Normal,
+                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(14.dp))

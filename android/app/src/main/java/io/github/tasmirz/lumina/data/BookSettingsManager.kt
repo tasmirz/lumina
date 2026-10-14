@@ -36,7 +36,7 @@ object BookSettingsManager {
             uncachedBookOpenMode = try { UncachedBookOpenMode.valueOf(prefs.getString("uncached_book_open_mode", UncachedBookOpenMode.INSTANT_ACTIVE_FIRST.name) ?: UncachedBookOpenMode.INSTANT_ACTIVE_FIRST.name) } catch (_: Exception) { UncachedBookOpenMode.INSTANT_ACTIVE_FIRST },
             inlineImageWidthPercent = prefs.getInt("inline_image_width_percent", 100),
             showFloatingAssistant = prefs.getBoolean("show_floating_assistant", true),
-            orbSize = try { OrbSize.valueOf(prefs.getString("orb_size", OrbSize.NANO.name) ?: OrbSize.NANO.name) } catch (_: Exception) { OrbSize.NANO },
+            orbSize = try { OrbSize.valueOf(prefs.getString("orb_size", OrbSize.DEFAULT.name) ?: OrbSize.DEFAULT.name) } catch (_: Exception) { OrbSize.DEFAULT },
             orbMenuSize = try { OrbMenuSize.valueOf(prefs.getString("orb_menu_size", OrbMenuSize.MEDIUM.name) ?: OrbMenuSize.MEDIUM.name) } catch (_: Exception) { OrbMenuSize.MEDIUM },
             orbEdgeSnap = prefs.getBoolean("orb_edge_snap", true),
             orbPortraitX = prefs.getFloat("orb_pos_x_portrait", -1f),
@@ -93,7 +93,9 @@ object BookSettingsManager {
             openLibraryApiKey = prefs.getString("open_library_api_key", "") ?: "",
             imageFilterMode = try { ImageFilterMode.valueOf(prefs.getString("image_filter_mode", ImageFilterMode.ORIGINAL.name) ?: ImageFilterMode.ORIGINAL.name) } catch (_: Exception) { ImageFilterMode.ORIGINAL },
             invertScreen = prefs.getBoolean("invert_screen", false),
-            pagedBottomClearanceDp = prefs.getInt("paged_bottom_clearance_dp", 28).coerceIn(0, 100)
+            pagedBottomClearanceDp = prefs.getInt("paged_bottom_clearance_dp", 28).coerceIn(0, 100),
+            landscapeHideHeader = prefs.getBoolean("landscape_hide_header", true),
+            landscapeHideProgress = prefs.getBoolean("landscape_hide_progress", true)
         )
     }
 
@@ -245,6 +247,12 @@ object BookSettingsManager {
             dbSettings["paged_bottom_clearance_dp"]?.toIntOrNull()?.let {
                 s = s.copy(pagedBottomClearanceDp = it.coerceIn(0, 100))
             }
+            dbSettings["landscape_hide_header"]?.let {
+                s = s.copy(landscapeHideHeader = it.toBoolean())
+            }
+            dbSettings["landscape_hide_progress"]?.let {
+                s = s.copy(landscapeHideProgress = it.toBoolean())
+            }
 
             // Atomic update to readerSettings Flow
             repository._readerSettings.value = s
@@ -308,6 +316,8 @@ object BookSettingsManager {
             repository._imageFilterMode.value = s.imageFilterMode
             repository._invertScreen.value = s.invertScreen
             repository._pagedBottomClearanceDp.value = s.pagedBottomClearanceDp
+            repository._landscapeHideHeader.value = s.landscapeHideHeader
+            repository._landscapeHideProgress.value = s.landscapeHideProgress
         } else {
             // Initial seed into SQLite in a single transaction
             val s = repository._readerSettings.value
@@ -368,7 +378,9 @@ object BookSettingsManager {
                 "open_library_api_key" to s.openLibraryApiKey,
                 "image_filter_mode" to s.imageFilterMode.name,
                 "invert_screen" to s.invertScreen.toString(),
-                "paged_bottom_clearance_dp" to s.pagedBottomClearanceDp.toString()
+                "paged_bottom_clearance_dp" to s.pagedBottomClearanceDp.toString(),
+                "landscape_hide_header" to s.landscapeHideHeader.toString(),
+                "landscape_hide_progress" to s.landscapeHideProgress.toString()
             )
             dbHelper.setSettings(initialMap)
         }

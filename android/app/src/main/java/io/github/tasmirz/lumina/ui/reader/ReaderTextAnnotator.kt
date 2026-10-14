@@ -10,6 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
@@ -447,7 +448,25 @@ fun rememberInlineContentMap(
             ) {
                 val paddingDp = with(LocalDensity.current) { horizontalPaddingSp.sp.toDp() }
                 if (bmp != null) {
-                    val filter = io.github.tasmirz.lumina.ui.components.getColorFilterForMode(imageFilterMode)
+                    val isDarkTheme = androidx.compose.material3.MaterialTheme.colorScheme.surface.luminance() < 0.5f
+                    val filter = when (imageFilterMode) {
+                        io.github.tasmirz.lumina.model.ImageFilterMode.ORIGINAL -> {
+                            if (isDarkTheme) {
+                                // High-contrast invert for dark math glyphs on transparent/dark backgrounds
+                                androidx.compose.ui.graphics.ColorFilter.colorMatrix(
+                                    androidx.compose.ui.graphics.ColorMatrix(
+                                        floatArrayOf(
+                                            -1f,  0f,  0f, 0f, 255f,
+                                             0f, -1f,  0f, 0f, 255f,
+                                             0f,  0f, -1f, 0f, 255f,
+                                             0f,  0f,  0f, 1f,   0f
+                                        )
+                                    )
+                                )
+                            } else null
+                        }
+                        else -> io.github.tasmirz.lumina.ui.components.getColorFilterForMode(imageFilterMode)
+                    }
                     Image(
                         bitmap = bmp.asImageBitmap(),
                         contentDescription = "Math",

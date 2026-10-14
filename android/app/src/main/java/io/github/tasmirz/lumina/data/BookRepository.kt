@@ -232,8 +232,8 @@ class BookRepository private constructor(internal val context: Context) {
 
     internal val _orbSize = MutableStateFlow<OrbSize>(
         try {
-            OrbSize.valueOf(prefs.getString("orb_size", OrbSize.NANO.name) ?: OrbSize.NANO.name)
-        } catch (_: Exception) { OrbSize.NANO }
+            OrbSize.valueOf(prefs.getString("orb_size", OrbSize.DEFAULT.name) ?: OrbSize.DEFAULT.name)
+        } catch (_: Exception) { OrbSize.DEFAULT }
     )
     val orbSize: StateFlow<OrbSize> = _orbSize.asStateFlow()
 
@@ -246,6 +246,22 @@ class BookRepository private constructor(internal val context: Context) {
 
     internal val _orbEdgeSnap = MutableStateFlow(prefs.getBoolean("orb_edge_snap", true))
     val orbEdgeSnap: StateFlow<Boolean> = _orbEdgeSnap.asStateFlow()
+
+    internal val _orbSnapThreshold = MutableStateFlow(prefs.getFloat("orb_snap_threshold", 0.05f))
+    val orbSnapThreshold: StateFlow<Float> = _orbSnapThreshold.asStateFlow()
+
+    internal val _orbReversePaletteLandscape = MutableStateFlow(prefs.getBoolean("orb_reverse_palette_landscape", false))
+    val orbReversePaletteLandscape: StateFlow<Boolean> = _orbReversePaletteLandscape.asStateFlow()
+
+    internal val _orbReversePalettePortrait = MutableStateFlow(prefs.getBoolean("orb_reverse_palette_portrait", false))
+    val orbReversePalettePortrait: StateFlow<Boolean> = _orbReversePalettePortrait.asStateFlow()
+
+    internal val _orbFanDirection = MutableStateFlow<OrbFanDirection>(
+        try {
+            OrbFanDirection.valueOf(prefs.getString("orb_fan_direction", OrbFanDirection.AUTO.name) ?: OrbFanDirection.AUTO.name)
+        } catch (_: Exception) { OrbFanDirection.AUTO }
+    )
+    val orbFanDirection: StateFlow<OrbFanDirection> = _orbFanDirection.asStateFlow()
 
     // Distinct persistent dock coordinates for Portrait vs Landscape
     internal val _orbPortraitX = MutableStateFlow(prefs.getFloat("orb_pos_x_portrait", -1f))
@@ -420,6 +436,12 @@ class BookRepository private constructor(internal val context: Context) {
     internal val _pagedBottomClearanceDp = MutableStateFlow(prefs.getInt("paged_bottom_clearance_dp", 28).coerceIn(0, 100))
     val pagedBottomClearanceDp: StateFlow<Int> = _pagedBottomClearanceDp.asStateFlow()
 
+    internal val _landscapeHideHeader = MutableStateFlow(prefs.getBoolean("landscape_hide_header", true))
+    val landscapeHideHeader: StateFlow<Boolean> = _landscapeHideHeader.asStateFlow()
+
+    internal val _landscapeHideProgress = MutableStateFlow(prefs.getBoolean("landscape_hide_progress", true))
+    val landscapeHideProgress: StateFlow<Boolean> = _landscapeHideProgress.asStateFlow()
+
     fun setImageFilterMode(mode: ImageFilterMode) {
         _imageFilterMode.value = mode
         updateReaderSettings { it.copy(imageFilterMode = mode) }
@@ -440,6 +462,26 @@ class BookRepository private constructor(internal val context: Context) {
         updateReaderSettings { it.copy(pagedBottomClearanceDp = clamped) }
         prefs.edit().putInt("paged_bottom_clearance_dp", clamped).apply()
         persistSettingToDb("paged_bottom_clearance_dp", clamped.toString())
+        PageCache.clear()
+        _books.value.forEach { PageCache.invalidate(it.id, dbHelper) }
+    }
+
+    fun setLandscapeHideHeader(enabled: Boolean) {
+        _landscapeHideHeader.value = enabled
+        updateReaderSettings { it.copy(landscapeHideHeader = enabled) }
+        prefs.edit().putBoolean("landscape_hide_header", enabled).apply()
+        persistSettingToDb("landscape_hide_header", enabled.toString())
+        PageCache.clear()
+        _books.value.forEach { PageCache.invalidate(it.id, dbHelper) }
+    }
+
+    fun setLandscapeHideProgress(enabled: Boolean) {
+        _landscapeHideProgress.value = enabled
+        updateReaderSettings { it.copy(landscapeHideProgress = enabled) }
+        prefs.edit().putBoolean("landscape_hide_progress", enabled).apply()
+        persistSettingToDb("landscape_hide_progress", enabled.toString())
+        PageCache.clear()
+        _books.value.forEach { PageCache.invalidate(it.id, dbHelper) }
     }
 
     private fun loadInitialSettingsFromPrefs(): ReaderSettings =
@@ -720,6 +762,8 @@ class BookRepository private constructor(internal val context: Context) {
         updateReaderSettings { it.copy(pagedSafeLinesToRemove = clamped) }
         prefs.edit().putInt("paged_safe_lines_to_remove", clamped).apply()
         persistSettingToDb("paged_safe_lines_to_remove", clamped.toString())
+        PageCache.clear()
+        _books.value.forEach { PageCache.invalidate(it.id, dbHelper) }
     }
 
     fun setPagedSafeLinesToRemove(lines: Int) = updatePagedSafeLinesToRemove(lines)
@@ -1278,6 +1322,31 @@ class BookRepository private constructor(internal val context: Context) {
         updateReaderSettings { it.copy(orbEdgeSnap = snap) }
         prefs.edit().putBoolean("orb_edge_snap", snap).apply()
         persistSettingToDb("orb_edge_snap", snap.toString())
+    }
+
+    fun setOrbSnapThreshold(threshold: Float) {
+        val clamped = threshold.coerceIn(0.01f, 0.30f)
+        _orbSnapThreshold.value = clamped
+        prefs.edit().putFloat("orb_snap_threshold", clamped).apply()
+        persistSettingToDb("orb_snap_threshold", clamped.toString())
+    }
+
+    fun setOrbReversePaletteLandscape(reverse: Boolean) {
+        _orbReversePaletteLandscape.value = reverse
+        prefs.edit().putBoolean("orb_reverse_palette_landscape", reverse).apply()
+        persistSettingToDb("orb_reverse_palette_landscape", reverse.toString())
+    }
+
+    fun setOrbReversePalettePortrait(reverse: Boolean) {
+        _orbReversePalettePortrait.value = reverse
+        prefs.edit().putBoolean("orb_reverse_palette_portrait", reverse).apply()
+        persistSettingToDb("orb_reverse_palette_portrait", reverse.toString())
+    }
+
+    fun setOrbFanDirection(direction: OrbFanDirection) {
+        _orbFanDirection.value = direction
+        prefs.edit().putString("orb_fan_direction", direction.name).apply()
+        persistSettingToDb("orb_fan_direction", direction.name)
     }
 
     fun saveOrbPosition(x: Float, y: Float, isLandscape: Boolean) {

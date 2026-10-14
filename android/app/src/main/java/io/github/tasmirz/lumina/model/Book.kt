@@ -73,11 +73,11 @@ enum class OrbActionItem(val displayName: String, val description: String) {
 }
 
 enum class OrbSize(val displayName: String, val scale: Float, val dockedWidth: Int, val dockedHeight: Int) {
-    NANO("Nano", 0.55f, 6, 16),
-    MINI("Mini", 0.70f, 9, 22),
-    COMPACT("Small", 0.85f, 13, 26),
-    DEFAULT("Medium", 1.0f, 16, 32),
-    LARGE("Large", 1.2f, 20, 38)
+    NANO("Nano", 0.45f, 6, 18),
+    MINI("Mini", 0.60f, 10, 24),
+    COMPACT("Small", 0.75f, 14, 30),
+    DEFAULT("Medium", 0.88f, 18, 36),
+    LARGE("Large", 1.05f, 22, 42)
 }
 
 enum class OrbMenuSize(val displayName: String, val scale: Float, val innerRadiusDp: Int, val outerRadiusDp: Int, val itemSizeDp: Int, val iconSizeDp: Int) {
@@ -94,6 +94,14 @@ enum class OrbColor(val displayName: String, val colorValue: Long) {
     EMERALD("Emerald", 0xFF059669L),
     INDIGO("Indigo", 0xFF4F46E5L),
     CUSTOM("Custom", -1L)
+}
+
+enum class OrbFanDirection(val displayName: String) {
+    AUTO("Auto"),
+    RIGHT("Right"),
+    LEFT("Left"),
+    DOWN("Down (90°)"),
+    UP("Up (90°)")
 }
 
 enum class TextAlignmentMode(val displayName: String) {
@@ -315,7 +323,7 @@ data class ReaderSettings(
     val customBgColor: Long = 0xFF1C1917L,
     val customTextColor: Long = 0xFFE7E5E4L,
     val customAccentColor: Long = 0xFFD4AF37L,
-    val orbSize: OrbSize = OrbSize.NANO,
+    val orbSize: OrbSize = OrbSize.DEFAULT,
     val orbMenuSize: OrbMenuSize = OrbMenuSize.MEDIUM,
     val orbEdgeSnap: Boolean = true,
     val orbPortraitX: Float = -1f,
@@ -330,7 +338,9 @@ data class ReaderSettings(
     val customEndpoints: List<CustomCatalogEndpoint> = emptyList(),
     val imageFilterMode: ImageFilterMode = ImageFilterMode.ORIGINAL,
     val invertScreen: Boolean = false,
-    val pagedBottomClearanceDp: Int = 28
+    val pagedBottomClearanceDp: Int = 28,
+    val landscapeHideHeader: Boolean = true,
+    val landscapeHideProgress: Boolean = true
 )
 
 data class CustomCatalogEndpoint(

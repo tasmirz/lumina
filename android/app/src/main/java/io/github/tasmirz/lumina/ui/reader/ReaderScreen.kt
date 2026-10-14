@@ -11,7 +11,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import android.graphics.BitmapFactory
-import java.io.File
+import io.github.tasmirz.lumina.data.BookPositionManager
 import io.github.tasmirz.lumina.data.EdgeTtsService
 import io.github.tasmirz.lumina.data.LuminaAudioService
 import io.github.tasmirz.lumina.model.Chapter
@@ -67,6 +67,7 @@ import io.github.tasmirz.lumina.model.SceneMatch
 import io.github.tasmirz.lumina.model.OrbSize
 import io.github.tasmirz.lumina.model.OrbMenuSize
 import io.github.tasmirz.lumina.model.OrbColor
+import io.github.tasmirz.lumina.model.OrbFanDirection
 import io.github.tasmirz.lumina.ui.components.CharacterGuideSheet
 import android.content.res.Configuration
 import androidx.compose.foundation.layout.*
@@ -286,6 +287,10 @@ fun ReaderScreen(
     val verticalPadding = verticalPaddingState?.value ?: 0
     val pagedBottomClearanceDpState = repository?.pagedBottomClearanceDp?.collectAsState(initial = 28)
     val pagedBottomClearanceDp = pagedBottomClearanceDpState?.value ?: 28
+    val landscapeHideHeaderState = repository?.landscapeHideHeader?.collectAsState(initial = true)
+    val landscapeHideHeader = landscapeHideHeaderState?.value ?: true
+    val landscapeHideProgressState = repository?.landscapeHideProgress?.collectAsState(initial = true)
+    val landscapeHideProgress = landscapeHideProgressState?.value ?: true
     val imageFilterModeState = repository?.imageFilterMode?.collectAsState(initial = ImageFilterMode.ORIGINAL)
     val imageFilterMode = imageFilterModeState?.value ?: ImageFilterMode.ORIGINAL
     val invertScreenState = repository?.invertScreen?.collectAsState(initial = false)
@@ -318,12 +323,14 @@ fun ReaderScreen(
     val spoilerShield = spoilerShieldState?.value ?: true
     val autoScrollSpeedState = repository?.autoScrollSpeed?.collectAsState(initial = 1.0f)
     val autoScrollSpeed: Float = autoScrollSpeedState?.value ?: 1.0f
-    val orbSizeState = repository?.orbSize?.collectAsState(initial = OrbSize.NANO)
-    val orbSize = orbSizeState?.value ?: OrbSize.NANO
+    val orbSizeState = repository?.orbSize?.collectAsState(initial = OrbSize.DEFAULT)
+    val orbSize = orbSizeState?.value ?: OrbSize.DEFAULT
     val orbMenuSizeState = repository?.orbMenuSize?.collectAsState(initial = OrbMenuSize.MEDIUM)
     val orbMenuSize = orbMenuSizeState?.value ?: OrbMenuSize.MEDIUM
     val orbEdgeSnapState = repository?.orbEdgeSnap?.collectAsState(initial = true)
     val orbEdgeSnap = orbEdgeSnapState?.value ?: true
+    val orbSnapThresholdState = repository?.orbSnapThreshold?.collectAsState(initial = repository?.orbSnapThreshold?.value ?: 0.05f)
+    val orbSnapThreshold = orbSnapThresholdState?.value ?: (repository?.orbSnapThreshold?.value ?: 0.05f)
     val orbColorState = repository?.orbColor?.collectAsState(initial = OrbColor.THEME)
     val orbColor = orbColorState?.value ?: OrbColor.THEME
     val customOrbColorState = repository?.customOrbColor?.collectAsState(initial = 0xFF4F46E5L)
@@ -334,14 +341,21 @@ fun ReaderScreen(
     val autoStartMic = autoStartMicState?.value ?: true
 
     // Persistent portrait and landscape dock positions
-    val orbPortraitXState = repository?.orbPortraitX?.collectAsState(initial = -1f)
-    val orbPortraitX = orbPortraitXState?.value ?: -1f
-    val orbPortraitYState = repository?.orbPortraitY?.collectAsState(initial = -1f)
-    val orbPortraitY = orbPortraitYState?.value ?: -1f
-    val orbLandscapeXState = repository?.orbLandscapeX?.collectAsState(initial = -1f)
-    val orbLandscapeX = orbLandscapeXState?.value ?: -1f
-    val orbLandscapeYState = repository?.orbLandscapeY?.collectAsState(initial = -1f)
-    val orbLandscapeY = orbLandscapeYState?.value ?: -1f
+    val orbPortraitXState = repository?.orbPortraitX?.collectAsState(initial = repository?.orbPortraitX?.value ?: -1f)
+    val orbPortraitX = orbPortraitXState?.value ?: (repository?.orbPortraitX?.value ?: -1f)
+    val orbPortraitYState = repository?.orbPortraitY?.collectAsState(initial = repository?.orbPortraitY?.value ?: -1f)
+    val orbPortraitY = orbPortraitYState?.value ?: (repository?.orbPortraitY?.value ?: -1f)
+    val orbLandscapeXState = repository?.orbLandscapeX?.collectAsState(initial = repository?.orbLandscapeX?.value ?: -1f)
+    val orbLandscapeX = orbLandscapeXState?.value ?: (repository?.orbLandscapeX?.value ?: -1f)
+    val orbLandscapeYState = repository?.orbLandscapeY?.collectAsState(initial = repository?.orbLandscapeY?.value ?: -1f)
+    val orbLandscapeY = orbLandscapeYState?.value ?: (repository?.orbLandscapeY?.value ?: -1f)
+
+    val orbReversePaletteLandscapeState = repository?.orbReversePaletteLandscape?.collectAsState(initial = repository?.orbReversePaletteLandscape?.value ?: false)
+    val orbReversePaletteLandscape = orbReversePaletteLandscapeState?.value ?: (repository?.orbReversePaletteLandscape?.value ?: false)
+    val orbReversePalettePortraitState = repository?.orbReversePalettePortrait?.collectAsState(initial = repository?.orbReversePalettePortrait?.value ?: false)
+    val orbReversePalettePortrait = orbReversePalettePortraitState?.value ?: (repository?.orbReversePalettePortrait?.value ?: false)
+    val orbFanDirectionState = repository?.orbFanDirection?.collectAsState(initial = repository?.orbFanDirection?.value ?: OrbFanDirection.AUTO)
+    val orbFanDirection = orbFanDirectionState?.value ?: (repository?.orbFanDirection?.value ?: OrbFanDirection.AUTO)
 
     val themeVariantState = repository?.themeVariant?.collectAsState(initial = ThemeVariant.LIGHT)
     val currentThemeVariant = themeVariantState?.value ?: ThemeVariant.LIGHT
@@ -709,8 +723,8 @@ fun ReaderScreen(
     val cutoutStart = cutoutPaddingValues.calculateStartPadding(layoutDirection)
     val cutoutEnd = cutoutPaddingValues.calculateEndPadding(layoutDirection)
 
-    val landscapeSidePaddingStart = maxOf((horizontalPadding * 1.8f).dp.coerceAtLeast(56.dp), cutoutStart + 20.dp)
-    val landscapeSidePaddingEnd = maxOf((horizontalPadding * 1.8f).dp.coerceAtLeast(56.dp), cutoutEnd + 20.dp)
+    val landscapeSidePaddingStart = maxOf((horizontalPadding * 1.15f).dp.coerceAtLeast(24.dp), cutoutStart + 8.dp)
+    val landscapeSidePaddingEnd = maxOf((horizontalPadding * 1.15f).dp.coerceAtLeast(24.dp), cutoutEnd + 8.dp)
 
     val effectiveStartPadding = if (isLandscape) landscapeSidePaddingStart else horizontalPadding.dp
     val effectiveEndPadding = if (isLandscape) landscapeSidePaddingEnd else horizontalPadding.dp
@@ -1516,12 +1530,12 @@ fun ReaderScreen(
                 .nestedScroll(nestedScrollConnection)
                 .readerPinchZoom(
                     view = view,
-                    currentFontSize = currentFontSize,
-                    currentReadingMode = currentReadingMode,
-                    currentIsPagedReading = currentIsPagedReading,
-                    currentPages = currentPages,
-                    currentChapters = currentChapters,
-                    chapterCumulativeParaOffsets = chapterCumulativeParaOffsets,
+                    currentFontSize = { currentFontSize },
+                    currentReadingMode = { currentReadingMode },
+                    currentIsPagedReading = { currentIsPagedReading },
+                    currentPages = { currentPages },
+                    currentChapters = { currentChapters },
+                    chapterCumulativeParaOffsets = { chapterCumulativeParaOffsets },
                     pagerState = pagerState,
                     listState = listState,
                     currentOnFontSizeChange = currentOnFontSizeChange,
@@ -1807,6 +1821,14 @@ fun ReaderScreen(
                                 consecutiveSteadyPages = 0
                                 lastDwellPage = currentPage
                                 repository?.setVerifiedPage(book.id, currentPage)
+                                if (repository != null) {
+                                    BookPositionManager.recordReadingDwell(
+                                        repository = repository,
+                                        bookId = book.id,
+                                        charsRead = pageBody.length,
+                                        dwellSeconds = autoSaveDwellSeconds.toLong()
+                                    )
+                                }
                                 onPositionChange(chapIdx, currentPage, 0, progress)
                                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                                     repository?.updateLastReadBookmark(
@@ -1872,6 +1894,8 @@ fun ReaderScreen(
                         horizontalPadding = horizontalPadding,
                         verticalPadding = verticalPadding,
                         pagedBottomClearanceDp = pagedBottomClearanceDp,
+                        landscapeHideHeader = landscapeHideHeader,
+                        landscapeHideProgress = landscapeHideProgress,
                         imageFilterMode = imageFilterMode,
                         statusBarTopInset = statusBarTopInset,
                         progressBottomInset = progressBottomInset,
@@ -1937,6 +1961,7 @@ fun ReaderScreen(
             activeChapterTitle = activeChapterTitle,
             assistantOrbStyle = assistantOrbStyle,
             disableAi = disableAi,
+            landscapeHideHeader = landscapeHideHeader,
             onOpenToc = { showTocSheet = true },
             onOpenAssistant = { showAssistantChatSheet = true },
             modifier = Modifier.align(Alignment.TopCenter)
@@ -2131,6 +2156,7 @@ fun ReaderScreen(
             onOpenSearch = { showInBookSearchDialog = true },
             onOpenBookmarks = onOpenBookmarks,
             onOpenReadingSettings = onOpenAppearance,
+            landscapeHideProgress = landscapeHideProgress,
             modifier = Modifier.align(Alignment.BottomCenter)
         )
 
@@ -2207,11 +2233,14 @@ fun ReaderScreen(
                 orbSize = orbSize,
                 orbMenuSize = orbMenuSize,
                 orbEdgeSnap = orbEdgeSnap,
+                snapThreshold = orbSnapThreshold,
                 orbColor = orbColor,
                 customOrbColor = customOrbColor,
                 orbOpacity = orbOpacity,
                 savedX = if (isLandscape) orbLandscapeX else orbPortraitX,
                 savedY = if (isLandscape) orbLandscapeY else orbPortraitY,
+                reversePaletteDirection = if (isLandscape) orbReversePaletteLandscape else orbReversePalettePortrait,
+                fanDirection = orbFanDirection,
                 onSavePosition = { x, y, land ->
                     repository?.saveOrbPosition(x, y, land)
                 },
@@ -2464,6 +2493,16 @@ fun ReaderScreen(
                 speakingChapterIdx = cIdx
                 speakingParaIdx = match.paragraphIndex
                 activeChapterTitle = book.chapters[cIdx].title
+                val cleanSnippet = match.snippet.replace("...", "").trim()
+                if (cleanSnippet.isNotBlank()) {
+                    anchorSnippet = cleanSnippet
+                    currentTopSnippet = cleanSnippet
+                }
+                anchorChapterIdx = cIdx
+                anchorParaIdx = match.paragraphIndex
+                currentVisibleChapterIdx = cIdx
+                currentVisibleParaIdx = match.paragraphIndex
+
                 if (readingMode == ReadingMode.SCROLL) {
                     var itemIdx = 0
                     for (i in 0 until cIdx) {

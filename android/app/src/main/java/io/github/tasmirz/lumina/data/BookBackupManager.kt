@@ -61,6 +61,8 @@ object BookBackupManager {
         settings.put("image_filter_mode", repository.imageFilterMode.value.name)
         settings.put("invert_screen", repository.invertScreen.value)
         settings.put("paged_bottom_clearance_dp", repository.pagedBottomClearanceDp.value)
+        settings.put("landscape_hide_header", repository.landscapeHideHeader.value)
+        settings.put("landscape_hide_progress", repository.landscapeHideProgress.value)
 
         val delIds = repository.prefs.getStringSet("deleted_book_ids", emptySet()) ?: emptySet()
         val delTitles = repository.prefs.getStringSet("deleted_book_titles", emptySet()) ?: emptySet()
@@ -218,6 +220,12 @@ object BookBackupManager {
                 }
                 if (s.has("paged_bottom_clearance_dp")) {
                     repository.setPagedBottomClearanceDp(s.getInt("paged_bottom_clearance_dp"))
+                }
+                if (s.has("landscape_hide_header")) {
+                    repository.setLandscapeHideHeader(s.getBoolean("landscape_hide_header"))
+                }
+                if (s.has("landscape_hide_progress")) {
+                    repository.setLandscapeHideProgress(s.getBoolean("landscape_hide_progress"))
                 }
                 if (s.has("deleted_book_ids")) {
                     val arr = s.getJSONArray("deleted_book_ids")

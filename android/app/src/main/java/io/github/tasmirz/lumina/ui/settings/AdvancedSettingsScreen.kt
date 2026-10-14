@@ -123,14 +123,26 @@ fun AdvancedSettingsScreen(
     val assistantOrbStyleState = repository?.assistantOrbStyle?.collectAsState(initial = "EDGE_DOT")
     val assistantOrbStyle = assistantOrbStyleState?.value ?: "EDGE_DOT"
 
-    val orbSizeState = repository?.orbSize?.collectAsState(initial = OrbSize.NANO)
-    val orbSize = orbSizeState?.value ?: OrbSize.NANO
+    val orbSizeState = repository?.orbSize?.collectAsState(initial = OrbSize.DEFAULT)
+    val orbSize = orbSizeState?.value ?: OrbSize.DEFAULT
 
     val orbMenuSizeState = repository?.orbMenuSize?.collectAsState(initial = OrbMenuSize.MEDIUM)
     val orbMenuSize = orbMenuSizeState?.value ?: OrbMenuSize.MEDIUM
 
     val orbEdgeSnapState = repository?.orbEdgeSnap?.collectAsState(initial = true)
     val orbEdgeSnap = orbEdgeSnapState?.value ?: true
+
+    val orbSnapThresholdState = repository?.orbSnapThreshold?.collectAsState(initial = repository?.orbSnapThreshold?.value ?: 0.05f)
+    val orbSnapThreshold = orbSnapThresholdState?.value ?: (repository?.orbSnapThreshold?.value ?: 0.05f)
+
+    val orbReversePaletteLandscapeState = repository?.orbReversePaletteLandscape?.collectAsState(initial = false)
+    val orbReversePaletteLandscape = orbReversePaletteLandscapeState?.value ?: false
+
+    val orbReversePalettePortraitState = repository?.orbReversePalettePortrait?.collectAsState(initial = false)
+    val orbReversePalettePortrait = orbReversePalettePortraitState?.value ?: false
+
+    val orbFanDirectionState = repository?.orbFanDirection?.collectAsState(initial = repository?.orbFanDirection?.value ?: OrbFanDirection.AUTO)
+    val orbFanDirection = orbFanDirectionState?.value ?: (repository?.orbFanDirection?.value ?: OrbFanDirection.AUTO)
 
     val orbColorState = repository?.orbColor?.collectAsState(initial = OrbColor.THEME)
     val orbColor = orbColorState?.value ?: OrbColor.THEME
@@ -684,6 +696,10 @@ fun AdvancedSettingsScreen(
                         orbSize = orbSize,
                         orbMenuSize = orbMenuSize,
                         orbEdgeSnap = orbEdgeSnap,
+                        orbSnapThreshold = orbSnapThreshold,
+                        orbReversePaletteLandscape = orbReversePaletteLandscape,
+                        orbReversePalettePortrait = orbReversePalettePortrait,
+                        orbFanDirection = orbFanDirection,
                         orbColor = orbColor,
                         customOrbColor = customOrbColor,
                         orbOpacity = orbOpacity,
