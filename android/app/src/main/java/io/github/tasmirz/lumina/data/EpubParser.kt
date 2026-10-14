@@ -803,26 +803,59 @@ object EpubParser {
                 }
 
                 if (cleanedParas.isNotEmpty()) {
-                    val wordCount = cleanedParas
-                        .filterNot { it.startsWith("[IMG:") || it.startsWith("[TABLE:") || it == "[DIVIDER]" }
-                        .map {
-                            var p = it
-                            if (p.startsWith("[VERSE:") && p.endsWith("]")) p = p.removePrefix("[VERSE:").removeSuffix("]")
-                            else if (p.startsWith("[QUOTE:") && p.endsWith("]")) p = p.removePrefix("[QUOTE:").removeSuffix("]")
-                            p.replace("\\[/?(sub|sup)\\]".toRegex(), "")
+                    val monolithicChapterRegex = "^(?i)(?:chapter\\s+\\d+|prologue|epilogue|act\\s+\\d+|part\\s+\\d+|volume\\s+\\d+|book\\s+\\d+)(?:\\s*[:\\-—\\s].*)?$".toRegex()
+                    val internalHeadingsCount = if (cleanedParas.size > 150) {
+                        cleanedParas.count { monolithicChapterRegex.matches(it.trim()) }
+                    } else 0
+
+                    if (internalHeadingsCount >= 2) {
+                        // Monolithic novel: file contains hundreds or thousands of chapters concatenated in a single HTML!
+                        // Split into distinct sub-chapters so each chapter stays small and SQLite CursorWindow 2MB limit is never exceeded.
+                        var subTitle = chapterTitle
+                        val subParas = mutableListOf<String>()
+
+                        fun flushSubChapter() {
+                            if (subParas.isNotEmpty()) {
+                                val wc = subParas
+                                    .filterNot { it.startsWith("[IMG:") || it.startsWith("[TABLE:") || it == "[DIVIDER]" }
+                                    .map {
+                                        var p = it
+                                        if (p.startsWith("[VERSE:") && p.endsWith("]")) p = p.removePrefix("[VERSE:").removeSuffix("]")
+                                        else if (p.startsWith("[QUOTE:") && p.endsWith("]")) p = p.removePrefix("[QUOTE:").removeSuffix("]")
+                                        p.replace("\\[/?(sub|sup)\\]".toRegex(), "")
+                                    }
+                                    .joinToString(" ")
+                                    .split("\\s+".toRegex()).size
+                                val rt = maxOf(wc / 200, 1)
+                                val subText = if (currentPart.isNotBlank()) currentPart else "Section ${extractedChapters.size + 1}"
+                                extractedChapters.add(
+                                    Chapter(
+                                        title = deduplicateRepeatedHeading(subTitle),
+                                        subtitle = subText,
+                                        readTime = "$rt mins",
+                                        paragraphs = subParas.toList()
+                                    )
+                                )
+                                subParas.clear()
+                            }
                         }
-                        .joinToString(" ")
-                        .split("\\s+".toRegex()).size
-                    val readTimeMins = maxOf(wordCount / 200, 1)
 
-                    val subtitleText = if (currentPart.isNotBlank()) currentPart else "Section ${extractedChapters.size + 1}"
-
-                    if (extractedChapters.isNotEmpty() &&
-                        extractedChapters.last().title.equals(chapterTitle, ignoreCase = true) &&
-                        extractedChapters.last().subtitle.equals(subtitleText, ignoreCase = true)) {
-                        val prev = extractedChapters.last()
-                        val combinedParas = prev.paragraphs + cleanedParas
-                        val wordCount = combinedParas
+                        for (p in cleanedParas) {
+                            val trimmed = p.trim()
+                            if (monolithicChapterRegex.matches(trimmed)) {
+                                if (subParas.size >= 5) {
+                                    flushSubChapter()
+                                    subTitle = trimmed
+                                } else {
+                                    subTitle = trimmed
+                                }
+                            } else {
+                                subParas.add(p)
+                            }
+                        }
+                        flushSubChapter()
+                    } else {
+                        val wordCount = cleanedParas
                             .filterNot { it.startsWith("[IMG:") || it.startsWith("[TABLE:") || it == "[DIVIDER]" }
                             .map {
                                 var p = it
@@ -833,19 +866,39 @@ object EpubParser {
                             .joinToString(" ")
                             .split("\\s+".toRegex()).size
                         val readTimeMins = maxOf(wordCount / 200, 1)
-                        extractedChapters[extractedChapters.size - 1] = prev.copy(
-                            paragraphs = combinedParas,
-                            readTime = "$readTimeMins mins"
-                        )
-                    } else {
-                        extractedChapters.add(
-                            Chapter(
-                                title = chapterTitle,
-                                subtitle = subtitleText,
-                                readTime = "$readTimeMins mins",
-                                paragraphs = cleanedParas
+
+                        val subtitleText = if (currentPart.isNotBlank()) currentPart else "Section ${extractedChapters.size + 1}"
+
+                        if (extractedChapters.isNotEmpty() &&
+                            extractedChapters.last().title.equals(chapterTitle, ignoreCase = true) &&
+                            extractedChapters.last().subtitle.equals(subtitleText, ignoreCase = true)) {
+                            val prev = extractedChapters.last()
+                            val combinedParas = prev.paragraphs + cleanedParas
+                            val wordCount = combinedParas
+                                .filterNot { it.startsWith("[IMG:") || it.startsWith("[TABLE:") || it == "[DIVIDER]" }
+                                .map {
+                                    var p = it
+                                    if (p.startsWith("[VERSE:") && p.endsWith("]")) p = p.removePrefix("[VERSE:").removeSuffix("]")
+                                    else if (p.startsWith("[QUOTE:") && p.endsWith("]")) p = p.removePrefix("[QUOTE:").removeSuffix("]")
+                                    p.replace("\\[/?(sub|sup)\\]".toRegex(), "")
+                                }
+                                .joinToString(" ")
+                                .split("\\s+".toRegex()).size
+                            val readTimeMins = maxOf(wordCount / 200, 1)
+                            extractedChapters[extractedChapters.size - 1] = prev.copy(
+                                paragraphs = combinedParas,
+                                readTime = "$readTimeMins mins"
                             )
-                        )
+                        } else {
+                            extractedChapters.add(
+                                Chapter(
+                                    title = chapterTitle,
+                                    subtitle = subtitleText,
+                                    readTime = "$readTimeMins mins",
+                                    paragraphs = cleanedParas
+                                )
+                            )
+                        }
                     }
                 }
             }
@@ -894,43 +947,96 @@ object EpubParser {
         return resolved.joinToString("/")
     }
 
-    private fun parseHtmlTable(tableHtml: String): String? {
+    internal fun parseHtmlTable(tableHtml: String): String? {
         return try {
             val headers = mutableListOf<String>()
             val rows = mutableListOf<List<String>>()
 
-            val thRegex = "<th\\b[^>]*>(.*?)</th>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+            // 1. Caption extraction
+            val captionRegex = "<caption\\b[^>]*>(.*?)</caption>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+            val captionMatch = captionRegex.find(tableHtml)
+            val captionText = captionMatch?.let { cleanCellText(it.groupValues[1]) } ?: ""
+
+            // 2. Thead extraction (supports both <th> and <td> cells inside <thead>)
+            val theadRegex = "<thead\\b[^>]*>(.*?)</thead>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+            val theadMatch = theadRegex.find(tableHtml)
+            val cellRegex = "<(th|td)\\b([^>]*)>(.*?)</\\1>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
             val trRegex = "<tr\\b[^>]*>(.*?)</tr>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
-            val tdRegex = "<td\\b[^>]*>(.*?)</td>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
 
-            val allRows = trRegex.findAll(tableHtml).map { it.groupValues[1] }.toList()
-            if (allRows.isEmpty()) return null
-
-            var firstRowIsHeader = false
-            val firstThs = thRegex.findAll(allRows[0]).map { cleanCellText(it.groupValues[1]) }.toList()
-            if (firstThs.isNotEmpty()) {
-                headers.addAll(firstThs)
-                firstRowIsHeader = true
-            }
-
-            for (i in (if (firstRowIsHeader) 1 else 0) until allRows.size) {
-                val rowHtml = allRows[i]
-                val cells = tdRegex.findAll(rowHtml).map { cleanCellText(it.groupValues[1]) }.toList()
-                if (cells.isNotEmpty()) {
-                    rows.add(cells)
-                } else {
-                    val rowThs = thRegex.findAll(rowHtml).map { cleanCellText(it.groupValues[1]) }.toList()
-                    if (rowThs.isNotEmpty()) {
-                        rows.add(rowThs)
+            if (theadMatch != null) {
+                val theadHtml = theadMatch.groupValues[1]
+                val theadTrs = trRegex.findAll(theadHtml).map { it.groupValues[1] }.toList()
+                for (tr in theadTrs) {
+                    val theadCells = cellRegex.findAll(tr).map { cleanCellText(it.groupValues[3]) }.toList()
+                    if (theadCells.isNotEmpty() && theadCells.any { it.isNotBlank() }) {
+                        headers.addAll(theadCells)
+                        break
                     }
                 }
             }
 
-            if (headers.isEmpty() && rows.isEmpty()) return null
+            // 3. Scan data rows (strip <thead> from tableHtml if headers were already populated from thead)
+            val bodyHtml = if (headers.isNotEmpty() && theadMatch != null) {
+                theadRegex.replace(tableHtml, "")
+            } else {
+                tableHtml
+            }
 
-            val captionRegex = "<caption\\b[^>]*>(.*?)</caption>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
-            val captionMatch = captionRegex.find(tableHtml)
-            val captionText = captionMatch?.let { cleanCellText(it.groupValues[1]) } ?: ""
+            val allRows = trRegex.findAll(bodyHtml).map { it.groupValues[1] }.toList()
+            if (allRows.isEmpty() && headers.isEmpty()) return null
+
+            var startRowIdx = 0
+            if (headers.isEmpty() && allRows.isNotEmpty()) {
+                val thRegex = "<th\\b[^>]*>(.*?)</th>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+                val firstThs = thRegex.findAll(allRows[0]).map { cleanCellText(it.groupValues[1]) }.toList()
+                if (firstThs.isNotEmpty() && firstThs.any { it.isNotBlank() }) {
+                    headers.addAll(firstThs)
+                    startRowIdx = 1
+                }
+            }
+
+            // 4. Robust 2D Grid tracking for rowspan and colspan
+            val grid = mutableMapOf<Pair<Int, Int>, String>()
+            var maxCol = 0
+            val rowspanRegex = "rowspan=[\"']?(\\d+)[\"']?".toRegex(RegexOption.IGNORE_CASE)
+            val colspanRegex = "colspan=[\"']?(\\d+)[\"']?".toRegex(RegexOption.IGNORE_CASE)
+
+            for (rIdx in 0 until (allRows.size - startRowIdx)) {
+                val rowHtml = allRows[rIdx + startRowIdx]
+                var cIdx = 0
+                for (cellMatch in cellRegex.findAll(rowHtml)) {
+                    val attrs = cellMatch.groupValues[2]
+                    val cellContent = cleanCellText(cellMatch.groupValues[3])
+
+                    val rSpan = rowspanRegex.find(attrs)?.groupValues?.get(1)?.toIntOrNull()?.coerceIn(1, 50) ?: 1
+                    val cSpan = colspanRegex.find(attrs)?.groupValues?.get(1)?.toIntOrNull()?.coerceIn(1, 20) ?: 1
+
+                    while (grid.containsKey(Pair(rIdx, cIdx))) {
+                        cIdx++
+                    }
+
+                    for (dr in 0 until rSpan) {
+                        for (dc in 0 until cSpan) {
+                            grid[Pair(rIdx + dr, cIdx + dc)] = cellContent
+                            maxCol = maxOf(maxCol, cIdx + dc + 1)
+                        }
+                    }
+                    cIdx += cSpan
+                }
+            }
+
+            val totalRows = allRows.size - startRowIdx
+            for (r in 0 until totalRows) {
+                val rowCells = mutableListOf<String>()
+                for (c in 0 until maxCol) {
+                    rowCells.add(grid[Pair(r, c)] ?: "")
+                }
+                if (rowCells.any { it.isNotBlank() }) {
+                    rows.add(rowCells)
+                }
+            }
+
+            if (headers.isEmpty() && rows.isEmpty()) return null
 
             val json = JSONObject()
             if (captionText.isNotBlank()) {
@@ -1090,8 +1196,18 @@ object EpubParser {
     }
 
     private fun cleanCellText(cellHtml: String): String {
+        var html = cellHtml
+        val imgMatch = "__IMG_TOKEN_START__(.*?)__IMG_TOKEN_END__|<(?:img|image)\\s+[^>]*(?:xlink:href|src|href)=[\"']([^\"']+)[\"'][^>]*>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)).find(html)
+        val extractedImgToken = if (imgMatch != null) {
+            val path = imgMatch.groupValues[1].ifBlank { imgMatch.groupValues[2] }.trim()
+            if (path.isNotBlank()) "[IMG:$path]" else null
+        } else null
+        if (imgMatch != null) {
+            html = html.replace(imgMatch.value, " ")
+        }
+
         val mathRegex = "<math\\b[^>]*>(.*?)</math>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
-        val mathProcessed = mathRegex.replace(cellHtml) { match ->
+        val mathProcessed = mathRegex.replace(html) { match ->
             transformMathML(match.value)
         }
         val supRegex = "(?i)<sup\\b[^>]*>(.*?)</sup>".toRegex(RegexOption.DOT_MATCHES_ALL)
@@ -1106,14 +1222,23 @@ object EpubParser {
             val unicode = if (inner.length == 1) toUnicodeSubscript(inner) else null
             unicode ?: "[sub]$inner[/sub]"
         }
-        val text = subSupProcessed
-            .replace("<br\\s*/?>".toRegex(RegexOption.IGNORE_CASE), " ")
+        val htmlWithBreaks = subSupProcessed
+            .replace("<br\\s*/?>".toRegex(RegexOption.IGNORE_CASE), "___BR_TOKEN___")
+            .replace("</(?:p|div|tr|li|blockquote)>".toRegex(RegexOption.IGNORE_CASE), "___BR_TOKEN___")
             .replace("<[^>]+>".toRegex(), " ")
-        val decoded = decodeHtmlEntities(text).replace("\\s+".toRegex(), " ").trim()
-        return cleanLatexMath(decoded)
+        val decoded = decodeHtmlEntities(htmlWithBreaks)
+            .replace("[ \t\r\n]+".toRegex(), " ")
+            .replace("___BR_TOKEN___", "\n")
+        val cleanedLines = decoded.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        val cleaned = cleanLatexMath(cleanedLines.joinToString("\n").trim())
+        return if (extractedImgToken != null) {
+            if (cleaned.isNotBlank()) "$extractedImgToken $cleaned" else extractedImgToken
+        } else {
+            cleaned
+        }
     }
 
-    private fun cleanHtmlToParagraphs(html: String): List<String> {
+    internal fun cleanHtmlToParagraphs(html: String): List<String> {
         // 0. Drop cap / Initial letter un-wrapping to prevent word fragmentation (e.g. "T o", "I T")
         val dropcapRegex = "(?i)<span\\b[^>]*class=[\"'][^\"']*(?:dropcap|letra|initial)[^\"']*[\"'][^>]*>\\s*([^<]+?)\\s*</span>\\s*".toRegex()
         val dropcapCleaned = dropcapRegex.replace(html) { match ->
@@ -1161,14 +1286,20 @@ object EpubParser {
             }
         }
 
-        // 5. Scene Dividers / Thematic breaks (<hr>, asterisms, thoughtbreaks)
-        val dividerRegex = "(?i)(?:<hr\\b[^>]*>|<(?:p|div)\\b[^>]*class=[\"'][^\"']*(?:asterism|thoughtbreak|scene-break)[^\"']*[^>]*>.*?</(?:p|div)>)".toRegex(RegexOption.DOT_MATCHES_ALL)
+        // 5. Scene Dividers / Thematic breaks (<hr>, asterisms, thoughtbreaks, or long runs of underscores/hyphens)
+        val dividerRegex = "(?i)(?:<hr\\b[^>]*>|<(?:p|div)\\b[^>]*class=[\"'][^\"']*(?:asterism|thoughtbreak|scene-break)[^\"']*[^>]*>.*?</(?:p|div)>|_{4,}|-{4,})".toRegex(RegexOption.DOT_MATCHES_ALL)
         val dividerProcessed = dividerRegex.replace(tableProcessed, "\n\n__DIVIDER_TOKEN__\n\n")
 
-        // 6. Verse / Drama / Poetry / Preformatted text (<pre>, .drama, .poem, .verse, .stanza)
-        val verseRegex = "(?i)<(pre|div|p|blockquote)\\b[^>]*(?:class=[\"'][^\"']*(?:drama|poem|verse|stanza)[^\"']*|pre)[^>]*>(.*?)</\\1>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
-        val verseProcessed = verseRegex.replace(dividerProcessed) { match ->
-            val rawInner = match.groupValues[2]
+        // Ensure "Abstract" preceded by any rule, underscores, or dashes starts cleanly as its own paragraph
+        val abstractRegex = "(?i)(?:[—_\\-]{2,}|__DIVIDER_TOKEN__)\\s*(Abstract[—–:\\s])".toRegex()
+        val abstractProcessed = abstractRegex.replace(dividerProcessed) { match ->
+            "\n\n__DIVIDER_TOKEN__\n\n${match.groupValues[1]}"
+        }
+
+        // 6. Verse / Drama / Poetry / Preformatted code (<pre>, <code>, .code, .drama, .poem, .verse, .stanza)
+        val verseRegex = "(?i)<(pre|div|p|blockquote)\\b[^>]*(?:class=[\"'][^\"']*(?:drama|poem|verse|stanza|code|sourcecode)[^\"']*|pre)[^>]*>(.*?)</\\1>|<code\\b[^>]*>(.*?)</code>".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+        val verseProcessed = verseRegex.replace(abstractProcessed) { match ->
+            val rawInner = match.groupValues[2].ifEmpty { match.groupValues[3] }
             val brToNewline = rawInner.replace("<br\\s*/?>".toRegex(RegexOption.IGNORE_CASE), "\n")
             val stripped = brToNewline.replace("<[^>]+>".toRegex(), "")
             val decoded = decodeHtmlEntities(stripped)
@@ -1332,7 +1463,8 @@ object EpubParser {
     fun isSceneDividerGlyph(text: String): Boolean {
         val t = text.trim()
         if (t == "⁂" || t == "* * *" || t == "***" || t == "---" || t == "— — —" || t == "• • •" || t == "~ ~ ~" || t == "*  *  *") return true
-        if (t.length in 3..20 && "^(?:[\\*⁂•~\\-—]\\s*){3,7}$".toRegex().matches(t)) return true
+        if (t.matches("^[_\u2014\\-—]{3,}$".toRegex())) return true
+        if (t.length in 3..20 && "^(?:[\\*⁂•~\\-—_]\\s*){3,7}$".toRegex().matches(t)) return true
         return false
     }
 
@@ -1352,9 +1484,22 @@ object EpubParser {
         if (normBook.isNotEmpty() && normPara.replace(normBook, "").isEmpty()) return true
         if (normPart.isNotEmpty() && normChap.isNotEmpty() && (normPara == normPart + normChap || normPara == normChap + normPart)) return true
 
+        // Match titles when numeral or adventure prefixes differ (e.g. "A SCANDAL IN BOHEMIA" vs "I. A SCANDAL IN BOHEMIA")
+        val normChapWithoutPrefix = normChap
+            .replaceFirst("^(adventure|chapter|part|section|book|canto)".toRegex(), "")
+            .replaceFirst("^[0-9ivxlcdm]+".toRegex(), "")
+        val normParaWithoutPrefix = normPara
+            .replaceFirst("^(adventure|chapter|part|section|book|canto)".toRegex(), "")
+            .replaceFirst("^[0-9ivxlcdm]+".toRegex(), "")
+        if (normChapWithoutPrefix.isNotEmpty() && (normPara == normChapWithoutPrefix || normParaWithoutPrefix == normChapWithoutPrefix)) return true
+
         if (trimmed.length > 80) return false
 
-        val chapterPattern = "^(?i)(chapter|part|section|book|canto)\\s+([0-9ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)[.:\\s—–-]*$".toRegex()
+        // Standalone chapter numeral / Roman numeral or number word (e.g. "I.", "1.", "IV", "One")
+        val standaloneNumeralPattern = "^(?i)(?:[0-9ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)[.:\\s—–-]*$".toRegex()
+        if (standaloneNumeralPattern.matches(trimmed)) return true
+
+        val chapterPattern = "^(?i)(chapter|part|section|book|canto|adventure|story)\\s+([0-9ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)[.:\\s—–-]*$".toRegex()
         if (chapterPattern.matches(trimmed)) return true
 
         return false

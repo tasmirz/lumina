@@ -37,6 +37,7 @@ fun ReaderTopBar(
     activeChapterTitle: String,
     assistantOrbStyle: String,
     disableAi: Boolean,
+    landscapeHideHeader: Boolean = true,
     onOpenToc: () -> Unit,
     onOpenAssistant: () -> Unit,
     modifier: Modifier = Modifier
@@ -44,7 +45,15 @@ fun ReaderTopBar(
     val context = LocalContext.current
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-    val isVisible = (if (isLandscape) isUiVisible else (isUiVisible || readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL)) &&
+    val isVisible = (if (isLandscape) {
+        if (readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL) {
+            if (landscapeHideHeader) false else isUiVisible
+        } else {
+            isUiVisible
+        }
+    } else {
+        (isUiVisible || readingMode == ReadingMode.PAGED || readingMode == ReadingMode.PAGED_SCROLL)
+    }) &&
             voiceState == AssistantVoiceState.IDLE &&
             !showInBookSearchDialog
 

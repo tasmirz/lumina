@@ -14,10 +14,12 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
@@ -57,6 +59,7 @@ import io.github.tasmirz.lumina.model.SceneMatch
 import io.github.tasmirz.lumina.model.WishlistBook
 import io.github.tasmirz.lumina.ui.components.BookContextMenuSheet
 import io.github.tasmirz.lumina.ui.components.BookCoverImage
+import io.github.tasmirz.lumina.ui.components.prewarmBookCovers
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -71,26 +74,43 @@ fun LibraryScreen(
     onNavigateToScene: ((bookId: String, chapterIndex: Int) -> Unit)? = null,
     onDeleteBook: (String) -> Unit = {},
     onResetProgress: (String) -> Unit = {},
+    onReparseBook: (String) -> Unit = {},
     onAddEpubClick: () -> Unit,
     onAddToWishlist: (title: String, author: String, notes: String) -> Unit = { _, _, _ -> },
     onRemoveFromWishlist: (String) -> Unit = {},
     onShareReadingList: () -> Unit = {},
     triggerSearchFocus: Int = 0,
+    importingBookTitle: String? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val searchFocusRequester = remember { FocusRequester() }
+    val gridState = rememberLazyGridState()
+    val listState = rememberLazyListState()
 
     LaunchedEffect(triggerSearchFocus) {
         if (triggerSearchFocus > 0) {
+            try {
+                gridState.animateScrollToItem(0)
+                listState.animateScrollToItem(0)
+            } catch (_: Exception) {}
+            delay(150)
             try {
                 searchFocusRequester.requestFocus()
             } catch (_: Exception) {}
         }
     }
 
-    val activeBackgroundTask by (repository?.activeBackgroundTask?.collectAsState(initial = null) ?: remember { mutableStateOf(null) })
+    LaunchedEffect(books) {
+        if (books.isNotEmpty()) {
+            val coverSources = books.map { it.coverUrl }.filter { it.isNotBlank() }
+            prewarmBookCovers(coverSources, context)
+        }
+    }
+
+    var bookForContextMenu by remember { mutableStateOf<Book?>(null) }
+    val onBookLongClickMemoized: (Book) -> Unit = remember { { book: Book -> bookForContextMenu = book } }
     var isRefreshing by remember { mutableStateOf(false) }
     var selectedTab by rememberSaveable { mutableIntStateOf(0) } // 0: All, 1: Read, 2: Wishlist
     var searchQuery by rememberSaveable { mutableStateOf("") }
@@ -98,7 +118,6 @@ fun LibraryScreen(
     var isSearchingDeep by remember { mutableStateOf(false) }
     var showAddWishlistDialog by remember { mutableStateOf(false) }
     var bookToDelete by remember { mutableStateOf<Book?>(null) }
-    var bookForContextMenu by remember { mutableStateOf<Book?>(null) }
 
 
     val filteredBooks = remember(books, searchQuery) {
@@ -160,45 +179,44 @@ fun LibraryScreen(
             .statusBarsPadding()
     ) {
         if (searchQuery.isNotBlank()) {
-            // Universal Search Results View
-            if (isLandscape) {
-                // Compact height: header scrolls inside the column
-                LazyColumn(
-                    contentPadding = PaddingValues(bottom = 140.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    item(key = "lib-header") {
-                        LibraryHeader(
-                            booksCount = books.size,
-                            readCount = readBooks.size,
-                            wishlistCount = wishlistBooks.size,
-                            selectedTab = selectedTab,
-                            onShareReadingList = onShareReadingList,
-                            onAddBookClick = onAddEpubClick,
-                            onAddWishlistClick = { showAddWishlistDialog = true },
-                            showAddButton = books.isNotEmpty() || selectedTab == 2,
-                            isLandscape = true
-                        )
-                    }
-                    item(key = "lib-tabs") {
-                        LibraryTabChips(
-                            selectedTab = selectedTab,
-                            onSelectTab = { selectedTab = it },
-                            booksCount = books.size,
-                            readCount = readBooks.size,
-                            wishlistCount = wishlistBooks.size,
-                            isLandscape = true
-                        )
-                    }
-                    item(key = "lib-search") {
-                        LibrarySearchBar(
-                            searchQuery = searchQuery,
-                            onSearchQueryChange = { searchQuery = it },
-                            isLandscape = true,
-                            modifier = Modifier.focusRequester(searchFocusRequester)
-                        )
-                    }
+            // Universal Search Results View (Scrollable Header & Search Bar)
+            LazyColumn(
+                state = listState,
+                contentPadding = PaddingValues(bottom = 140.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                item(key = "lib-header") {
+                    LibraryHeader(
+                        booksCount = books.size,
+                        readCount = readBooks.size,
+                        wishlistCount = wishlistBooks.size,
+                        selectedTab = selectedTab,
+                        onShareReadingList = onShareReadingList,
+                        onAddBookClick = onAddEpubClick,
+                        onAddWishlistClick = { showAddWishlistDialog = true },
+                        showAddButton = books.isNotEmpty() || selectedTab == 2,
+                        isLandscape = isLandscape
+                    )
+                }
+                item(key = "lib-tabs") {
+                    LibraryTabChips(
+                        selectedTab = selectedTab,
+                        onSelectTab = { selectedTab = it },
+                        booksCount = books.size,
+                        readCount = readBooks.size,
+                        wishlistCount = wishlistBooks.size,
+                        isLandscape = isLandscape
+                    )
+                }
+                item(key = "lib-search") {
+                    LibrarySearchBar(
+                        searchQuery = searchQuery,
+                        onSearchQueryChange = { searchQuery = it },
+                        isLandscape = isLandscape,
+                        modifier = Modifier.focusRequester(searchFocusRequester)
+                    )
+                }
 
                 if (isSearchingDeep) {
                     item(key = "search-progress") {
@@ -375,9 +393,17 @@ fun LibraryScreen(
                     }
                 }
             }
-        } else {
-                // Portrait: header/tabs/search pinned at top, results scroll below
-                Column(modifier = Modifier.fillMaxSize()) {
+        } else if (selectedTab == 1) {
+            // Read (Completed) View (Scrollable Header & Search Bar)
+            LazyVerticalGrid(
+                state = gridState,
+                columns = GridCells.Adaptive(minSize = gridMinSize),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 150.dp),
+                horizontalArrangement = Arrangement.spacedBy(if (isLandscape) 12.dp else 14.dp),
+                verticalArrangement = Arrangement.spacedBy(if (isLandscape) 10.dp else 14.dp),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                item(span = { GridItemSpan(maxLineSpan) }, key = "lib-header") {
                     LibraryHeader(
                         booksCount = books.size,
                         readCount = readBooks.size,
@@ -387,143 +413,214 @@ fun LibraryScreen(
                         onAddBookClick = onAddEpubClick,
                         onAddWishlistClick = { showAddWishlistDialog = true },
                         showAddButton = books.isNotEmpty() || selectedTab == 2,
-                        isLandscape = false
+                        isLandscape = isLandscape
                     )
+                }
+                item(span = { GridItemSpan(maxLineSpan) }, key = "lib-tabs") {
                     LibraryTabChips(
                         selectedTab = selectedTab,
                         onSelectTab = { selectedTab = it },
                         booksCount = books.size,
                         readCount = readBooks.size,
                         wishlistCount = wishlistBooks.size,
-                        isLandscape = false
+                        isLandscape = isLandscape
                     )
+                }
+                item(span = { GridItemSpan(maxLineSpan) }, key = "lib-search") {
                     LibrarySearchBar(
                         searchQuery = searchQuery,
                         onSearchQueryChange = { searchQuery = it },
-                        isLandscape = false,
+                        isLandscape = isLandscape,
                         modifier = Modifier.focusRequester(searchFocusRequester)
                     )
-                    LazyColumn(
-                        contentPadding = PaddingValues(bottom = 140.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        if (isSearchingDeep) {
-                            item(key = "search-progress-p") {
-                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp), color = MaterialTheme.colorScheme.secondary)
-                            }
-                        }
-                        if (filteredBooks.isNotEmpty()) {
-                            item(key = "matching-books-title-p") {
-                                Text("MATCHING BOOKS (${filteredBooks.size})", fontSize = 11.sp, fontWeight = FontWeight.Normal, letterSpacing = 1.sp, color = MaterialTheme.colorScheme.secondary, modifier = Modifier.padding(start = 20.dp, top = 6.dp, bottom = 2.dp))
-                            }
-                            items(filteredBooks, key = { "search-book-p-${it.id}" }) { book ->
-                                Box(modifier = Modifier.padding(horizontal = 20.dp)) {
-                                    Card(modifier = Modifier.fillMaxWidth().clickable { onBookSelect(book.id) }, shape = RoundedCornerShape(12.dp),
-                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)) {
-                                        Row(modifier = Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                            BookCoverImage(source = book.coverUrl, titleFallback = book.title, authorFallback = book.author,
-                                                modifier = Modifier.width(44.dp).height(64.dp).clip(RoundedCornerShape(6.dp)))
-                                            Spacer(modifier = Modifier.width(12.dp))
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text(book.title, fontFamily = FontFamily.Serif, fontSize = 14.sp, fontWeight = FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                                Text(book.author, fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        if (deepSearchResults.isNotEmpty()) {
-                            item(key = "deep-matches-title-p") {
+                }
+                if (readBooks.isEmpty()) {
+                    item(span = { GridItemSpan(maxLineSpan) }, key = "empty-read") {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 40.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f),
+                                    modifier = Modifier.size(48.dp)
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
                                 Text(
-                                    text = "DEEP SCENE MATCHES (${deepSearchResults.size})",
-                                    fontSize = 11.sp,
+                                    text = "No Completed Books Yet",
+                                    fontFamily = FontFamily.Serif,
+                                    fontSize = 18.sp,
                                     fontWeight = FontWeight.Normal,
-                                    letterSpacing = 1.sp,
-                                    color = MaterialTheme.colorScheme.secondary,
-                                    modifier = Modifier.padding(start = 20.dp, top = 10.dp, bottom = 2.dp)
+                                    color = MaterialTheme.colorScheme.onBackground
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "Books with 95%+ progress or marked as read will appear here.",
+                                    fontFamily = FontFamily.SansSerif,
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            items(deepSearchResults, key = { "scene-p-${it.bookId}-${it.chapterIndex}-${it.paragraphIndex}" }) { match ->
-                                val matchedBook = books.find { it.id == match.bookId }
-                                Box(modifier = Modifier.padding(horizontal = 20.dp)) {
-                                    Card(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clickable {
-                                                if (onNavigateToScene != null) {
-                                                    onNavigateToScene(match.bookId, match.chapterIndex)
-                                                } else {
-                                                    onBookSelect(match.bookId)
-                                                }
-                                            },
-                                        shape = RoundedCornerShape(12.dp),
-                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                        border = BorderStroke(0.6.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-                                    ) {
-                                        Column(modifier = Modifier.padding(12.dp)) {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Text(
-                                                    text = matchedBook?.title ?: "Book",
-                                                    fontWeight = FontWeight.Normal,
-                                                    fontSize = 12.sp,
-                                                    color = MaterialTheme.colorScheme.primary,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis,
-                                                    modifier = Modifier.weight(1f, fill = false)
-                                                )
-                                                Spacer(modifier = Modifier.width(8.dp))
-                                                Text(
-                                                    text = match.chapterTitle.ifBlank { "Chapter ${match.chapterIndex + 1}" },
-                                                    fontSize = 10.5.sp,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
-                                            }
-                                            Spacer(modifier = Modifier.height(6.dp))
-                                            Text(
-                                                text = match.snippet,
-                                                fontSize = 11.5.sp,
-                                                lineHeight = 16.sp,
-                                                color = MaterialTheme.colorScheme.onSurface,
-                                                fontFamily = FontFamily.Serif,
-                                                maxLines = 3,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                        }
-                                    }
-                                }
+                        }
+                    }
+                } else {
+                    items(
+                        items = readBooks,
+                        key = { "read-${it.id}" },
+                        contentType = { "read-book-card" }
+                    ) { b ->
+                        ReadBookCard(
+                            book = b,
+                            onBookSelect = onBookSelect
+                        )
+                    }
+                }
+            }
+        } else if (selectedTab == 2) {
+            // Wishlist View (Scrollable Header & Search Bar)
+            LazyColumn(
+                state = listState,
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 150.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                item(key = "lib-header") {
+                    LibraryHeader(
+                        booksCount = books.size,
+                        readCount = readBooks.size,
+                        wishlistCount = wishlistBooks.size,
+                        selectedTab = selectedTab,
+                        onShareReadingList = onShareReadingList,
+                        onAddBookClick = onAddEpubClick,
+                        onAddWishlistClick = { showAddWishlistDialog = true },
+                        showAddButton = books.isNotEmpty() || selectedTab == 2,
+                        isLandscape = isLandscape
+                    )
+                }
+                item(key = "lib-tabs") {
+                    LibraryTabChips(
+                        selectedTab = selectedTab,
+                        onSelectTab = { selectedTab = it },
+                        booksCount = books.size,
+                        readCount = readBooks.size,
+                        wishlistCount = wishlistBooks.size,
+                        isLandscape = isLandscape
+                    )
+                }
+                item(key = "lib-search") {
+                    LibrarySearchBar(
+                        searchQuery = searchQuery,
+                        onSearchQueryChange = { searchQuery = it },
+                        isLandscape = isLandscape,
+                        modifier = Modifier.focusRequester(searchFocusRequester)
+                    )
+                }
+                if (wishlistBooks.isEmpty()) {
+                    item(key = "empty-wishlist") {
+                        Box(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 40.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(
+                                    imageVector = Icons.Default.Favorite,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f),
+                                    modifier = Modifier.size(48.dp)
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text(
+                                    text = "Your Wishlist is Empty",
+                                    fontFamily = FontFamily.Serif,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Normal,
+                                    color = MaterialTheme.colorScheme.onBackground
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "Tap + above to add titles you wish to read next.",
+                                    fontFamily = FontFamily.SansSerif,
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                         }
-                        if (filteredBooks.isEmpty() && deepSearchResults.isEmpty() && !isSearchingDeep) {
-                            item(key = "no-results-p") {
-                                Box(modifier = Modifier.fillMaxWidth().padding(vertical = 40.dp), contentAlignment = Alignment.Center) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Icon(imageVector = Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f), modifier = Modifier.size(36.dp))
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        Text("No matches found for \"$searchQuery\"", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                } else {
+                    items(items = wishlistBooks, key = { it.id }, contentType = { "wishlist-card" }) { item ->
+                        Card(
+                            shape = RoundedCornerShape(14.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(14.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = item.title,
+                                        fontFamily = FontFamily.Serif,
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Normal,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    if (item.author.isNotBlank()) {
+                                        Text(
+                                            text = item.author,
+                                            fontFamily = FontFamily.SansSerif,
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
                                     }
+                                    if (item.note.isNotBlank()) {
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = item.note,
+                                            fontFamily = FontFamily.SansSerif,
+                                            fontSize = 11.sp,
+                                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                            color = MaterialTheme.colorScheme.secondary
+                                        )
+                                    }
+                                }
+                                IconButton(onClick = { onRemoveFromWishlist(item.id) }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Delete,
+                                        contentDescription = "Remove",
+                                        tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
+                                        modifier = Modifier.size(18.dp)
+                                    )
                                 }
                             }
                         }
                     }
                 }
             }
-        } else if (selectedTab == 1) {
-            // Read (Completed) View
-            if (isLandscape) {
-                // Compact height: header/tabs/search scroll inside grid
+        } else {
+            // Gallery View (selectedTab == 0) (Scrollable Header & Search Bar)
+            PullToRefreshBox(
+                isRefreshing = isRefreshing,
+                onRefresh = {
+                    isRefreshing = true
+                    coroutineScope.launch {
+                        try { repository?.refreshLibrary() } finally { isRefreshing = false }
+                    }
+                },
+                modifier = Modifier.fillMaxSize()
+            ) {
                 LazyVerticalGrid(
+                    state = gridState,
                     columns = GridCells.Adaptive(minSize = gridMinSize),
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 140.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 150.dp),
+                    horizontalArrangement = Arrangement.spacedBy(if (isLandscape) 12.dp else 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(if (isLandscape) 10.dp else 14.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
                     item(span = { GridItemSpan(maxLineSpan) }, key = "lib-header") {
@@ -536,7 +633,7 @@ fun LibraryScreen(
                             onAddBookClick = onAddEpubClick,
                             onAddWishlistClick = { showAddWishlistDialog = true },
                             showAddButton = books.isNotEmpty() || selectedTab == 2,
-                            isLandscape = true
+                            isLandscape = isLandscape
                         )
                     }
                     item(span = { GridItemSpan(maxLineSpan) }, key = "lib-tabs") {
@@ -546,493 +643,17 @@ fun LibraryScreen(
                             booksCount = books.size,
                             readCount = readBooks.size,
                             wishlistCount = wishlistBooks.size,
-                            isLandscape = true
+                            isLandscape = isLandscape
                         )
                     }
                     item(span = { GridItemSpan(maxLineSpan) }, key = "lib-search") {
                         LibrarySearchBar(
                             searchQuery = searchQuery,
                             onSearchQueryChange = { searchQuery = it },
-                            isLandscape = true,
+                            isLandscape = isLandscape,
                             modifier = Modifier.focusRequester(searchFocusRequester)
                         )
                     }
-                    if (readBooks.isEmpty()) {
-                        item(span = { GridItemSpan(maxLineSpan) }, key = "empty-read") {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 40.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Icon(
-                                        imageVector = Icons.Default.CheckCircle,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f),
-                                        modifier = Modifier.size(48.dp)
-                                    )
-                                    Spacer(modifier = Modifier.height(12.dp))
-                                    Text(
-                                        text = "No Completed Books Yet",
-                                        fontFamily = FontFamily.Serif,
-                                        fontSize = 18.sp,
-                                        fontWeight = FontWeight.Normal,
-                                        color = MaterialTheme.colorScheme.onBackground
-                                    )
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Text(
-                                        text = "Books with 95%+ progress or marked as read will appear here.",
-                                        fontFamily = FontFamily.SansSerif,
-                                        fontSize = 12.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
-                    } else {
-                        items(
-                            items = readBooks,
-                            key = { "read-${it.id}" },
-                            contentType = { "read-book-card" }
-                        ) { b ->
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { onBookSelect(b.id) },
-                                shape = RoundedCornerShape(12.dp),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                border = BorderStroke(0.6.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                            ) {
-                                Column(modifier = Modifier.padding(8.dp)) {
-                                    Box {
-                                        BookCoverImage(
-                                            source = b.coverUrl,
-                                            titleFallback = b.title,
-                                            authorFallback = b.author,
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .aspectRatio(1f / 1.30f)
-                                                .clip(RoundedCornerShape(8.dp))
-                                        )
-                                        Surface(
-                                            shape = RoundedCornerShape(6.dp),
-                                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.92f),
-                                            modifier = Modifier
-                                                .align(Alignment.TopEnd)
-                                                .padding(4.dp)
-                                        ) {
-                                            Row(
-                                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Icon(
-                                                    Icons.Default.Check,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(9.dp),
-                                                    tint = MaterialTheme.colorScheme.onPrimaryContainer
-                                                )
-                                                Spacer(modifier = Modifier.width(2.dp))
-                                                Text(
-                                                    "READ",
-                                                    fontSize = 8.5.sp,
-                                                    fontWeight = FontWeight.Normal,
-                                                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                                                )
-                                            }
-                                        }
-                                    }
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Text(
-                                        text = b.title,
-                                        fontFamily = FontFamily.Serif,
-                                        fontSize = 12.5.sp,
-                                        fontWeight = FontWeight.Normal,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                    Text(
-                                        text = b.author,
-                                        fontFamily = FontFamily.SansSerif,
-                                        fontSize = 10.5.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            } else {
-                // Portrait: static header/tabs/search pinned at top
-                Column(modifier = Modifier.fillMaxSize()) {
-                    LibraryHeader(
-                        booksCount = books.size,
-                        readCount = readBooks.size,
-                        wishlistCount = wishlistBooks.size,
-                        selectedTab = selectedTab,
-                        onShareReadingList = onShareReadingList,
-                        onAddBookClick = onAddEpubClick,
-                        onAddWishlistClick = { showAddWishlistDialog = true },
-                        showAddButton = books.isNotEmpty() || selectedTab == 2,
-                        isLandscape = false
-                    )
-                    LibraryTabChips(
-                        selectedTab = selectedTab,
-                        onSelectTab = { selectedTab = it },
-                        booksCount = books.size,
-                        readCount = readBooks.size,
-                        wishlistCount = wishlistBooks.size,
-                        isLandscape = false
-                    )
-                    LibrarySearchBar(
-                        searchQuery = searchQuery,
-                        onSearchQueryChange = { searchQuery = it },
-                        isLandscape = false,
-                        modifier = Modifier.focusRequester(searchFocusRequester)
-                    )
-                    LazyVerticalGrid(
-                        columns = GridCells.Adaptive(minSize = gridMinSize),
-                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 150.dp),
-                        horizontalArrangement = Arrangement.spacedBy(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(14.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        if (readBooks.isEmpty()) {
-                            item(span = { GridItemSpan(maxLineSpan) }, key = "empty-read") {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 40.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Icon(
-                                            imageVector = Icons.Default.CheckCircle,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f),
-                                            modifier = Modifier.size(48.dp)
-                                        )
-                                        Spacer(modifier = Modifier.height(12.dp))
-                                        Text(
-                                            text = "No Completed Books Yet",
-                                            fontFamily = FontFamily.Serif,
-                                            fontSize = 18.sp,
-                                            fontWeight = FontWeight.Normal,
-                                            color = MaterialTheme.colorScheme.onBackground
-                                        )
-                                        Spacer(modifier = Modifier.height(6.dp))
-                                        Text(
-                                            text = "Books with 95%+ progress or marked as read will appear here.",
-                                            fontFamily = FontFamily.SansSerif,
-                                            fontSize = 12.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-                            }
-                        } else {
-                            items(
-                                items = readBooks,
-                                key = { "read-${it.id}" },
-                                contentType = { "read-book-card" }
-                            ) { b ->
-                                Card(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable { onBookSelect(b.id) },
-                                    shape = RoundedCornerShape(12.dp),
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                    border = BorderStroke(0.6.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                                ) {
-                                    Column(modifier = Modifier.padding(8.dp)) {
-                                        Box {
-                                            BookCoverImage(
-                                                source = b.coverUrl,
-                                                titleFallback = b.title,
-                                                authorFallback = b.author,
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .aspectRatio(1f / 1.30f)
-                                                    .clip(RoundedCornerShape(8.dp))
-                                            )
-                                            Surface(
-                                                shape = RoundedCornerShape(6.dp),
-                                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.92f),
-                                                modifier = Modifier
-                                                    .align(Alignment.TopEnd)
-                                                    .padding(4.dp)
-                                            ) {
-                                                Row(
-                                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
-                                                    verticalAlignment = Alignment.CenterVertically
-                                                ) {
-                                                    Icon(
-                                                        Icons.Default.Check,
-                                                        contentDescription = null,
-                                                        modifier = Modifier.size(9.dp),
-                                                        tint = MaterialTheme.colorScheme.onPrimaryContainer
-                                                    )
-                                                    Spacer(modifier = Modifier.width(2.dp))
-                                                    Text(
-                                                        "READ",
-                                                        fontSize = 8.5.sp,
-                                                        fontWeight = FontWeight.Normal,
-                                                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                                                    )
-                                                }
-                                            }
-                                        }
-                                        Spacer(modifier = Modifier.height(6.dp))
-                                        Text(
-                                            text = b.title,
-                                            fontFamily = FontFamily.Serif,
-                                            fontSize = 12.5.sp,
-                                            fontWeight = FontWeight.Normal,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                        Text(
-                                            text = b.author,
-                                            fontFamily = FontFamily.SansSerif,
-                                            fontSize = 10.5.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        } else if (selectedTab == 2) {
-            // Wishlist View
-            if (isLandscape) {
-                // Compact height: header scrolls with content
-                LazyColumn(
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 140.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    item(key = "lib-header") {
-                        LibraryHeader(
-                            booksCount = books.size,
-                            readCount = readBooks.size,
-                            wishlistCount = wishlistBooks.size,
-                            selectedTab = selectedTab,
-                            onShareReadingList = onShareReadingList,
-                            onAddBookClick = onAddEpubClick,
-                            onAddWishlistClick = { showAddWishlistDialog = true },
-                            showAddButton = books.isNotEmpty() || selectedTab == 2,
-                            isLandscape = true
-                        )
-                    }
-                    item(key = "lib-tabs") {
-                        LibraryTabChips(
-                            selectedTab = selectedTab,
-                            onSelectTab = { selectedTab = it },
-                            booksCount = books.size,
-                            readCount = readBooks.size,
-                            wishlistCount = wishlistBooks.size,
-                            isLandscape = true
-                        )
-                    }
-                    item(key = "lib-search") {
-                        LibrarySearchBar(
-                            searchQuery = searchQuery,
-                            onSearchQueryChange = { searchQuery = it },
-                            isLandscape = true,
-                            modifier = Modifier.focusRequester(searchFocusRequester)
-                        )
-                    }
-                    if (wishlistBooks.isEmpty()) {
-                        item(key = "empty-wishlist") {
-                            Box(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 40.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Icon(imageVector = Icons.Default.Favorite, contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f), modifier = Modifier.size(48.dp))
-                                    Spacer(modifier = Modifier.height(12.dp))
-                                    Text("Your Wishlist is Empty", fontFamily = FontFamily.Serif, fontSize = 18.sp,
-                                        fontWeight = FontWeight.Normal, color = MaterialTheme.colorScheme.onBackground)
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Text("Tap + above to add titles you wish to read next.", fontFamily = FontFamily.SansSerif,
-                                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
-                        }
-                    } else {
-                        items(items = wishlistBooks, key = { it.id }, contentType = { "wishlist-card" }) { item ->
-                            Card(shape = RoundedCornerShape(14.dp),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-                                modifier = Modifier.fillMaxWidth()) {
-                                Row(modifier = Modifier.fillMaxWidth().padding(14.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(item.title, fontFamily = FontFamily.Serif, fontSize = 15.sp,
-                                            fontWeight = FontWeight.Normal, color = MaterialTheme.colorScheme.onSurface)
-                                        if (item.author.isNotBlank()) Text(item.author, fontFamily = FontFamily.SansSerif,
-                                            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        if (item.note.isNotBlank()) {
-                                            Spacer(modifier = Modifier.height(4.dp))
-                                            Text(item.note, fontFamily = FontFamily.SansSerif, fontSize = 11.sp,
-                                                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
-                                                color = MaterialTheme.colorScheme.secondary)
-                                        }
-                                    }
-                                    IconButton(onClick = { onRemoveFromWishlist(item.id) }) {
-                                        Icon(imageVector = Icons.Default.Delete, contentDescription = "Remove",
-                                            tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f), modifier = Modifier.size(18.dp))
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            } else {
-                // Portrait: static header/tabs/search pinned at top
-                Column(modifier = Modifier.fillMaxSize()) {
-                    LibraryHeader(
-                        booksCount = books.size,
-                        readCount = readBooks.size,
-                        wishlistCount = wishlistBooks.size,
-                        selectedTab = selectedTab,
-                        onShareReadingList = onShareReadingList,
-                        onAddBookClick = onAddEpubClick,
-                        onAddWishlistClick = { showAddWishlistDialog = true },
-                        showAddButton = books.isNotEmpty() || selectedTab == 2,
-                        isLandscape = false
-                    )
-                    LibraryTabChips(
-                        selectedTab = selectedTab,
-                        onSelectTab = { selectedTab = it },
-                        booksCount = books.size,
-                        readCount = readBooks.size,
-                        wishlistCount = wishlistBooks.size,
-                        isLandscape = false
-                    )
-                    LibrarySearchBar(
-                        searchQuery = searchQuery,
-                        onSearchQueryChange = { searchQuery = it },
-                        isLandscape = false,
-                        modifier = Modifier.focusRequester(searchFocusRequester)
-                    )
-                    LazyColumn(
-                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 140.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        if (wishlistBooks.isEmpty()) {
-                            item(key = "empty-wishlist") {
-                                Box(
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = 40.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Icon(imageVector = Icons.Default.Favorite, contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f), modifier = Modifier.size(48.dp))
-                                        Spacer(modifier = Modifier.height(12.dp))
-                                        Text("Your Wishlist is Empty", fontFamily = FontFamily.Serif, fontSize = 18.sp,
-                                            fontWeight = FontWeight.Normal, color = MaterialTheme.colorScheme.onBackground)
-                                        Spacer(modifier = Modifier.height(6.dp))
-                                        Text("Tap + above to add titles you wish to read next.", fontFamily = FontFamily.SansSerif,
-                                            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                }
-                            }
-                        } else {
-                            items(items = wishlistBooks, key = { it.id }, contentType = { "wishlist-card" }) { item ->
-                                Card(shape = RoundedCornerShape(14.dp),
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-                                    modifier = Modifier.fillMaxWidth()) {
-                                    Row(modifier = Modifier.fillMaxWidth().padding(14.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(item.title, fontFamily = FontFamily.Serif, fontSize = 15.sp,
-                                                fontWeight = FontWeight.Normal, color = MaterialTheme.colorScheme.onSurface)
-                                            if (item.author.isNotBlank()) Text(item.author, fontFamily = FontFamily.SansSerif,
-                                                fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                            if (item.note.isNotBlank()) {
-                                                Spacer(modifier = Modifier.height(4.dp))
-                                                Text(item.note, fontFamily = FontFamily.SansSerif, fontSize = 11.sp,
-                                                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
-                                                    color = MaterialTheme.colorScheme.secondary)
-                                            }
-                                        }
-                                        IconButton(onClick = { onRemoveFromWishlist(item.id) }) {
-                                            Icon(imageVector = Icons.Default.Delete, contentDescription = "Remove",
-                                                tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f), modifier = Modifier.size(18.dp))
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        } else {
-            // Gallery View (selectedTab == 0)
-            if (isLandscape) {
-                // Compact height: header scrolls with content inside the grid
-                PullToRefreshBox(
-                    isRefreshing = isRefreshing,
-                    onRefresh = {
-                        isRefreshing = true
-                        coroutineScope.launch {
-                            try { repository?.refreshLibrary() } finally { isRefreshing = false }
-                        }
-                    },
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    LazyVerticalGrid(
-                        columns = GridCells.Adaptive(minSize = gridMinSize),
-                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 140.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        item(span = { GridItemSpan(maxLineSpan) }, key = "lib-header") {
-                            LibraryHeader(
-                                booksCount = books.size,
-                                readCount = readBooks.size,
-                                wishlistCount = wishlistBooks.size,
-                                selectedTab = selectedTab,
-                                onShareReadingList = onShareReadingList,
-                                onAddBookClick = onAddEpubClick,
-                                onAddWishlistClick = { showAddWishlistDialog = true },
-                                showAddButton = books.isNotEmpty() || selectedTab == 2,
-                                isLandscape = true
-                            )
-                        }
-                        item(span = { GridItemSpan(maxLineSpan) }, key = "lib-tabs") {
-                            LibraryTabChips(
-                                selectedTab = selectedTab,
-                                onSelectTab = { selectedTab = it },
-                                booksCount = books.size,
-                                readCount = readBooks.size,
-                                wishlistCount = wishlistBooks.size,
-                                isLandscape = true
-                            )
-                        }
-                        item(span = { GridItemSpan(maxLineSpan) }, key = "lib-search") {
-                            LibrarySearchBar(
-                                searchQuery = searchQuery,
-                                onSearchQueryChange = { searchQuery = it },
-                                isLandscape = true,
-                                modifier = Modifier.focusRequester(searchFocusRequester)
-                            )
-                        }
 
                     if (books.isEmpty()) {
                         item(span = { GridItemSpan(maxLineSpan) }, key = "empty-library") {
@@ -1081,184 +702,23 @@ fun LibraryScreen(
                         if (activeBook != null) {
                             // Current Read Hero Section
                             item(span = { GridItemSpan(maxLineSpan) }, key = "current-read") {
-                                Column {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = "CURRENT READ",
-                                            fontFamily = FontFamily.SansSerif,
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Normal,
-                                            letterSpacing = 1.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                        Text(
-                                            text = "TAP TO OPEN",
-                                            fontFamily = FontFamily.SansSerif,
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Normal,
-                                            letterSpacing = 0.5.sp,
-                                            color = MaterialTheme.colorScheme.secondary,
-                                            modifier = Modifier.clickable { onBookSelect(activeBook.id) }
-                                        )
-                                    }
-
-                                    Spacer(modifier = Modifier.height(6.dp))
-
-                                    Card(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clickable { onBookSelect(activeBook.id) },
-                                        shape = RoundedCornerShape(16.dp),
-                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-                                    ) {
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(if (isLandscape) 10.dp else 14.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            // Real Cover Thumbnail
-                                            BookCoverImage(
-                                                source = activeBook.coverUrl,
-                                                titleFallback = activeBook.title,
-                                                authorFallback = activeBook.author,
-                                                modifier = Modifier
-                                                    .width(if (isLandscape) 54.dp else 68.dp)
-                                                    .height(if (isLandscape) 76.dp else 96.dp)
-                                                    .clip(RoundedCornerShape(8.dp))
-                                            )
-
-                                            Spacer(modifier = Modifier.width(14.dp))
-
-                                            // Details
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text(
-                                                    text = "LAST READ ${activeBook.lastRead.uppercase()}",
-                                                    fontFamily = FontFamily.SansSerif,
-                                                    fontSize = 10.sp,
-                                                    fontWeight = FontWeight.Normal,
-                                                    letterSpacing = 0.5.sp,
-                                                    color = MaterialTheme.colorScheme.secondary
-                                                )
-                                                Spacer(modifier = Modifier.height(2.dp))
-                                                Text(
-                                                    text = activeBook.title,
-                                                    fontFamily = FontFamily.Serif,
-                                                    fontSize = if (isLandscape) 15.sp else 17.sp,
-                                                    fontWeight = FontWeight.Normal,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
-                                                Text(
-                                                    text = "${activeBook.author} • ${activeBook.chapters.getOrNull(activeBook.currentChapter)?.title ?: "Chapter 1"}",
-                                                    fontFamily = FontFamily.SansSerif,
-                                                    fontSize = 12.sp,
-                                                    fontWeight = FontWeight.Normal,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
-
-                                                Spacer(modifier = Modifier.height(8.dp))
-
-                                                Box(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .height(4.dp)
-                                                        .clip(RoundedCornerShape(2.dp))
-                                                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                                                ) {
-                                                    val frac = (activeBook.progress / 100f).coerceIn(0f, 1f)
-                                                    if (frac > 0f) {
-                                                        Box(
-                                                            modifier = Modifier
-                                                                .fillMaxWidth(fraction = frac)
-                                                                .fillMaxHeight()
-                                                                .background(MaterialTheme.colorScheme.secondary)
-                                                        )
-                                                    }
-                                                }
-
-                                                Spacer(modifier = Modifier.height(4.dp))
-                                                Row(
-                                                    modifier = Modifier.fillMaxWidth(),
-                                                    horizontalArrangement = Arrangement.SpaceBetween
-                                                ) {
-                                                    Text(
-                                                        text = "${activeBook.progress}% complete",
-                                                        fontFamily = FontFamily.SansSerif,
-                                                        fontSize = 10.sp,
-                                                        fontWeight = FontWeight.Normal,
-                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                    )
-                                                    Text(
-                                                        text = activeBook.readTimeLeft,
-                                                        fontFamily = FontFamily.SansSerif,
-                                                        fontSize = 10.sp,
-                                                        fontWeight = FontWeight.Normal,
-                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                                HeroBookCard(
+                                    activeBook = activeBook,
+                                    isLandscape = isLandscape,
+                                    onBookSelect = onBookSelect,
+                                    onBookLongClick = onBookLongClickMemoized
+                                )
                             }
                         }
 
                         item(span = { GridItemSpan(maxLineSpan) }, key = "all-books-header") {
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Text(
-                                    text = "ALL BOOKS",
-                                    fontFamily = FontFamily.SansSerif,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Normal,
-                                    letterSpacing = 1.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                if (!activeBackgroundTask.isNullOrBlank()) {
-                                    TooltipBox(
-                                        positionProvider = TooltipDefaults.rememberTooltipPositionProvider(),
-                                        tooltip = {
-                                            PlainTooltip {
-                                                Text(text = activeBackgroundTask ?: "")
-                                            }
-                                        },
-                                        state = rememberTooltipState()
-                                    ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .clickable {
-                                                    android.widget.Toast.makeText(context, activeBackgroundTask, android.widget.Toast.LENGTH_SHORT).show()
-                                                }
-                                                .padding(horizontal = 4.dp, vertical = 2.dp)
-                                        ) {
-                                            CircularProgressIndicator(
-                                                modifier = Modifier.size(12.dp),
-                                                strokeWidth = 1.5.dp,
-                                                color = MaterialTheme.colorScheme.primary
-                                            )
-                                            Icon(
-                                                imageVector = Icons.Default.Info,
-                                                contentDescription = activeBackgroundTask,
-                                                tint = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.size(15.dp)
-                                            )
-                                        }
-                                    }
-                                }
+                            AllBooksHeader(repository = repository, context = context)
+                        }
+
+                        // Importing Book Placeholder Card
+                        if (importingBookTitle != null) {
+                            item(key = "importing-placeholder") {
+                                ImportingPlaceholderCard(title = importingBookTitle)
                             }
                         }
 
@@ -1268,95 +728,11 @@ fun LibraryScreen(
                             key = { it.id },
                             contentType = { "book-card" }
                         ) { book ->
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .combinedClickable(
-                                        onClick = { onBookSelect(book.id) },
-                                        onLongClick = { bookForContextMenu = book }
-                                    ),
-                                shape = RoundedCornerShape(12.dp),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-                                border = BorderStroke(0.6.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
-                            ) {
-                                Column(modifier = Modifier.padding(8.dp)) {
-                                    BookCoverImage(
-                                        source = book.coverUrl,
-                                        titleFallback = book.title,
-                                        authorFallback = book.author,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .aspectRatio(1f / 1.30f)
-                                            .clip(RoundedCornerShape(8.dp))
-                                    )
-
-                                    Spacer(modifier = Modifier.height(6.dp))
-
-                                    Text(
-                                        text = book.title,
-                                        fontFamily = FontFamily.Serif,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Normal,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = book.author,
-                                        fontFamily = FontFamily.SansSerif,
-                                        fontSize = 10.5.sp,
-                                        fontWeight = FontWeight.Normal,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-
-                                    Spacer(modifier = Modifier.height(6.dp))
-
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(3.dp)
-                                            .clip(RoundedCornerShape(2.dp))
-                                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                                    ) {
-                                        val frac = (book.progress / 100f).coerceIn(0f, 1f)
-                                        if (frac > 0f) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .fillMaxWidth(fraction = frac)
-                                                    .fillMaxHeight()
-                                                    .background(MaterialTheme.colorScheme.secondary)
-                                            )
-                                        }
-                                    }
-
-                                    Spacer(modifier = Modifier.height(3.dp))
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = "${book.progress}%",
-                                            fontFamily = FontFamily.SansSerif,
-                                            fontSize = 9.5.sp,
-                                            fontWeight = FontWeight.Normal,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                        Box(
-                                            modifier = Modifier
-                                                .size(4.dp)
-                                                .clip(CircleShape)
-                                                .background(
-                                                    if (book.progress > 0) MaterialTheme.colorScheme.secondary
-                                                    else MaterialTheme.colorScheme.surfaceVariant
-                                                )
-                                        )
-                                    }
-                                }
-                            }
+                            GalleryBookCard(
+                                book = book,
+                                onBookSelect = onBookSelect,
+                                onBookLongClick = onBookLongClickMemoized
+                            )
                         }
 
                         // "Add EPUB" Dashed Card
@@ -1415,171 +791,7 @@ fun LibraryScreen(
                     }
                 }
             }
-        } else {
-                // Portrait: static header/tabs/search pinned at top, PullToRefresh below
-                Column(modifier = Modifier.fillMaxSize()) {
-                    LibraryHeader(
-                        booksCount = books.size,
-                        readCount = readBooks.size,
-                        wishlistCount = wishlistBooks.size,
-                        selectedTab = selectedTab,
-                        onShareReadingList = onShareReadingList,
-                        onAddBookClick = onAddEpubClick,
-                        onAddWishlistClick = { showAddWishlistDialog = true },
-                        showAddButton = books.isNotEmpty() || selectedTab == 2,
-                        isLandscape = false
-                    )
-                    LibraryTabChips(
-                        selectedTab = selectedTab,
-                        onSelectTab = { selectedTab = it },
-                        booksCount = books.size,
-                        readCount = readBooks.size,
-                        wishlistCount = wishlistBooks.size,
-                        isLandscape = false
-                    )
-                    LibrarySearchBar(
-                        searchQuery = searchQuery,
-                        onSearchQueryChange = { searchQuery = it },
-                        isLandscape = false,
-                        modifier = Modifier.focusRequester(searchFocusRequester)
-                    )
-                    PullToRefreshBox(
-                        isRefreshing = isRefreshing,
-                        onRefresh = {
-                            isRefreshing = true
-                            coroutineScope.launch {
-                                try { repository?.refreshLibrary() } finally { isRefreshing = false }
-                            }
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        LazyVerticalGrid(
-                            columns = GridCells.Adaptive(minSize = gridMinSize),
-                            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 150.dp),
-                            horizontalArrangement = Arrangement.spacedBy(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(14.dp),
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            if (books.isEmpty()) {
-                                item(span = { GridItemSpan(maxLineSpan) }, key = "empty-library-p") {
-                                    Box(
-                                        modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp, horizontal = 16.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                                            Icon(imageVector = Icons.Default.UploadFile, contentDescription = null,
-                                                modifier = Modifier.size(56.dp), tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f))
-                                            Spacer(modifier = Modifier.height(16.dp))
-                                            Text("Your Library is Empty", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
-                                            Spacer(modifier = Modifier.height(8.dp))
-                                            Text("Import an EPUB from your device or download books to start reading.",
-                                                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-                                            Spacer(modifier = Modifier.height(20.dp))
-                                            Button(onClick = onAddEpubClick, shape = RoundedCornerShape(12.dp)) {
-                                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                                                Spacer(modifier = Modifier.width(8.dp))
-                                                Text("Add Books")
-                                            }
-                                        }
-                                    }
-                                }
-                            } else {
-                                if (activeBook != null) {
-                                    item(span = { GridItemSpan(maxLineSpan) }, key = "current-read-p") {
-                                        Column {
-                                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                                Text("CURRENT READ", fontFamily = FontFamily.SansSerif, fontSize = 11.sp, fontWeight = FontWeight.Normal, letterSpacing = 1.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                Text("TAP TO OPEN", fontFamily = FontFamily.SansSerif, fontSize = 11.sp, fontWeight = FontWeight.Normal, letterSpacing = 0.5.sp, color = MaterialTheme.colorScheme.secondary, modifier = Modifier.clickable { onBookSelect(activeBook.id) })
-                                            }
-                                            Spacer(modifier = Modifier.height(6.dp))
-                                            Card(modifier = Modifier.fillMaxWidth().clickable { onBookSelect(activeBook.id) }, shape = RoundedCornerShape(16.dp),
-                                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)) {
-                                                Row(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                                                    BookCoverImage(source = activeBook.coverUrl, titleFallback = activeBook.title, authorFallback = activeBook.author,
-                                                        modifier = Modifier.width(68.dp).height(96.dp).clip(RoundedCornerShape(8.dp)))
-                                                    Spacer(modifier = Modifier.width(14.dp))
-                                                    Column(modifier = Modifier.weight(1f)) {
-                                                        Text("LAST READ ${activeBook.lastRead.uppercase()}", fontFamily = FontFamily.SansSerif, fontSize = 10.sp, letterSpacing = 0.5.sp, color = MaterialTheme.colorScheme.secondary)
-                                                        Spacer(modifier = Modifier.height(2.dp))
-                                                        Text(activeBook.title, fontFamily = FontFamily.Serif, fontSize = 17.sp, fontWeight = FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                                        Text("${activeBook.author} • ${activeBook.chapters.getOrNull(activeBook.currentChapter)?.title ?: "Chapter 1"}",
-                                                            fontFamily = FontFamily.SansSerif, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                                        Spacer(modifier = Modifier.height(8.dp))
-                                                        Box(modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
-                                                            val frac = (activeBook.progress / 100f).coerceIn(0f, 1f)
-                                                            if (frac > 0f) Box(modifier = Modifier.fillMaxWidth(fraction = frac).fillMaxHeight().background(MaterialTheme.colorScheme.secondary))
-                                                        }
-                                                        Spacer(modifier = Modifier.height(4.dp))
-                                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                                            Text("${activeBook.progress}% complete", fontFamily = FontFamily.SansSerif, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                            Text(activeBook.readTimeLeft, fontFamily = FontFamily.SansSerif, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                item(span = { GridItemSpan(maxLineSpan) }, key = "all-books-header-p") {
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Text("ALL BOOKS", fontFamily = FontFamily.SansSerif, fontSize = 11.sp, fontWeight = FontWeight.Normal, letterSpacing = 1.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        if (!activeBackgroundTask.isNullOrBlank()) {
-                                            TooltipBox(positionProvider = TooltipDefaults.rememberTooltipPositionProvider(),
-                                                tooltip = { PlainTooltip { Text(activeBackgroundTask ?: "") } }, state = rememberTooltipState()) {
-                                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { android.widget.Toast.makeText(context, activeBackgroundTask, android.widget.Toast.LENGTH_SHORT).show() }.padding(horizontal = 4.dp, vertical = 2.dp)) {
-                                                    CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 1.5.dp, color = MaterialTheme.colorScheme.primary)
-                                                    Icon(imageVector = Icons.Default.Info, contentDescription = activeBackgroundTask, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(15.dp))
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                items(items = books, key = { it.id }, contentType = { "book-card" }) { book ->
-                                    Card(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).combinedClickable(onClick = { onBookSelect(book.id) }, onLongClick = { bookForContextMenu = book }),
-                                        shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp), border = BorderStroke(0.6.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))) {
-                                        Column(modifier = Modifier.padding(8.dp)) {
-                                            BookCoverImage(source = book.coverUrl, titleFallback = book.title, authorFallback = book.author,
-                                                modifier = Modifier.fillMaxWidth().aspectRatio(1f / 1.30f).clip(RoundedCornerShape(8.dp)))
-                                            Spacer(modifier = Modifier.height(6.dp))
-                                            Text(book.title, fontFamily = FontFamily.Serif, fontSize = 13.sp, fontWeight = FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            Text(book.author, fontFamily = FontFamily.SansSerif, fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            Spacer(modifier = Modifier.height(6.dp))
-                                            Box(modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
-                                                val frac = (book.progress / 100f).coerceIn(0f, 1f)
-                                                if (frac > 0f) Box(modifier = Modifier.fillMaxWidth(fraction = frac).fillMaxHeight().background(MaterialTheme.colorScheme.secondary))
-                                            }
-                                            Spacer(modifier = Modifier.height(3.dp))
-                                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                                Text("${book.progress}%", fontFamily = FontFamily.SansSerif, fontSize = 9.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                Box(modifier = Modifier.size(4.dp).clip(CircleShape).background(if (book.progress > 0) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.surfaceVariant))
-                                            }
-                                        }
-                                    }
-                                }
-                                item {
-                                    Box(modifier = Modifier.fillMaxWidth().height(180.dp).clip(RoundedCornerShape(12.dp))
-                                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
-                                        .clickable { onAddEpubClick() }.padding(14.dp), contentAlignment = Alignment.Center) {
-                                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                                            Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), modifier = Modifier.size(40.dp)) {
-                                                Box(contentAlignment = Alignment.Center) { Icon(Icons.Default.UploadFile, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp)) }
-                                            }
-                                            Spacer(modifier = Modifier.height(8.dp))
-                                            Text("Add Book", fontFamily = FontFamily.SansSerif, fontSize = 13.5.sp, fontWeight = FontWeight.Normal, color = MaterialTheme.colorScheme.onBackground)
-                                            Spacer(modifier = Modifier.height(2.dp))
-                                            Text("Online catalog or file", fontFamily = FontFamily.SansSerif, fontSize = 9.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+
         }
 
         // Add to Wishlist Dialog
@@ -1667,6 +879,9 @@ fun LibraryScreen(
                 onResetProgress = {
                     onResetProgress(targetBook.id)
                 },
+                onReparse = {
+                    onReparseBook(targetBook.id)
+                },
                 onDelete = {
                     bookToDelete = targetBook
                 },
@@ -1743,7 +958,7 @@ private fun LibraryHeader(
         modifier = Modifier
             .fillMaxWidth()
             .padding(
-                horizontal = if (isLandscape) 4.dp else 20.dp,
+                horizontal = 0.dp,
                 vertical = if (isLandscape) 8.dp else 16.dp
             ),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1812,7 +1027,7 @@ private fun LibraryTabChips(
         modifier = Modifier
             .fillMaxWidth()
             .padding(
-                horizontal = if (isLandscape) 4.dp else 20.dp,
+                horizontal = 0.dp,
                 vertical = if (isLandscape) 2.dp else 4.dp
             ),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1857,7 +1072,7 @@ private fun LibrarySearchBar(
     OutlinedTextField(
         value = searchQuery,
         onValueChange = onSearchQueryChange,
-        placeholder = { Text("Search books, authors, files, or text...", fontSize = 12.sp) },
+        placeholder = null,
         leadingIcon = {
             Icon(
                 imageVector = Icons.Default.Search,
@@ -1889,10 +1104,482 @@ private fun LibrarySearchBar(
         ),
         modifier = modifier
             .fillMaxWidth()
+            .defaultMinSize(minHeight = 44.dp)
             .padding(
-                horizontal = if (isLandscape) 4.dp else 20.dp,
+                horizontal = 0.dp,
                 vertical = if (isLandscape) 2.dp else 4.dp
             )
     )
 }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AllBooksHeader(
+    repository: BookRepository?,
+    context: android.content.Context,
+    modifier: Modifier = Modifier
+) {
+    val activeBackgroundTask by (repository?.activeBackgroundTask?.collectAsState(initial = null) ?: remember { mutableStateOf(null) })
+    Spacer(modifier = Modifier.height(2.dp))
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = modifier
+    ) {
+        Text(
+            text = "ALL BOOKS",
+            fontFamily = FontFamily.SansSerif,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Normal,
+            letterSpacing = 1.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        if (!activeBackgroundTask.isNullOrBlank()) {
+            TooltipBox(
+                positionProvider = TooltipDefaults.rememberTooltipPositionProvider(),
+                tooltip = {
+                    PlainTooltip {
+                        Text(text = activeBackgroundTask ?: "")
+                    }
+                },
+                state = rememberTooltipState()
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable {
+                            android.widget.Toast.makeText(context, activeBackgroundTask, android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(12.dp),
+                        strokeWidth = 1.5.dp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = activeBackgroundTask,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(15.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun HeroBookCard(
+    activeBook: Book,
+    isLandscape: Boolean,
+    onBookSelect: (String) -> Unit,
+    onBookLongClick: (Book) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val onClick = remember(activeBook.id, onBookSelect) { { onBookSelect(activeBook.id) } }
+    val onLongClick = remember(activeBook, onBookLongClick) { { onBookLongClick(activeBook) } }
+
+    Column(modifier = modifier) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "CURRENT READ",
+                fontFamily = FontFamily.SansSerif,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Normal,
+                letterSpacing = 1.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = "TAP TO OPEN",
+                fontFamily = FontFamily.SansSerif,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Normal,
+                letterSpacing = 0.5.sp,
+                color = MaterialTheme.colorScheme.secondary,
+                modifier = Modifier.clickable(onClick = onClick)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .combinedClickable(
+                    onClick = onClick,
+                    onLongClick = onLongClick
+                ),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(if (isLandscape) 10.dp else 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                BookCoverImage(
+                    source = activeBook.coverUrl,
+                    titleFallback = activeBook.title,
+                    authorFallback = activeBook.author,
+                    modifier = Modifier
+                        .width(if (isLandscape) 54.dp else 68.dp)
+                        .height(if (isLandscape) 76.dp else 96.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                )
+
+                Spacer(modifier = Modifier.width(14.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "LAST READ ${activeBook.lastRead.uppercase()}",
+                        fontFamily = FontFamily.SansSerif,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Normal,
+                        letterSpacing = 0.5.sp,
+                        color = MaterialTheme.colorScheme.secondary
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = activeBook.title,
+                        fontFamily = FontFamily.Serif,
+                        fontSize = if (isLandscape) 15.sp else 17.sp,
+                        fontWeight = FontWeight.Normal,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = "${activeBook.author} • ${activeBook.chapters.getOrNull(activeBook.currentChapter)?.title ?: "Chapter 1"}",
+                        fontFamily = FontFamily.SansSerif,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Normal,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(4.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        val frac = (activeBook.progress / 100f).coerceIn(0f, 1f)
+                        if (frac > 0f) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(fraction = frac)
+                                    .fillMaxHeight()
+                                    .background(MaterialTheme.colorScheme.secondary)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "${activeBook.progress}% complete",
+                            fontFamily = FontFamily.SansSerif,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Normal,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = activeBook.readTimeLeft,
+                            fontFamily = FontFamily.SansSerif,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Normal,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun GalleryBookCard(
+    book: Book,
+    onBookSelect: (String) -> Unit,
+    onBookLongClick: (Book) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val onClick = remember(book.id, onBookSelect) { { onBookSelect(book.id) } }
+    val onLongClick = remember(book, onBookLongClick) { { onBookLongClick(book) } }
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            ),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = BorderStroke(0.6.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+    ) {
+        Column(modifier = Modifier.padding(8.dp)) {
+            BookCoverImage(
+                source = book.coverUrl,
+                titleFallback = book.title,
+                authorFallback = book.author,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(1f / 1.30f)
+                    .clip(RoundedCornerShape(8.dp))
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Text(
+                text = book.title,
+                fontFamily = FontFamily.Serif,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Normal,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = book.author,
+                fontFamily = FontFamily.SansSerif,
+                fontSize = 10.5.sp,
+                fontWeight = FontWeight.Normal,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(3.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                val frac = (book.progress / 100f).coerceIn(0f, 1f)
+                if (frac > 0f) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(fraction = frac)
+                            .fillMaxHeight()
+                            .background(MaterialTheme.colorScheme.secondary)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(3.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "${book.progress}%",
+                    fontFamily = FontFamily.SansSerif,
+                    fontSize = 9.5.sp,
+                    fontWeight = FontWeight.Normal,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Box(
+                    modifier = Modifier
+                        .size(4.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (book.progress > 0) MaterialTheme.colorScheme.secondary
+                            else MaterialTheme.colorScheme.surfaceVariant
+                        )
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReadBookCard(
+    book: Book,
+    onBookSelect: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val onClick = remember(book.id, onBookSelect) { { onBookSelect(book.id) } }
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(0.6.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+    ) {
+        Column(modifier = Modifier.padding(8.dp)) {
+            Box {
+                BookCoverImage(
+                    source = book.coverUrl,
+                    titleFallback = book.title,
+                    authorFallback = book.author,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f / 1.30f)
+                        .clip(RoundedCornerShape(8.dp))
+                )
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.92f),
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(4.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.Check,
+                            contentDescription = null,
+                            modifier = Modifier.size(9.dp),
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        Spacer(modifier = Modifier.width(2.dp))
+                        Text(
+                            "READ",
+                            fontSize = 8.5.sp,
+                            fontWeight = FontWeight.Normal,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            letterSpacing = 0.5.sp
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = book.title,
+                fontFamily = FontFamily.Serif,
+                fontSize = 12.5.sp,
+                fontWeight = FontWeight.Normal,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = book.author,
+                fontFamily = FontFamily.SansSerif,
+                fontSize = 10.5.sp,
+                fontWeight = FontWeight.Normal,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun ImportingPlaceholderCard(
+    title: String,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp)),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+    ) {
+        Column(
+            modifier = Modifier.padding(8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(1f / 1.30f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(28.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Text(
+                text = title,
+                fontFamily = FontFamily.Serif,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Normal,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
+            )
+            Text(
+                text = "Extracting chapters...",
+                fontFamily = FontFamily.SansSerif,
+                fontSize = 10.5.sp,
+                fontWeight = FontWeight.Light,
+                color = MaterialTheme.colorScheme.secondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            LinearProgressIndicator(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(3.dp)
+                    .clip(RoundedCornerShape(2.dp)),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+
+            Spacer(modifier = Modifier.height(3.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "Importing",
+                    fontFamily = FontFamily.SansSerif,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Normal,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = "Please wait",
+                    fontFamily = FontFamily.SansSerif,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Normal,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
 

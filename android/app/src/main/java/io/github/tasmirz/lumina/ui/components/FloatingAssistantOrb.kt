@@ -3,11 +3,14 @@ package io.github.tasmirz.lumina.ui.components
 import io.github.tasmirz.lumina.model.OrbSize
 import io.github.tasmirz.lumina.model.OrbMenuSize
 import io.github.tasmirz.lumina.model.OrbColor
+import io.github.tasmirz.lumina.model.OrbFanDirection
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
@@ -112,6 +115,9 @@ fun FloatingAssistantOrb(
     orbOpacity: Float = 0.85f,
     savedX: Float = -1f,
     savedY: Float = -1f,
+    reversePaletteDirection: Boolean = false,
+    fanDirection: OrbFanDirection = OrbFanDirection.AUTO,
+    snapThreshold: Float = 0.05f,
     onSavePosition: (x: Float, y: Float, isLandscape: Boolean) -> Unit = { _, _, _ -> },
     modifier: Modifier = Modifier
 ) {
@@ -119,117 +125,198 @@ fun FloatingAssistantOrb(
     val density = LocalDensity.current
     val config = LocalConfiguration.current
     val isLandscape = config.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-    val screenWidthPx = with(density) { config.screenWidthDp.dp.toPx() }
-    val screenHeightPx = with(density) { config.screenHeightDp.dp.toPx() }
 
-    // Camera notch / display cutout insets to prevent docking under the camera
-    val layoutDirection = LocalLayoutDirection.current
-    val cutoutInsets = WindowInsets.displayCutout.asPaddingValues()
-    val cutoutLeftPx = with(density) { cutoutInsets.calculateLeftPadding(layoutDirection).toPx() }
-    val cutoutRightPx = with(density) { cutoutInsets.calculateRightPadding(layoutDirection).toPx() }
-    val cutoutTopPx = with(density) { cutoutInsets.calculateTopPadding().toPx() }
-    val cutoutBottomPx = with(density) { cutoutInsets.calculateBottomPadding().toPx() }
+    BoxWithConstraints(modifier = modifier.fillMaxSize().zIndex(150f)) {
+        val screenWidthPx = constraints.maxWidth.toFloat()
+        val screenHeightPx = constraints.maxHeight.toFloat()
 
-    val baseOrbColor = MaterialTheme.colorScheme.primary
+        // Camera notch / display cutout insets to prevent docking under the camera
+        val layoutDirection = LocalLayoutDirection.current
+        val cutoutInsets = WindowInsets.displayCutout.asPaddingValues()
+        val cutoutLeftPx = with(density) { cutoutInsets.calculateLeftPadding(layoutDirection).toPx() }
+        val cutoutRightPx = with(density) { cutoutInsets.calculateRightPadding(layoutDirection).toPx() }
+        val cutoutTopPx = with(density) { cutoutInsets.calculateTopPadding().toPx() }
+        val cutoutBottomPx = with(density) { cutoutInsets.calculateBottomPadding().toPx() }
 
-    val scale = orbSize.scale
-    val dockedWidthDp = orbSize.dockedWidth.dp
-    val dockedHeightDp = orbSize.dockedHeight.dp
-    val normalOrbSizeDp = (44 * scale).dp
-    val normalOrbSizePx = with(density) { normalOrbSizeDp.toPx() }
-    val dockedWidthPx = with(density) { dockedWidthDp.toPx() }
-    val dockedHeightPx = with(density) { dockedHeightDp.toPx() }
+        val baseOrbColor = MaterialTheme.colorScheme.primary
 
-    val minDockX = cutoutLeftPx
-    val maxDockRightX = (screenWidthPx - dockedWidthPx - cutoutRightPx).coerceAtLeast(minDockX)
-    val maxFloatingX = (screenWidthPx - normalOrbSizePx - cutoutRightPx).coerceAtLeast(minDockX)
-    val edgeSnapZonePx = with(density) { 56.dp.toPx() }
+        val scale = orbSize.scale
+        val normalOrbSizeDp = (44 * scale).dp
+        val normalOrbSizePx = with(density) { normalOrbSizeDp.toPx() }
+        val innerCoreSizeDp = normalOrbSizeDp * 0.72f
+        val iconSizeDp = (normalOrbSizeDp * 0.38f).coerceAtLeast(10.dp)
 
-    // Initial position: default to edge dock on right unless user placed elsewhere
-    var offsetX by remember {
-        mutableFloatStateOf(
-            if (savedX >= 0f) savedX else maxDockRightX
-        )
-    }
-    var offsetY by remember {
-        val initialY = if (savedY >= 0f) savedY else {
-            (screenHeightPx * 0.70f).coerceIn(
-                maxOf(screenHeightPx * 0.15f, cutoutTopPx),
-                minOf(screenHeightPx * 0.85f - dockedHeightPx, screenHeightPx - cutoutBottomPx - dockedHeightPx).coerceAtLeast(screenHeightPx * 0.15f)
-            )
-        }
-        mutableFloatStateOf(initialY)
-    }
+        val dockedWidthDp = orbSize.dockedWidth.dp
+        val dockedHeightDp = orbSize.dockedHeight.dp
+        val dockedWidthPx = with(density) { dockedWidthDp.toPx() }
+        val dockedHeightPx = with(density) { dockedHeightDp.toPx() }
 
-    var isDragging by remember { mutableStateOf(false) }
-    var isOverBin by remember { mutableStateOf(false) }
-    var isWheelExpanded by remember { mutableStateOf(false) }
+        // Edge snap in portrait mode, free-floating ball in landscape
+        val effectiveEdgeSnap = orbEdgeSnap && !isLandscape
 
-    // Edge docked state: true only when orb is resting right on the margin
-    val isNearLeftEdge = offsetX < screenWidthPx / 2f
-    val isSnappedToLeft = kotlin.math.abs(offsetX - minDockX) < 4f
-    val isSnappedToRight = kotlin.math.abs(offsetX - maxDockRightX) < 4f
-    val isAtEdge = isSnappedToLeft || isSnappedToRight
-    val isDocked = orbEdgeSnap && isAtEdge && !isDragging && !isWheelExpanded && voiceState == AssistantVoiceState.IDLE
+        val minDockX = cutoutLeftPx
+        val maxDockRightX = (screenWidthPx - dockedWidthPx - cutoutRightPx).coerceAtLeast(minDockX)
+        val minFloatingX = -normalOrbSizePx * 0.65f
+        val maxFloatingX = screenWidthPx - (normalOrbSizePx * 0.35f)
 
-    val currentWidthDp by animateDpAsState(
-        targetValue = if (isDocked) dockedWidthDp else normalOrbSizeDp,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "orbWidth"
-    )
-    val currentHeightDp by animateDpAsState(
-        targetValue = if (isDocked) dockedHeightDp else normalOrbSizeDp,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "orbHeight"
-    )
+        val minAllowedX = if (effectiveEdgeSnap) minDockX else minFloatingX
+        val maxAllowedX = if (effectiveEdgeSnap) maxDockRightX else maxFloatingX
+        val minAllowedY = maxOf(screenHeightPx * 0.05f, cutoutTopPx)
+        val maxAllowedY = minOf(screenHeightPx * 0.95f - normalOrbSizePx, screenHeightPx - cutoutBottomPx - normalOrbSizePx).coerceAtLeast(minAllowedY)
 
-    val orbWidthPx = with(density) { currentWidthDp.toPx() }
-    val orbHeightPx = with(density) { currentHeightDp.toPx() }
+        val leftThresholdPx = screenWidthPx * snapThreshold
+        val rightThresholdPx = screenWidthPx - (screenWidthPx * snapThreshold) - normalOrbSizePx
 
-    // Re-clamp position on orientation, saved coordinates, or screen size changes
-    LaunchedEffect(savedX, savedY, screenWidthPx, screenHeightPx, orbEdgeSnap, isLandscape) {
-        val minY = maxOf(screenHeightPx * 0.15f, cutoutTopPx)
-        val maxY = minOf(screenHeightPx * 0.85f - dockedHeightPx, screenHeightPx - cutoutBottomPx - dockedHeightPx).coerceAtLeast(minY)
-
-        offsetY = offsetY.coerceIn(minY, maxY)
-
-        if (savedX >= 0f) {
-            val wasDockedOnLeft = kotlin.math.abs(savedX - minDockX) < 14f
-            val wasDockedOnRight = savedX > screenWidthPx * 0.65f && kotlin.math.abs(savedX - maxDockRightX) < 60f
-            if (orbEdgeSnap && wasDockedOnLeft) {
-                offsetX = minDockX
-            } else if (orbEdgeSnap && wasDockedOnRight) {
-                offsetX = maxDockRightX
+        // Initial position: default to right edge dock in portrait if edge snap is enabled and within threshold
+        var offsetX by remember(isLandscape, effectiveEdgeSnap, snapThreshold) {
+            val initialX = if (savedX >= 0f) {
+                if (effectiveEdgeSnap) {
+                    val isDockedX = (savedX <= leftThresholdPx) || (savedX >= rightThresholdPx) ||
+                        kotlin.math.abs(savedX - minDockX) < 6f || kotlin.math.abs(savedX - maxDockRightX) < 6f
+                    if (isDockedX) {
+                        val wasOnLeft = savedX < screenWidthPx / 2f
+                        if (wasOnLeft) minDockX else maxDockRightX
+                    } else {
+                        savedX.coerceIn(minAllowedX, maxAllowedX)
+                    }
+                } else {
+                    savedX.coerceIn(minAllowedX, maxAllowedX)
+                }
             } else {
-                offsetX = savedX.coerceIn(minDockX, maxFloatingX)
+                if (effectiveEdgeSnap) maxDockRightX else (screenWidthPx - normalOrbSizePx - with(density) { 12.dp.toPx() }).coerceIn(minAllowedX, maxAllowedX)
             }
-        } else {
-            offsetX = if (isNearLeftEdge) minDockX else maxDockRightX
+            mutableFloatStateOf(initialX)
         }
-    }
+        var offsetY by remember(isLandscape) {
+            val initialY = if (savedY >= 0f) savedY.coerceIn(minAllowedY, maxAllowedY) else {
+                (screenHeightPx * 0.70f).coerceIn(minAllowedY, maxAllowedY)
+            }
+            mutableFloatStateOf(initialY)
+        }
 
-    // Pulsing animation for listening (strictly gated to avoid CPU and battery drain when idle)
-    val pulseScale = if (voiceState == AssistantVoiceState.LISTENING) {
-        val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-        val animatedScale by infiniteTransition.animateFloat(
-            initialValue = 1.0f,
-            targetValue = 1.18f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(800, easing = FastOutSlowInEasing),
-                repeatMode = RepeatMode.Reverse
-            ),
-            label = "pulseScale"
+        var isDragging by remember { mutableStateOf(false) }
+        var isOverBin by remember { mutableStateOf(false) }
+        var isWheelExpanded by remember { mutableStateOf(false) }
+
+        // Re-clamp position on orientation, saved coordinates, or screen size changes
+        LaunchedEffect(savedX, savedY, screenWidthPx, screenHeightPx, orbEdgeSnap, snapThreshold, isLandscape) {
+            val minY = maxOf(screenHeightPx * 0.05f, cutoutTopPx)
+            val maxY = minOf(screenHeightPx * 0.95f - normalOrbSizePx, screenHeightPx - cutoutBottomPx - normalOrbSizePx).coerceAtLeast(minY)
+
+            if (savedY >= 0f) {
+                offsetY = savedY.coerceIn(minY, maxY)
+            } else {
+                offsetY = (screenHeightPx * 0.70f).coerceIn(minY, maxY)
+            }
+
+            if (effectiveEdgeSnap) {
+                if (savedX >= 0f) {
+                    val isDockedX = (savedX <= leftThresholdPx) || (savedX >= rightThresholdPx) ||
+                        kotlin.math.abs(savedX - minDockX) < 6f || kotlin.math.abs(savedX - maxDockRightX) < 6f
+                    if (isDockedX) {
+                        val wasOnLeft = savedX < screenWidthPx / 2f
+                        offsetX = if (wasOnLeft) minDockX else maxDockRightX
+                    } else {
+                        offsetX = savedX.coerceIn(minAllowedX, maxAllowedX)
+                    }
+                } else {
+                    offsetX = maxDockRightX
+                }
+            } else {
+                val minX = -normalOrbSizePx * 0.65f
+                val maxX = screenWidthPx - (normalOrbSizePx * 0.35f)
+                if (savedX >= 0f) {
+                    offsetX = savedX.coerceIn(minX, maxX)
+                } else {
+                    offsetX = (screenWidthPx - normalOrbSizePx - with(density) { 12.dp.toPx() }).coerceIn(minX, maxX)
+                }
+            }
+        }
+
+        // Edge docked state: true only when orb is resting right on the margin in portrait mode with snap enabled
+        val isNearLeftEdge = (offsetX + normalOrbSizePx / 2f) < screenWidthPx / 2f
+        val isSnappedToLeft = kotlin.math.abs(offsetX - minDockX) < 6f
+        val isSnappedToRight = kotlin.math.abs(offsetX - maxDockRightX) < 6f
+        val isAtEdge = isSnappedToLeft || isSnappedToRight
+        val isDocked = effectiveEdgeSnap && isAtEdge && !isDragging && !isWheelExpanded && voiceState == AssistantVoiceState.IDLE
+
+        var hasLoadedInitialPosition by remember(isLandscape) { mutableStateOf(false) }
+        LaunchedEffect(isLandscape) {
+            hasLoadedInitialPosition = true
+        }
+
+        val currentWidthDp by animateDpAsState(
+            targetValue = if (isDocked) dockedWidthDp else normalOrbSizeDp,
+            animationSpec = if (!hasLoadedInitialPosition) snap() else spring(stiffness = Spring.StiffnessMediumLow),
+            label = "orbWidth"
         )
-        animatedScale
-    } else {
-        1.0f
-    }
+        val currentHeightDp by animateDpAsState(
+            targetValue = if (isDocked) dockedHeightDp else normalOrbSizeDp,
+            animationSpec = if (!hasLoadedInitialPosition) snap() else spring(stiffness = Spring.StiffnessMediumLow),
+            label = "orbHeight"
+        )
+        val effectiveWidthDp = if (!hasLoadedInitialPosition) (if (isDocked) dockedWidthDp else normalOrbSizeDp) else currentWidthDp
+        val effectiveHeightDp = if (!hasLoadedInitialPosition) (if (isDocked) dockedHeightDp else normalOrbSizeDp) else currentHeightDp
 
-    // Bin zone coordinates (bottom center)
-    val binTargetY = screenHeightPx - with(density) { 110.dp.toPx() }
-    val binCenterX = screenWidthPx / 2f
+        val currentShape = when {
+            isDocked && isNearLeftEdge -> RoundedCornerShape(topEnd = 12.dp, bottomEnd = 12.dp, topStart = 0.dp, bottomStart = 0.dp)
+            isDocked && !isNearLeftEdge -> RoundedCornerShape(topStart = 12.dp, bottomStart = 12.dp, topEnd = 0.dp, bottomEnd = 0.dp)
+            else -> CircleShape
+        }
 
-    Box(modifier = modifier.fillMaxSize().zIndex(150f)) {
+        // When wheel is expanded, slide the orb center safely into the visible screen so the wheel never breaks
+        val safeOrbMarginPx = with(density) { 6.dp.toPx() }
+        val safeMinOrbX = cutoutLeftPx + safeOrbMarginPx
+        val safeMaxOrbX = (screenWidthPx - normalOrbSizePx - cutoutRightPx - safeOrbMarginPx).coerceAtLeast(safeMinOrbX)
+        val targetDisplayX = when {
+            isWheelExpanded -> offsetX.coerceIn(safeMinOrbX, safeMaxOrbX)
+            isDocked -> if (isNearLeftEdge) minDockX else maxDockRightX
+            else -> offsetX
+        }
+
+        val safeOrbMarginYPx = with(density) { 36.dp.toPx() }
+        val safeMinOrbY = cutoutTopPx + safeOrbMarginYPx
+        val safeMaxOrbY = (screenHeightPx - normalOrbSizePx - cutoutBottomPx - safeOrbMarginYPx).coerceAtLeast(safeMinOrbY)
+        val targetDisplayY = if (isWheelExpanded) {
+            offsetY.coerceIn(safeMinOrbY, safeMaxOrbY)
+        } else {
+            offsetY
+        }
+
+        val animatedX by animateFloatAsState(
+            targetValue = if (isDragging) offsetX else targetDisplayX,
+            animationSpec = if (!hasLoadedInitialPosition) snap() else spring(stiffness = Spring.StiffnessMediumLow),
+            label = "orbX"
+        )
+        val animatedY by animateFloatAsState(
+            targetValue = if (isDragging) offsetY else targetDisplayY,
+            animationSpec = if (!hasLoadedInitialPosition) snap() else spring(stiffness = Spring.StiffnessMediumLow),
+            label = "orbY"
+        )
+        val displayX = if (isDragging || !hasLoadedInitialPosition) targetDisplayX else animatedX
+        val displayY = if (isDragging || !hasLoadedInitialPosition) targetDisplayY else animatedY
+
+        // Pulsing animation for listening (strictly gated to avoid CPU and battery drain when idle)
+        val pulseScale = if (voiceState == AssistantVoiceState.LISTENING) {
+            val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+            val animatedScale by infiniteTransition.animateFloat(
+                initialValue = 1.0f,
+                targetValue = 1.18f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(800, easing = FastOutSlowInEasing),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "pulseScale"
+            )
+            animatedScale
+        } else {
+            1.0f
+        }
+
+        // Bin zone coordinates (bottom center)
+        val binTargetY = screenHeightPx - with(density) { 110.dp.toPx() }
+        val binCenterX = screenWidthPx / 2f
+
         // Drop-to-Delete Target Bin at Bottom Center
         AnimatedVisibility(
             visible = isDragging,
@@ -385,10 +472,6 @@ fun FloatingAssistantOrb(
                 // Both Layer 1 (inner) and Layer 2 (outer) share the EXACT same center and concentric curvature!
                 val totalCount = activeItems.size
                 if (totalCount > 0) {
-                    val isDockedOnLeft = isAtEdge && isNearLeftEdge
-                    val isDockedOnRight = isAtEdge && !isNearLeftEdge
-                    val isFloating = !isAtEdge
-
                     // Split items into 2 concentric layers:
                     // Layer 1 (inner) gets 2-3 primary actions. Layer 2 (outer) gets remaining specialized actions.
                     val (layer1Items, layer2Items) = when {
@@ -407,12 +490,8 @@ fun FloatingAssistantOrb(
                         OrbMenuSize.LARGE -> 1.15f
                     }
 
-                    val innerRadiusPx = with(density) {
-                        if (isFloating) (58 * scaleFactor).dp.toPx() else (66 * scaleFactor).dp.toPx()
-                    }
-                    val outerRadiusPx = with(density) {
-                        if (isFloating) (104 * scaleFactor).dp.toPx() else (118 * scaleFactor).dp.toPx()
-                    }
+                    val innerRadiusPx = with(density) { (58 * scaleFactor).dp.toPx() }
+                    val outerRadiusPx = with(density) { (104 * scaleFactor).dp.toPx() }
 
                     val innerItemSizeDp = (orbMenuSize.itemSizeDp + 2).dp
                     val innerIconSizeDp = (orbMenuSize.iconSizeDp + 1).dp
@@ -422,87 +501,127 @@ fun FloatingAssistantOrb(
                     val outerIconSizeDp = orbMenuSize.iconSizeDp.dp
                     val outerItemSizePx = with(density) { outerItemSizeDp.toPx() }
 
-                    // Exact center of the expanded circular orb
-                    val currentOrbLeft = if (isDragging) offsetX else {
-                        if (isAtEdge) {
-                            if (isNearLeftEdge) minDockX else maxFloatingX
-                        } else {
-                            offsetX
+                    // Exact center of the expanded circular orb (slides smoothly on-screen)
+                    val orbCenterX = displayX + (normalOrbSizePx / 2f)
+                    val orbCenterY = displayY + (normalOrbSizePx / 2f)
+                    val verticalFraction = (orbCenterY / screenHeightPx).coerceIn(0f, 1f)
+                    val horizontalFraction = (orbCenterX / screenWidthPx).coerceIn(0f, 1f)
+
+                    // Determine effective fanning direction based on explicit override or closest edge
+                    val effectiveDirection = when (fanDirection) {
+                        OrbFanDirection.RIGHT -> if (reversePaletteDirection) OrbFanDirection.LEFT else OrbFanDirection.RIGHT
+                        OrbFanDirection.LEFT -> if (reversePaletteDirection) OrbFanDirection.RIGHT else OrbFanDirection.LEFT
+                        OrbFanDirection.DOWN -> if (reversePaletteDirection) OrbFanDirection.UP else OrbFanDirection.DOWN
+                        OrbFanDirection.UP -> if (reversePaletteDirection) OrbFanDirection.DOWN else OrbFanDirection.UP
+                        OrbFanDirection.AUTO -> {
+                            val distLeft = orbCenterX
+                            val distRight = screenWidthPx - orbCenterX
+                            val distTop = orbCenterY
+                            val distBottom = screenHeightPx - orbCenterY
+                            val minDist = minOf(distLeft, distRight, distTop, distBottom)
+                            val naturalDir = when {
+                                distTop == minDist -> OrbFanDirection.DOWN
+                                distBottom == minDist -> OrbFanDirection.UP
+                                distLeft == minDist -> OrbFanDirection.RIGHT
+                                else -> OrbFanDirection.LEFT
+                            }
+                            if (reversePaletteDirection) {
+                                when (naturalDir) {
+                                    OrbFanDirection.DOWN -> OrbFanDirection.UP
+                                    OrbFanDirection.UP -> OrbFanDirection.DOWN
+                                    OrbFanDirection.RIGHT -> OrbFanDirection.LEFT
+                                    OrbFanDirection.LEFT -> OrbFanDirection.RIGHT
+                                    OrbFanDirection.AUTO -> OrbFanDirection.RIGHT
+                                }
+                            } else {
+                                naturalDir
+                            }
                         }
                     }
-                    val orbCenterX = currentOrbLeft + (normalOrbSizePx / 2f)
-                    val orbCenterY = offsetY + (normalOrbSizePx / 2f)
-                    val verticalFraction = (orbCenterY / screenHeightPx).coerceIn(0f, 1f)
 
-                    // Always fan as a 2-layered semicircle arc directed inward toward screen center
-                    val shouldFanRight = if (isAtEdge) isNearLeftEdge else (orbCenterX <= screenWidthPx / 2f)
+                    fun getSpanDeg(itemsCount: Int, isInner: Boolean, isNearEdge: Boolean): Double {
+                        return if (isInner) {
+                            when (itemsCount) {
+                                1 -> 0.0
+                                2 -> 44.0
+                                3 -> 80.0
+                                4 -> 106.0
+                                else -> 122.0
+                            }
+                        } else {
+                            when (itemsCount) {
+                                1 -> 0.0
+                                2 -> 48.0
+                                3 -> 80.0
+                                4 -> 108.0
+                                5 -> if (isNearEdge) 126.0 else 134.0
+                                6 -> if (isNearEdge) 142.0 else 152.0
+                                else -> if (isNearEdge) 150.0 else 164.0
+                            }
+                        }
+                    }
 
                     // Calculate angles for Layer 1 and Layer 2
                     fun computeAngles(itemsCount: Int, isInner: Boolean): List<Double> {
                         if (itemsCount <= 0) return emptyList()
-                        return if (shouldFanRight) {
-                            // Semicircle arc fanning to the right (+X)
-                            val tiltDeg = when {
-                                verticalFraction < 0.28f -> (0.28f - verticalFraction) / 0.28f * 18.0
-                                verticalFraction > 0.72f -> (verticalFraction - 0.72f) / 0.28f * -18.0
-                                else -> 0.0
-                            }
-                            val effectiveCenter = 0.0 + Math.toRadians(tiltDeg)
-                            val spanDeg = if (isInner) {
-                                when (itemsCount) {
-                                    1 -> 0.0
-                                    2 -> 46.0
-                                    3 -> 82.0
-                                    4 -> 110.0
-                                    else -> 126.0
+                        return when (effectiveDirection) {
+                            OrbFanDirection.RIGHT -> {
+                                val isNearEdge = verticalFraction < 0.35f || verticalFraction > 0.65f
+                                val tiltDeg = when {
+                                    verticalFraction < 0.35f -> (0.35f - verticalFraction) / 0.35f * 52.0
+                                    verticalFraction > 0.65f -> (verticalFraction - 0.65f) / 0.35f * -52.0
+                                    else -> 0.0
                                 }
-                            } else {
-                                when (itemsCount) {
-                                    1 -> 0.0
-                                    2 -> 50.0
-                                    3 -> 84.0
-                                    4 -> 112.0
-                                    5 -> 136.0
-                                    6 -> 154.0
-                                    else -> 168.0
+                                val effectiveCenter = 0.0 + Math.toRadians(tiltDeg)
+                                val spanRad = Math.toRadians(getSpanDeg(itemsCount, isInner, isNearEdge))
+                                val step = if (itemsCount > 1) spanRad / (itemsCount - 1) else 0.0
+                                (0 until itemsCount).map { i ->
+                                    effectiveCenter - (spanRad / 2.0) + (i * step)
                                 }
                             }
-                            val spanRad = Math.toRadians(spanDeg)
-                            val step = if (itemsCount > 1) spanRad / (itemsCount - 1) else 0.0
-                            (0 until itemsCount).map { i ->
-                                effectiveCenter - (spanRad / 2.0) + (i * step)
-                            }
-                        } else {
-                            // Semicircle arc fanning to the left (-X)
-                            val tiltDeg = when {
-                                verticalFraction < 0.28f -> (0.28f - verticalFraction) / 0.28f * -18.0
-                                verticalFraction > 0.72f -> (verticalFraction - 0.72f) / 0.28f * 18.0
-                                else -> 0.0
-                            }
-                            val effectiveCenter = Math.PI + Math.toRadians(tiltDeg)
-                            val spanDeg = if (isInner) {
-                                when (itemsCount) {
-                                    1 -> 0.0
-                                    2 -> 46.0
-                                    3 -> 82.0
-                                    4 -> 110.0
-                                    else -> 126.0
+                            OrbFanDirection.LEFT -> {
+                                val isNearEdge = verticalFraction < 0.35f || verticalFraction > 0.65f
+                                val tiltDeg = when {
+                                    verticalFraction < 0.35f -> (0.35f - verticalFraction) / 0.35f * -52.0
+                                    verticalFraction > 0.65f -> (verticalFraction - 0.65f) / 0.35f * 52.0
+                                    else -> 0.0
                                 }
-                            } else {
-                                when (itemsCount) {
-                                    1 -> 0.0
-                                    2 -> 50.0
-                                    3 -> 84.0
-                                    4 -> 112.0
-                                    5 -> 136.0
-                                    6 -> 154.0
-                                    else -> 168.0
+                                val effectiveCenter = Math.PI + Math.toRadians(tiltDeg)
+                                val spanRad = Math.toRadians(getSpanDeg(itemsCount, isInner, isNearEdge))
+                                val step = if (itemsCount > 1) spanRad / (itemsCount - 1) else 0.0
+                                (0 until itemsCount).map { i ->
+                                    effectiveCenter + (spanRad / 2.0) - (i * step)
                                 }
                             }
-                            val spanRad = Math.toRadians(spanDeg)
-                            val step = if (itemsCount > 1) spanRad / (itemsCount - 1) else 0.0
-                            (0 until itemsCount).map { i ->
-                                effectiveCenter + (spanRad / 2.0) - (i * step)
+                            OrbFanDirection.DOWN -> {
+                                // 90° downward from top edge (+Y)
+                                val isNearEdge = horizontalFraction < 0.35f || horizontalFraction > 0.65f
+                                val tiltDeg = when {
+                                    horizontalFraction < 0.35f -> (0.35f - horizontalFraction) / 0.35f * -52.0
+                                    horizontalFraction > 0.65f -> (horizontalFraction - 0.65f) / 0.35f * 52.0
+                                    else -> 0.0
+                                }
+                                val effectiveCenter = (Math.PI / 2.0) + Math.toRadians(tiltDeg)
+                                val spanRad = Math.toRadians(getSpanDeg(itemsCount, isInner, isNearEdge))
+                                val step = if (itemsCount > 1) spanRad / (itemsCount - 1) else 0.0
+                                (0 until itemsCount).map { i ->
+                                    effectiveCenter + (spanRad / 2.0) - (i * step)
+                                }
+                            }
+                            OrbFanDirection.UP, OrbFanDirection.AUTO -> {
+                                // -90° upward from bottom edge (-Y)
+                                val isNearEdge = horizontalFraction < 0.35f || horizontalFraction > 0.65f
+                                val tiltDeg = when {
+                                    horizontalFraction < 0.35f -> (0.35f - horizontalFraction) / 0.35f * 52.0
+                                    horizontalFraction > 0.65f -> (horizontalFraction - 0.65f) / 0.35f * -52.0
+                                    else -> 0.0
+                                }
+                                val effectiveCenter = (-Math.PI / 2.0) + Math.toRadians(tiltDeg)
+                                val spanRad = Math.toRadians(getSpanDeg(itemsCount, isInner, isNearEdge))
+                                val step = if (itemsCount > 1) spanRad / (itemsCount - 1) else 0.0
+                                (0 until itemsCount).map { i ->
+                                    effectiveCenter - (spanRad / 2.0) + (i * step)
+                                }
                             }
                         }
                     }
@@ -516,13 +635,9 @@ fun FloatingAssistantOrb(
                         val rawItemX = orbCenterX + (innerRadiusPx * cos(angle)).toFloat() - (innerItemSizePx / 2f)
                         val rawItemY = orbCenterY + (innerRadiusPx * sin(angle)).toFloat() - (innerItemSizePx / 2f)
 
-                        val minXBound = cutoutLeftPx + with(density) { 6.dp.toPx() }
-                        val maxXBound = screenWidthPx - innerItemSizePx - cutoutRightPx - with(density) { 6.dp.toPx() }
-                        val minYBound = if (isLandscape) -with(density) { 8.dp.toPx() } else cutoutTopPx + with(density) { 8.dp.toPx() }
-                        val maxYBound = if (isLandscape) screenHeightPx + with(density) { 8.dp.toPx() } - innerItemSizePx else screenHeightPx - innerItemSizePx - cutoutBottomPx - with(density) { 12.dp.toPx() }
-
-                        val itemX = rawItemX.coerceIn(minXBound, maxXBound)
-                        val itemY = rawItemY.coerceIn(minYBound, maxYBound)
+                        // Allow items to fan out along their radial arc at corners without colliding/overlapping
+                        val itemX = rawItemX
+                        val itemY = rawItemY
 
                         Box(
                             modifier = Modifier
@@ -554,13 +669,9 @@ fun FloatingAssistantOrb(
                         val rawItemX = orbCenterX + (outerRadiusPx * cos(angle)).toFloat() - (outerItemSizePx / 2f)
                         val rawItemY = orbCenterY + (outerRadiusPx * sin(angle)).toFloat() - (outerItemSizePx / 2f)
 
-                        val minXBound = cutoutLeftPx + with(density) { 6.dp.toPx() }
-                        val maxXBound = screenWidthPx - outerItemSizePx - cutoutRightPx - with(density) { 6.dp.toPx() }
-                        val minYBound = if (isLandscape) -with(density) { 8.dp.toPx() } else cutoutTopPx + with(density) { 8.dp.toPx() }
-                        val maxYBound = if (isLandscape) screenHeightPx + with(density) { 8.dp.toPx() } - outerItemSizePx else screenHeightPx - outerItemSizePx - cutoutBottomPx - with(density) { 12.dp.toPx() }
-
-                        val itemX = rawItemX.coerceIn(minXBound, maxXBound)
-                        val itemY = rawItemY.coerceIn(minYBound, maxYBound)
+                        // Allow items to fan out along their radial arc at corners without colliding/overlapping
+                        val itemX = rawItemX
+                        val itemY = rawItemY
 
                         Box(
                             modifier = Modifier
@@ -589,49 +700,24 @@ fun FloatingAssistantOrb(
             }
         }
 
-        val minDockY = maxOf(screenHeightPx * 0.15f, cutoutTopPx)
-        val maxDockY = minOf(screenHeightPx * 0.85f - orbHeightPx, screenHeightPx - cutoutBottomPx - orbHeightPx).coerceAtLeast(minDockY)
-
+        val currentEffectiveEdgeSnap by rememberUpdatedState(effectiveEdgeSnap)
+        val currentSnapThreshold by rememberUpdatedState(snapThreshold)
         val currentMinDockX by rememberUpdatedState(minDockX)
         val currentMaxDockRightX by rememberUpdatedState(maxDockRightX)
-        val currentMaxFloatingX by rememberUpdatedState(maxFloatingX)
-        val currentEdgeSnapZonePx by rememberUpdatedState(edgeSnapZonePx)
-        val currentMinDockY by rememberUpdatedState(minDockY)
-        val currentMaxDockY by rememberUpdatedState(maxDockY)
-        val currentScreenWidthPx by rememberUpdatedState(screenWidthPx)
-        val currentScreenHeightPx by rememberUpdatedState(screenHeightPx)
+        val currentMinAllowedX by rememberUpdatedState(minAllowedX)
+        val currentMaxAllowedX by rememberUpdatedState(maxAllowedX)
+        val currentMinAllowedY by rememberUpdatedState(minAllowedY)
+        val currentMaxAllowedY by rememberUpdatedState(maxAllowedY)
         val currentIsLandscape by rememberUpdatedState(isLandscape)
-        val currentOrbEdgeSnap by rememberUpdatedState(orbEdgeSnap)
         val currentBinCenterX by rememberUpdatedState(binCenterX)
-        val currentOrbWidthPx by rememberUpdatedState(orbWidthPx)
-        val currentOrbHeightPx by rememberUpdatedState(orbHeightPx)
 
-        val animatedX by animateFloatAsState(
-            targetValue = if (isDragging) offsetX else {
-                if (isAtEdge) {
-                    if (isNearLeftEdge) minDockX else (if (isWheelExpanded) maxFloatingX else maxDockRightX)
-                } else {
-                    offsetX
-                }
-            },
-            animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-            label = "orbX"
-        )
-
-        val currentShape = when {
-            isDocked && isNearLeftEdge -> RoundedCornerShape(topEnd = 12.dp, bottomEnd = 12.dp, topStart = 0.dp, bottomStart = 0.dp)
-            isDocked && !isNearLeftEdge -> RoundedCornerShape(topStart = 12.dp, bottomStart = 12.dp, topEnd = 0.dp, bottomEnd = 0.dp)
-            else -> CircleShape
-        }
-
-        // The Floating Assistant: 2-Layer Concentric Circle Design / Fluid Edge Dock
         Box(
             modifier = Modifier
-                .offset { IntOffset(animatedX.roundToInt(), offsetY.roundToInt()) }
-                .size(width = currentWidthDp, height = currentHeightDp)
+                .offset { IntOffset(displayX.roundToInt(), displayY.roundToInt()) }
+                .size(width = effectiveWidthDp, height = effectiveHeightDp)
                 .scale(if (voiceState == AssistantVoiceState.LISTENING) pulseScale else 1.0f)
                 .shadow(
-                    elevation = if (isDragging) 6.dp else if (isDocked) 1.5.dp else 4.dp,
+                    elevation = if (isDragging) 6.dp else if (isDocked) 1.5.dp else 3.5.dp,
                     shape = currentShape
                 )
                 .clip(currentShape)
@@ -644,7 +730,15 @@ fun FloatingAssistantOrb(
                         } else {
                             Color(orbColor.colorValue).copy(alpha = orbOpacity)
                         }
-                    } else MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
+                    } else {
+                        if (orbColor == OrbColor.THEME) {
+                            MaterialTheme.colorScheme.surface.copy(alpha = orbOpacity)
+                        } else if (orbColor == OrbColor.CUSTOM) {
+                            Color(customOrbColor).copy(alpha = orbOpacity)
+                        } else {
+                            Color(orbColor.colorValue).copy(alpha = orbOpacity)
+                        }
+                    }
                 )
                 .border(
                     width = if (isDocked) 0.8.dp else 1.5.dp,
@@ -654,82 +748,97 @@ fun FloatingAssistantOrb(
                         } else {
                             Color.White.copy(alpha = 0.35f)
                         }
-                    } else baseOrbColor.copy(alpha = 0.35f),
+                    } else baseOrbColor.copy(alpha = 0.45f),
                     shape = currentShape
                 )
-                .pointerInput(Unit) {
-                    detectTapGestures(
-                        onTap = {
-                            isWheelExpanded = !isWheelExpanded
-                        },
-                        onLongPress = {
-                            isWheelExpanded = false
-                            onStartVoiceListening()
-                        }
-                    )
-                }
-                .pointerInput(isLandscape, screenWidthPx, screenHeightPx) {
-                    detectDragGestures(
-                        onDragStart = {
-                            isDragging = true
-                            isWheelExpanded = false
-                        },
-                        onDragEnd = {
-                            isDragging = false
-                            if (isOverBin) {
-                                onDismissOrb()
-                            } else {
-                                val distToLeft = offsetX - currentMinDockX
-                                val distToRight = currentMaxDockRightX - offsetX
-                                val isCloseToEdge = distToLeft < currentEdgeSnapZonePx || distToRight < currentEdgeSnapZonePx
+                .pointerInput(isLandscape, screenWidthPx, screenHeightPx, effectiveEdgeSnap, snapThreshold) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val downTime = System.currentTimeMillis()
+                        var isDrag = false
+                        val touchSlop = viewConfiguration.touchSlop
+                        var totalDragDistance = 0f
 
-                                if (currentOrbEdgeSnap && isCloseToEdge) {
-                                    view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                                    offsetX = if (distToLeft < distToRight) currentMinDockX else currentMaxDockRightX
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+
+                            if (!change.pressed) {
+                                change.consume()
+                                if (isDrag) {
+                                    isDragging = false
+                                    if (isOverBin) {
+                                        onDismissOrb()
+                                    } else {
+                                        if (currentEffectiveEdgeSnap) {
+                                            val leftThresholdPx = screenWidthPx * currentSnapThreshold
+                                            val rightThresholdPx = screenWidthPx - (screenWidthPx * currentSnapThreshold) - normalOrbSizePx
+                                            if (offsetX <= leftThresholdPx) {
+                                                offsetX = currentMinDockX
+                                            } else if (offsetX >= rightThresholdPx) {
+                                                offsetX = currentMaxDockRightX
+                                            }
+                                            // Else float where user dropped it
+                                            view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                        } else {
+                                            view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                        }
+                                        onSavePosition(offsetX, offsetY, currentIsLandscape)
+                                    }
+                                    isOverBin = false
                                 } else {
-                                    // Stays floating anywhere user drops it in full round form!
-                                    offsetX = offsetX.coerceIn(currentMinDockX, currentMaxFloatingX)
+                                    // Clean tap or long press on orb or docked handle
+                                    val pressDuration = System.currentTimeMillis() - downTime
+                                    if (pressDuration > 450L) {
+                                        isWheelExpanded = false
+                                        onStartVoiceListening()
+                                    } else {
+                                        view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                                        isWheelExpanded = !isWheelExpanded
+                                    }
                                 }
-                                onSavePosition(offsetX, offsetY, currentIsLandscape)
-                            }
-                            isOverBin = false
-                        },
-                        onDragCancel = {
-                            isDragging = false
-                            isOverBin = false
-                        },
-                        onDrag = { change, dragAmount ->
-                            change.consume()
-                            val newX = (offsetX + dragAmount.x).coerceIn(currentMinDockX, currentMaxDockRightX)
-                            val newY = (offsetY + dragAmount.y).coerceIn(currentMinDockY, currentMaxDockY)
-                            offsetX = newX
-                            offsetY = newY
+                                break
+                            } else {
+                                val dragDelta = change.position - change.previousPosition
+                                totalDragDistance += dragDelta.getDistance()
 
-                            val orbCenterXPx = offsetX + currentOrbWidthPx / 2f
-                            val orbCenterYPx = offsetY + currentOrbHeightPx / 2f
-                            val distFromBinXPx = kotlin.math.abs(orbCenterXPx - currentBinCenterX)
-                            val isInBottomZone = orbCenterYPx > currentScreenHeightPx - with(density) { 150.dp.toPx() }
-                            isOverBin = isInBottomZone && distFromBinXPx < with(density) { 95.dp.toPx() }
+                                if (!isDrag && totalDragDistance > touchSlop) {
+                                    isDrag = true
+                                    isDragging = true
+                                    isWheelExpanded = false
+                                }
+
+                                if (isDrag) {
+                                    change.consume()
+                                    offsetX = (offsetX + dragDelta.x).coerceIn(currentMinAllowedX, currentMaxAllowedX)
+                                    offsetY = (offsetY + dragDelta.y).coerceIn(currentMinAllowedY, currentMaxAllowedY)
+
+                                    val orbCenterXPx = offsetX + normalOrbSizePx / 2f
+                                    val orbCenterYPx = offsetY + normalOrbSizePx / 2f
+                                    val distFromBinXPx = kotlin.math.abs(orbCenterXPx - currentBinCenterX)
+                                    val isInBottomZone = orbCenterYPx > screenHeightPx - with(density) { 150.dp.toPx() }
+                                    isOverBin = isInBottomZone && distFromBinXPx < with(density) { 95.dp.toPx() }
+                                }
+                            }
                         }
-                    )
+                    }
                 },
             contentAlignment = Alignment.Center
         ) {
             if (isDocked) {
                 Box(
                     modifier = Modifier
-                        .size(width = (dockedWidthDp * 0.22f).coerceAtLeast(2.5.dp), height = (dockedHeightDp * 0.42f))
-                        .clip(RoundedCornerShape(1.5.dp))
+                        .size(width = (dockedWidthDp * 0.22f).coerceAtLeast(1.5.dp), height = (dockedHeightDp * 0.42f))
+                        .clip(RoundedCornerShape(1.dp))
                         .background(
                             if (orbColor == OrbColor.THEME) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
                             else Color.White.copy(alpha = 0.9f)
                         )
                 )
             } else {
-                // Layer 0: Sleek inner circle with smaller icon so it never crowds or overlaps with Layer 1
                 Box(
                     modifier = Modifier
-                        .size(28.dp)
+                        .size(innerCoreSizeDp)
                         .clip(CircleShape)
                         .background(
                             Brush.radialGradient(
@@ -743,8 +852,7 @@ fun FloatingAssistantOrb(
                             width = 1.dp,
                             color = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
                             shape = CircleShape
-                        )
-                        .shadow(elevation = 2.dp, shape = CircleShape),
+                        ),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
@@ -755,7 +863,7 @@ fun FloatingAssistantOrb(
                             AssistantVoiceState.IDLE -> Icons.Default.AutoAwesome
                         },
                         contentDescription = "Lumina Assistant",
-                        modifier = Modifier.size(13.5.dp),
+                        modifier = Modifier.size(iconSizeDp),
                         tint = MaterialTheme.colorScheme.primary
                     )
                 }

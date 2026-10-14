@@ -56,6 +56,7 @@ fun ScrollReaderView(
     letterSpacing: Float,
     contentTextAlign: TextAlign,
     verticalPadding: Int,
+    imageFilterMode: io.github.tasmirz.lumina.model.ImageFilterMode = io.github.tasmirz.lumina.model.ImageFilterMode.ORIGINAL,
     progressBottomInset: Dp,
     effectiveImePadding: Dp,
     scrollHorizontalPaddingStart: Dp,
@@ -173,21 +174,28 @@ fun ScrollReaderView(
                     }
                     val isBeingSpoken = if (isTtsSpeaking) speakingChapterIdx == chapIdx && speakingParaIdx == pIdx else false
 
-                    val isDuplicateTitlePara = pIdx == 0 && (
+                    val isDuplicateTitlePara = pIdx < 3 && (
                         para.trim().equals(book.title.trim(), ignoreCase = true) ||
-                        para.trim().equals(chapter.title.trim(), ignoreCase = true)
+                        para.trim().equals(chapter.title.trim(), ignoreCase = true) ||
+                        io.github.tasmirz.lumina.data.EpubParser.isHeadingOnly(para, chapter.title, book.title, chapter.subtitle)
                     )
                     if (isDuplicateTitlePara) {
-                        // Suppress redundant duplicated title in body paragraph
+                        // Suppress redundant duplicated title or numeral in leading body paragraphs
                     } else if (para.startsWith("[TABLE:") && para.endsWith("]")) {
-                        ReaderTableCard(tableToken = para, isPagedMode = false)
+                        ReaderTableCard(
+                            tableToken = para,
+                            isPagedMode = false,
+                            imageFilterMode = imageFilterMode,
+                            onOpenLightbox = onOpenLightbox
+                        )
                     } else if (para.startsWith("[IMG:") && para.endsWith("]")) {
                         val imgPath = para.removePrefix("[IMG:").removeSuffix("]")
                         val bitmap = rememberBookImage(imgPath, isInlineImage = true)
                         InlineReaderImage(
                             bitmap = bitmap,
                             imgPath = imgPath,
-                            widthFraction = inlineImageWidthFraction,
+                            widthFraction = 1.0f,
+                            imageFilterMode = imageFilterMode,
                             onOpenLightbox = onOpenLightbox,
                             onTap = onToggleControls
                         )
@@ -217,16 +225,46 @@ fun ScrollReaderView(
                                 para
                             }
                         }
-                        val isDropCap = chapIdx == 0 && pIdx == 0 && flowPara.length > 40 && !flowPara.startsWith("[IMG:") && !flowPara.startsWith("[TABLE:") && !flowPara.startsWith("[VERSE:") && !flowPara.startsWith("[QUOTE:") && flowPara != "[DIVIDER]"
-                        val onBgColor = MaterialTheme.colorScheme.onBackground
-                        val secColor = MaterialTheme.colorScheme.secondary
-                        val activeSearchQ = if (inBookSearchQuery.length >= 2) inBookSearchQuery else ""
-                        val isActiveMatch = inBookSearchResults.getOrNull(inBookCurrentMatchIndex)?.let {
-                            it.chapterIndex == chapIdx && it.paragraphIndex == pIdx
-                        } ?: false
-                        val hasFormatting = matchingBookmarks.isNotEmpty() || isDropCap || activeSearchQ.isNotEmpty() ||
-                            flowPara.contains("[sub]") || flowPara.contains("[sup]") ||
-                            flowPara.contains("[INLINE_IMG:")
+                        val formulaMatch = remember(flowPara) {
+                            "^(?:([•\\-\\*\u2022])\\s*)?\\[(?:INLINE_)?IMG:([^\\]]+)\\]\\s*$".toRegex().find(flowPara.trim())
+                        }
+                        val singleImgPath = formulaMatch?.groupValues?.get(2)
+                        val hasBullet = formulaMatch?.groupValues?.get(1)?.isNotBlank() == true
+                        val isFormula = remember(singleImgPath, hasBullet) {
+                            if (singleImgPath.isNullOrBlank()) false else isFormulaImage(singleImgPath, hasBullet)
+                        }
+                        if (formulaMatch != null && isFormula) {
+                            val bullet = formulaMatch.groupValues[1]
+                            val imgPath = formulaMatch.groupValues[2]
+                            ReaderFormulaRow(
+                                bullet = bullet,
+                                imgPath = imgPath,
+                                fontSize = fontSize,
+                                fontFamily = fontFamily,
+                                onOpenLightbox = onOpenLightbox
+                            )
+                        } else if (formulaMatch != null && !isFormula) {
+                            val imgPath = formulaMatch.groupValues[2]
+                            val bitmap = rememberBookImage(imgPath, isInlineImage = true)
+                            InlineReaderImage(
+                                bitmap = bitmap,
+                                imgPath = imgPath,
+                                widthFraction = 1.0f,
+                                imageFilterMode = imageFilterMode,
+                                onOpenLightbox = onOpenLightbox,
+                                onTap = onToggleControls
+                            )
+                        } else {
+                            val isDropCap = chapIdx == 0 && pIdx == 0 && flowPara.length > 40 && !flowPara.startsWith("[IMG:") && !flowPara.startsWith("[TABLE:") && !flowPara.startsWith("[VERSE:") && !flowPara.startsWith("[QUOTE:") && flowPara != "[DIVIDER]"
+                            val onBgColor = MaterialTheme.colorScheme.onBackground
+                            val secColor = MaterialTheme.colorScheme.secondary
+                            val activeSearchQ = if (inBookSearchQuery.length >= 2) inBookSearchQuery else ""
+                            val isActiveMatch = inBookSearchResults.getOrNull(inBookCurrentMatchIndex)?.let {
+                                it.chapterIndex == chapIdx && it.paragraphIndex == pIdx
+                            } ?: false
+                            val hasFormatting = matchingBookmarks.isNotEmpty() || isDropCap || activeSearchQ.isNotEmpty() ||
+                                flowPara.contains("[sub]") || flowPara.contains("[sup]") ||
+                                flowPara.contains("[INLINE_IMG:")
 
                         Box(
                             modifier = Modifier
@@ -253,7 +291,7 @@ fun ScrollReaderView(
                         ) {
                             if (hasFormatting) {
                                 val inlineImages = remember(flowPara) { extractInlineImages(flowPara) }
-                                val inlineContentMap = rememberInlineContentMap(inlineImages, fontSize)
+                                val inlineContentMap = rememberInlineContentMap(inlineImages, fontSize.toFloat(), imageFilterMode)
                                 val annotatedText = remember(
                                     flowPara, matchingBookmarks, isDropCap, fontSize, fontFamily, onBgColor,
                                     activeSearchQ, isActiveMatch
@@ -273,12 +311,13 @@ fun ScrollReaderView(
                                         isActiveSearchMatch = isActiveMatch
                                     )
                                 }
+                                val paraTextAlign = if (inlineImages.isNotEmpty()) TextAlign.Start else contentTextAlign
                                 Text(
                                     text = annotatedText,
                                     inlineContent = inlineContentMap,
                                     lineHeight = (fontSize * lineHeightMultiplier).sp,
                                     letterSpacing = letterSpacing.sp,
-                                    textAlign = contentTextAlign,
+                                    textAlign = paraTextAlign,
                                     modifier = Modifier.fillMaxWidth()
                                 )
                             } else {
@@ -296,6 +335,7 @@ fun ScrollReaderView(
                         }
                     }
                 }
+            }
             }
             item(key = "bottom-empty-space", contentType = "bottom_space") {
                 DisableSelection {

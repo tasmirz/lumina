@@ -28,7 +28,7 @@ import java.net.URL
 import java.security.MessageDigest
 
 private val maxMemoryKb = (Runtime.getRuntime().maxMemory() / 1024).toInt()
-private val cacheSizeKb = (maxMemoryKb / 8).coerceIn(4096, 32768)
+private val cacheSizeKb = (maxMemoryKb / 6).coerceIn(8192, 49152)
 
 internal val bitmapCache = object : android.util.LruCache<String, Bitmap>(cacheSizeKb) {
     override fun sizeOf(key: String, value: Bitmap): Int {
@@ -36,17 +36,45 @@ internal val bitmapCache = object : android.util.LruCache<String, Bitmap>(cacheS
     }
 }
 private val failedSources = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
+private val missingFilesCache = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
 private val coverDownloadSemaphore = Semaphore(3)
 
 internal val inlineAspectRatios = java.util.concurrent.ConcurrentHashMap<String, Float>()
 
-internal fun decodeSampledInlineBitmap(file: File, maxDimension: Int = 360): Bitmap? {
+fun decodeSvgBitmap(file: File, maxW: Int = 1440, maxH: Int = 1440): Bitmap? {
+    return try {
+        java.io.FileInputStream(file).use { fis ->
+            val svg = com.caverock.androidsvg.SVG.getFromInputStream(fis)
+            val docW = if (svg.documentWidth > 0) svg.documentWidth else svg.documentViewBox?.width() ?: 300f
+            val docH = if (svg.documentHeight > 0) svg.documentHeight else svg.documentViewBox?.height() ?: 100f
+            if (docW <= 0 || docH <= 0) return null
+
+            val scale = minOf(maxW.toFloat() / docW, maxH.toFloat() / docH).coerceIn(0.1f, 4.0f)
+            val targetW = (docW * scale).toInt().coerceIn(1, 2560)
+            val targetH = (docH * scale).toInt().coerceIn(1, 2560)
+
+            val bmp = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
+            val canvas = android.graphics.Canvas(bmp)
+            svg.renderToCanvas(canvas, android.graphics.RectF(0f, 0f, targetW.toFloat(), targetH.toFloat()))
+            bmp
+        }
+    } catch (_: Throwable) {
+        null
+    }
+}
+
+internal fun decodeSampledInlineBitmap(file: File, maxDimension: Int = 1440): Bitmap? {
+    if (file.name.endsWith(".svg", ignoreCase = true)) {
+        return decodeSvgBitmap(file, 1440, 1440)
+    }
     return try {
         val opt = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.absolutePath, opt)
         val origW = opt.outWidth
         val origH = opt.outHeight
-        if (origW <= 0 || origH <= 0) return null
+        if (origW <= 0 || origH <= 0) {
+            return decodeSvgBitmap(file, 1440, 1440)
+        }
 
         var sample = 1
         while (origW / (sample * 2) >= maxDimension || origH / (sample * 2) >= maxDimension) {
@@ -79,18 +107,20 @@ fun prewarmInlineBitmaps(imagePaths: List<String>) {
     kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
         imagePaths.forEach { rawPath ->
             try {
-                val cleanPath = rawPath.removePrefix("file://")
+                val cleanPath = rawPath.removePrefix("file://").replace("\\/", "/")
                 val decodedPath = try { java.net.URLDecoder.decode(cleanPath, "UTF-8") } catch (_: Exception) { cleanPath }
                 val file = if (File(cleanPath).exists()) File(cleanPath) else File(decodedPath)
                 if (file.exists() && file.length() > 0) {
                     val absPath = file.absolutePath
                     if (bitmapCache.get(absPath) == null && bitmapCache.get(rawPath) == null) {
-                        val decoded = decodeSampledInlineBitmap(file, maxDimension = 360)
+                        val isSvg = file.name.endsWith(".svg", ignoreCase = true)
+                        val maxDim = if (isSvg) 1440 else 1440
+                        val decoded = decodeSampledInlineBitmap(file, maxDimension = maxDim)
                         if (decoded != null) {
                             bitmapCache.put(absPath, decoded)
                             bitmapCache.put(rawPath, decoded)
                             if (decoded.height > 0) {
-                                val ar = (decoded.width.toFloat() / decoded.height.toFloat()).coerceIn(0.4f, 8.0f)
+                                val ar = (decoded.width.toFloat() / decoded.height.toFloat()).coerceIn(0.2f, 35.0f)
                                 inlineAspectRatios[absPath] = ar
                                 inlineAspectRatios[rawPath] = ar
                             }
@@ -109,12 +139,17 @@ private fun sha256Hex(input: String): String {
 }
 
 private fun decodeSampledBitmapFromFile(file: File, maxWidth: Int = 280, maxHeight: Int = 420): Bitmap? {
+    if (file.name.endsWith(".svg", ignoreCase = true)) {
+        return decodeSvgBitmap(file, maxOf(maxWidth, 1440), maxOf(maxHeight, 1440))
+    }
     return try {
         val opt = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.absolutePath, opt)
         val origW = opt.outWidth
         val origH = opt.outHeight
-        if (origW <= 0 || origH <= 0) return null
+        if (origW <= 0 || origH <= 0) {
+            return decodeSvgBitmap(file, maxOf(maxWidth, 1440), maxOf(maxHeight, 1440))
+        }
 
         var sample = 1
         while (origW / (sample * 2) >= maxWidth || origH / (sample * 2) >= maxHeight) {
@@ -179,40 +214,57 @@ private fun decodeSampledBitmapFromByteArray(bytes: ByteArray, maxWidth: Int = 2
 }
 
 fun prewarmBookCovers(sources: List<String>, context: android.content.Context) {
+    if (sources.isEmpty()) return
     kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
-        sources.take(24).forEach { src ->
-            if (src.isNotBlank() && bitmapCache.get(src) == null && !failedSources.contains(src)) {
+        sources.take(64).forEach { src ->
+            val cleanPath = src.removePrefix("file://").replace("\\/", "/")
+            if (src.isNotBlank() && bitmapCache.get(src) == null && !failedSources.contains(src) && !missingFilesCache.contains(cleanPath)) {
                 try {
                     val decoded: Bitmap? = if (src.startsWith("http://") || src.startsWith("https://")) {
                         val coversDir = File(context.filesDir, "covers")
                         val diskCacheFile = File(coversDir, sha256Hex(src))
                         if (diskCacheFile.exists() && diskCacheFile.length() > 0) {
-                            decodeSampledBitmapFromFile(diskCacheFile)
+                            decodeSampledBitmapFromFile(diskCacheFile, maxWidth = 280, maxHeight = 420)
                         } else null
                     } else if (src.startsWith("content://")) {
                         try {
                             val uri = android.net.Uri.parse(src)
                             context.contentResolver.openInputStream(uri)?.use { stream ->
-                                decodeSampledBitmapFromByteArray(stream.readBytes())
+                                decodeSampledBitmapFromByteArray(stream.readBytes(), maxWidth = 280, maxHeight = 420)
                             }
                         } catch (_: Exception) { null }
                     } else {
-                        val file = File(src.removePrefix("file://"))
+                        val decodedPath = try { java.net.URLDecoder.decode(cleanPath, "UTF-8") } catch (_: Exception) { cleanPath }
+                        val file = if (File(cleanPath).exists()) File(cleanPath) else File(decodedPath)
                         if (file.exists() && file.length() > 0) {
-                            decodeSampledBitmapFromFile(file)
-                        } else null
+                            decodeSampledBitmapFromFile(file, maxWidth = 280, maxHeight = 420)
+                        } else {
+                            missingFilesCache.add(cleanPath)
+                            null
+                        }
                     }
                     if (decoded != null) {
                         bitmapCache.put(src, decoded)
+                    } else if (!src.startsWith("http://") && !src.startsWith("https://")) {
+                        failedSources.add(src)
                     }
-                } catch (_: Throwable) {}
+                } catch (_: Throwable) {
+                    if (!src.startsWith("http://") && !src.startsWith("https://")) {
+                        failedSources.add(src)
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-fun rememberBookImage(source: String, isInlineImage: Boolean = false): Bitmap? {
+fun rememberBookImage(
+    source: String,
+    isInlineImage: Boolean = false,
+    maxWidth: Int? = null,
+    maxHeight: Int? = null
+): Bitmap? {
     val context = androidx.compose.ui.platform.LocalContext.current.applicationContext
     val cached = if (source.isNotBlank()) bitmapCache.get(source) else null
     var bitmap by remember(source) { mutableStateOf(cached) }
@@ -221,11 +273,10 @@ fun rememberBookImage(source: String, isInlineImage: Boolean = false): Bitmap? {
         return null
     }
 
-    // Compress gallery covers to thumbnails. Sample inline images to screen width for zero-jank scrolling; full resolution is loaded on demand when lightbox zooming.
-    val isGalleryCover = !isInlineImage && (source.contains("/covers/") || source.contains("_cover."))
+    // Default to lightweight cover thumbnail dimensions (280x420) unless explicitly requested or inline reader image
     val screenWidthPx = context.resources.displayMetrics.widthPixels.coerceIn(720, 1440)
-    val maxW = if (isGalleryCover) 280 else if (isInlineImage) screenWidthPx else 2048
-    val maxH = if (isGalleryCover) 420 else if (isInlineImage) (screenWidthPx * 1.6f).toInt() else 2048
+    val maxW = maxWidth ?: if (isInlineImage) screenWidthPx else 280
+    val maxH = maxHeight ?: if (isInlineImage) (screenWidthPx * 1.6f).toInt() else 420
 
     if (bitmap == null) {
         LaunchedEffect(source) {
@@ -318,42 +369,49 @@ fun rememberBookImage(source: String, isInlineImage: Boolean = false): Bitmap? {
                         }
                     } catch (_: Exception) { null }
                 } else {
-                    val cleanPath = source.removePrefix("file://")
-                    val decodedPath = try { java.net.URLDecoder.decode(cleanPath, "UTF-8") } catch (_: Exception) { cleanPath }
-                    val file = if (File(cleanPath).exists()) File(cleanPath) else File(decodedPath)
-                    if (file.exists() && file.length() > 0) {
-                        decodeSampledBitmapFromFile(file, maxWidth = maxW, maxHeight = maxH)
+                    val cleanPath = source.removePrefix("file://").replace("\\/", "/")
+                    if (missingFilesCache.contains(cleanPath)) {
+                        null
                     } else {
-                        // Directory fallback: if the exact file path is missing or renamed during EPUB import,
-                        // check the parent directory for best-matching image file
-                        val parent = file.parentFile
-                        val targetBase = file.nameWithoutExtension.lowercase()
-                        val fallbackFile = if (parent != null && parent.exists() && parent.isDirectory) {
-                            val candidates = parent.listFiles { f ->
-                                val ext = f.extension.lowercase()
-                                (ext == "png" || ext == "jpg" || ext == "jpeg" || ext == "webp") && f.length() > 0
-                            } ?: emptyArray()
+                        val decodedPath = try { java.net.URLDecoder.decode(cleanPath, "UTF-8") } catch (_: Exception) { cleanPath }
+                        val file = if (File(cleanPath).exists()) File(cleanPath) else File(decodedPath)
+                        if (file.exists() && file.length() > 0) {
+                            decodeSampledBitmapFromFile(file, maxWidth = maxW, maxHeight = maxH)
+                        } else {
+                            // Directory fallback: if the exact file path is missing or renamed during EPUB import,
+                            // check the parent directory for best-matching image file
+                            val parent = file.parentFile
+                            val targetBase = file.nameWithoutExtension.lowercase()
+                            val fallbackFile = if (parent != null && parent.exists() && parent.isDirectory) {
+                                val candidates = parent.listFiles { f ->
+                                    val ext = f.extension.lowercase()
+                                    (ext == "png" || ext == "jpg" || ext == "jpeg" || ext == "webp" || ext == "svg") && f.length() > 0
+                                } ?: emptyArray()
 
-                            val keywords = targetBase.split('_', '-').filter { it.length >= 3 && !it.startsWith("custom") }
-                            candidates.maxByOrNull { cand ->
-                                val candName = cand.nameWithoutExtension.lowercase()
-                                var score = 0
-                                if (candName == targetBase) score += 100
-                                if (candName.contains(targetBase) || targetBase.contains(candName)) score += 50
-                                for (kw in keywords) {
-                                    if (candName.contains(kw)) score += 10
+                                val keywords = targetBase.split('_', '-').filter { it.length >= 3 && !it.startsWith("custom") }
+                                candidates.maxByOrNull { cand ->
+                                    val candName = cand.nameWithoutExtension.lowercase()
+                                    var score = 0
+                                    if (candName == targetBase) score += 100
+                                    if (candName.contains(targetBase) || targetBase.contains(candName)) score += 50
+                                    for (kw in keywords) {
+                                        if (candName.contains(kw)) score += 10
+                                    }
+                                    score
+                                }?.takeIf { cand ->
+                                    val candName = cand.nameWithoutExtension.lowercase()
+                                    candName.contains(targetBase) || targetBase.contains(candName) ||
+                                        keywords.any { candName.contains(it) }
                                 }
-                                score
-                            }?.takeIf { cand ->
-                                val candName = cand.nameWithoutExtension.lowercase()
-                                candName.contains(targetBase) || targetBase.contains(candName) ||
-                                    keywords.any { candName.contains(it) }
-                            }
-                        } else null
+                            } else null
 
-                        if (fallbackFile != null && fallbackFile.exists() && fallbackFile.length() > 0) {
-                            decodeSampledBitmapFromFile(fallbackFile, maxWidth = maxW, maxHeight = maxH)
-                        } else null
+                            if (fallbackFile != null && fallbackFile.exists() && fallbackFile.length() > 0) {
+                                decodeSampledBitmapFromFile(fallbackFile, maxWidth = maxW, maxHeight = maxH)
+                            } else {
+                                missingFilesCache.add(cleanPath)
+                                null
+                            }
+                        }
                     }
                 }
                 if (decoded != null) {
@@ -361,13 +419,11 @@ fun rememberBookImage(source: String, isInlineImage: Boolean = false): Bitmap? {
                     withContext(Dispatchers.Main) {
                         bitmap = decoded
                     }
-                } else if (source.startsWith("http://") || source.startsWith("https://")) {
+                } else {
                     failedSources.add(source)
                 }
             } catch (_: Throwable) {
-                if (source.startsWith("http://") || source.startsWith("https://")) {
-                    failedSources.add(source)
-                }
+                failedSources.add(source)
             }
         }
     }
@@ -375,19 +431,57 @@ fun rememberBookImage(source: String, isInlineImage: Boolean = false): Bitmap? {
     return bitmap
 }
 
+fun getColorFilterForMode(mode: io.github.tasmirz.lumina.model.ImageFilterMode): androidx.compose.ui.graphics.ColorFilter? {
+    return when (mode) {
+        io.github.tasmirz.lumina.model.ImageFilterMode.ORIGINAL -> null
+        io.github.tasmirz.lumina.model.ImageFilterMode.INVERT -> {
+            val matrix = androidx.compose.ui.graphics.ColorMatrix(
+                floatArrayOf(
+                    -1f,  0f,  0f, 0f, 255f,
+                     0f, -1f,  0f, 0f, 255f,
+                     0f,  0f, -1f, 0f, 255f,
+                     0f,  0f,  0f, 1f,   0f
+                )
+            )
+            androidx.compose.ui.graphics.ColorFilter.colorMatrix(matrix)
+        }
+        io.github.tasmirz.lumina.model.ImageFilterMode.GRAYSCALE -> {
+            val matrix = androidx.compose.ui.graphics.ColorMatrix().apply { setToSaturation(0f) }
+            androidx.compose.ui.graphics.ColorFilter.colorMatrix(matrix)
+        }
+        io.github.tasmirz.lumina.model.ImageFilterMode.SEPIA -> {
+            val matrix = androidx.compose.ui.graphics.ColorMatrix(
+                floatArrayOf(
+                    0.393f, 0.769f, 0.189f, 0f, 0f,
+                    0.349f, 0.686f, 0.168f, 0f, 0f,
+                    0.272f, 0.534f, 0.131f, 0f, 0f,
+                    0f,     0f,     0f,     1f, 0f
+                )
+            )
+            androidx.compose.ui.graphics.ColorFilter.colorMatrix(matrix)
+        }
+    }
+}
+
 @Composable
 fun AsyncImageBitmap(
     url: String,
     contentDescription: String? = null,
     contentScale: ContentScale = ContentScale.Crop,
+    maxWidth: Int? = null,
+    maxHeight: Int? = null,
+    imageFilterMode: io.github.tasmirz.lumina.model.ImageFilterMode = io.github.tasmirz.lumina.model.ImageFilterMode.ORIGINAL,
+    colorFilter: androidx.compose.ui.graphics.ColorFilter? = null,
     modifier: Modifier = Modifier
 ) {
-    val bitmap = rememberBookImage(url)
+    val bitmap = rememberBookImage(url, maxWidth = maxWidth, maxHeight = maxHeight)
     if (bitmap != null) {
+        val effectiveFilter = colorFilter ?: getColorFilterForMode(imageFilterMode)
         Image(
             bitmap = bitmap.asImageBitmap(),
             contentDescription = contentDescription,
             contentScale = contentScale,
+            colorFilter = effectiveFilter,
             modifier = modifier
         )
     }
@@ -398,9 +492,11 @@ fun BookCoverImage(
     source: String,
     titleFallback: String,
     authorFallback: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    maxWidth: Int = 280,
+    maxHeight: Int = 420
 ) {
-    val bitmap = rememberBookImage(source)
+    val bitmap = rememberBookImage(source, isInlineImage = false, maxWidth = maxWidth, maxHeight = maxHeight)
 
     if (bitmap != null) {
         Image(

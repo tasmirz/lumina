@@ -677,7 +677,7 @@ object OnlineEpubService {
 
     private fun searchInternetArchive(query: String): List<OnlineBookItem> {
         return try {
-            val encoded = URLEncoder.encode("title:($query) AND mediatype:texts AND format:(EPUB)", "UTF-8")
+            val encoded = URLEncoder.encode("title:($query) AND mediatype:texts AND format:(EPUB) AND -access-restricted-item:true", "UTF-8")
             val url = URL("https://archive.org/advancedsearch.php?q=$encoded&fl[]=identifier,title,creator,downloads,collection&sort[]=downloads+desc&rows=10&page=1&output=json")
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 connectTimeout = 7000

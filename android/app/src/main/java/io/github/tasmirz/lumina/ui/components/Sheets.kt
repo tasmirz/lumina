@@ -582,7 +582,7 @@ fun AppearanceSheet(
     onThemeChange: (ThemeMode) -> Unit = {},
     showAssistant: Boolean = true,
     onToggleAssistant: (Boolean) -> Unit = {},
-    orbSize: OrbSize = OrbSize.NANO,
+    orbSize: OrbSize = OrbSize.DEFAULT,
     onOrbSizeChange: (OrbSize) -> Unit = {},
     orbMenuSize: OrbMenuSize = OrbMenuSize.MEDIUM,
     onOrbMenuSizeChange: (OrbMenuSize) -> Unit = {},
@@ -1216,6 +1216,7 @@ fun BookContextMenuSheet(
     onShare: () -> Unit,
     onViewDetails: () -> Unit,
     onResetProgress: () -> Unit,
+    onReparse: () -> Unit = {},
     onDelete: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -1359,6 +1360,27 @@ fun BookContextMenuSheet(
                 ) {
                     Text(
                         text = "Reset Reading Progress to 0%",
+                        fontFamily = FontFamily.SansSerif,
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+
+            // Action: Re-parse Book Content
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onReparse(); onDismiss() },
+                color = Color.Transparent
+            ) {
+                Row(
+                    modifier = Modifier.padding(vertical = 12.dp, horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Re-parse Book Content",
                         fontFamily = FontFamily.SansSerif,
                         fontSize = 14.sp,
                         color = MaterialTheme.colorScheme.onSurface

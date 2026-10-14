@@ -49,6 +49,16 @@ Get the latest production-ready release of Lumina for Android:
 
 ## 🚀 What's New in Recent Updates
 
+- **🎯 90° Adaptive & 4-Way Radial Wheel Placements (v0.0.12-beta)**: When docked near top or bottom edges in landscape mode, radial menu items fan at 90° (`DOWN` or `UP`) into the reading view while gracefully steering away from bezels and corners.
+- **🧭 Configurable Orb Fan Direction (v0.0.12-beta)**: Fully customizable menu fanning direction in Advanced Settings (`Auto`, `Right`, `Left`, `Down 90°`, `Up 90°`), ensuring the radial action wheel opens inward toward screen content.
+- **📐 Math Glyphs & Inline Layout Refinement (v0.0.12-beta)**: Calibrated inline math symbol height, bounding boxes, and spacing to prevent collisions with adjacent words and preserve continuous reading flow.
+- **📊 Table Split & Layout Calibration (v0.0.12-beta)**: Optimized long table pagination, multi-column border alignment, and prevented orphan formula splits across page boundaries.
+- **⚡ Slim Progress Pill & Edge Margin Snapping (v0.0.12-beta)**: Refined bottom reading progress indicator, smooth non-overlapping corner arcs, and customizable edge-snapping margins (2%–20%).
+- **📐 Mathematical Formula Sizing & Table Equation Scaling (v0.0.11-beta)**: Equation tables automatically scale to 540dp width with horizontal scrolling, and dividers between equations and equation labels `(1)` / `(4)` are omitted for seamless reading.
+- **📏 Clean Section Dividers (v0.0.11-beta)**: Completely removed ornamental asterism triangles (`⁂`), replacing them with subtle 42dp × 1dp divider lines across all reading modes.
+- **⏱️ Configurable Auto-Save Dwell Time & Smart Reading Cadence (v0.0.11-beta)**: Direct numeric input dialog and steppers (1..60s, default 5s) in Advanced Settings, with smart cadence detection across consecutive pages to commit progress even after skipping front-matter.
+- **🔄 In-Gallery EPUB Re-Parsing (v0.0.11-beta)**: Long-press any book card in the main library gallery to re-parse book content from source without losing bookmarks or reading progress.
+- **🔍 Zero-Shadow Image Zoom & Figure Expansion (v0.0.11-beta)**: Figures expand to full width without edge cropping, with shadowless pinch-to-zoom.
 - **🎙️ Human-Like Edge Neural TTS**: High-definition, human-cadence text-to-speech engine powered by `EdgeTtsService`. Streams crystal-clear narration with curated natural voices (Jenny, Guy, Aria, Sonia, Christopher) over lightweight WebSockets without heavy third-party SDKs, with seamless automatic fallback to system TTS when offline.
 - **🛡️ Bulletproof Audio Concurrency & Teardown**: Introduced monotonic audio session tokens (`currentAudioSessionId`) and managed coroutine jobs that completely eliminate dual-stream audio bugs during rapid paragraph skipping. Lifecycle-aware listeners (`ON_STOP`/`ON_DESTROY`) and BackHandler integration prevent lingering "zombie" playback after dismissing the player.
 - **📖 Pure Distraction-Free Auto-Scroll**: When auto-scroll starts, all reader chrome (headers, footers, orb, docks) smoothly recedes for total visual immersion. The floating pill features minimal `11.sp` speed text (e.g. `1.0x`), and tapping the banner directly cycles through speeds (0.5x → 3.0x) without bulky buttons or toggles.

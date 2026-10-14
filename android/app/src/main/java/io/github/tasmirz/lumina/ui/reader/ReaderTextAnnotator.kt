@@ -10,6 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
@@ -385,12 +386,13 @@ fun rememberInlineContentMap(
 @Composable
 fun rememberInlineContentMap(
     inlineImages: List<InlineImageItem>,
-    baseFontSize: Float
+    baseFontSize: Float,
+    imageFilterMode: io.github.tasmirz.lumina.model.ImageFilterMode = io.github.tasmirz.lumina.model.ImageFilterMode.ORIGINAL
 ): Map<String, InlineTextContent> {
     if (inlineImages.isEmpty()) return emptyMap()
-    return remember(inlineImages, baseFontSize) {
+    return remember(inlineImages, baseFontSize, imageFilterMode) {
         inlineImages.associate { item ->
-            val cleanPath = item.path.removePrefix("file://")
+            val cleanPath = item.path.removePrefix("file://").replace("\\/", "/")
             val decodedPath = try { java.net.URLDecoder.decode(cleanPath, "UTF-8") } catch (_: Exception) { cleanPath }
             val file = if (java.io.File(cleanPath).exists()) java.io.File(cleanPath) else java.io.File(decodedPath)
             val absPath = file.absolutePath
@@ -402,12 +404,12 @@ fun rememberInlineContentMap(
                     if (cached != null) {
                         cached
                     } else {
-                        val decoded = io.github.tasmirz.lumina.ui.components.decodeSampledInlineBitmap(file, maxDimension = 360)
+                        val decoded = io.github.tasmirz.lumina.ui.components.decodeSampledInlineBitmap(file, maxDimension = 1440)
                         if (decoded != null) {
                             io.github.tasmirz.lumina.ui.components.bitmapCache.put(absPath, decoded)
                             io.github.tasmirz.lumina.ui.components.bitmapCache.put(item.path, decoded)
                             if (decoded.height > 0) {
-                                val ar = (decoded.width.toFloat() / decoded.height.toFloat()).coerceIn(0.4f, 8.0f)
+                                val ar = (decoded.width.toFloat() / decoded.height.toFloat()).coerceIn(0.2f, 35.0f)
                                 io.github.tasmirz.lumina.ui.components.inlineAspectRatios[absPath] = ar
                                 io.github.tasmirz.lumina.ui.components.inlineAspectRatios[item.path] = ar
                             }
@@ -418,16 +420,23 @@ fun rememberInlineContentMap(
             } catch (_: Exception) { null }
 
             val aspectRatio = if (bmp != null && bmp.height > 0) {
-                (bmp.width.toFloat() / bmp.height.toFloat()).coerceIn(0.4f, 8.0f)
+                (bmp.width.toFloat() / bmp.height.toFloat()).coerceIn(0.2f, 35.0f)
             } else {
                 io.github.tasmirz.lumina.ui.components.inlineAspectRatios[absPath]
                     ?: io.github.tasmirz.lumina.ui.components.inlineAspectRatios[item.path]
                     ?: io.github.tasmirz.lumina.ui.components.inlineAspectRatios[cleanPath]
                     ?: 1.0f
             }
-            val h = (baseFontSize * 1.0f).sp
-            val rawWValue = (baseFontSize * 1.0f * aspectRatio).coerceAtMost(baseFontSize * 3.5f)
-            val horizontalPaddingSp = (baseFontSize * 0.14f).coerceIn(2.5f, 5.0f)
+            // Calibrate inline math symbols (w_o, w_c, C, R^d, 1) to match font cap-height without vertical jumps
+            val isSingleGlyph = aspectRatio < 2.5f
+            val maxInlineWidth = baseFontSize * 25.0f
+            val h = if (isSingleGlyph) (baseFontSize * 0.88f).sp else (baseFontSize * 0.95f).sp
+            val rawWValue = if (isSingleGlyph) {
+                (baseFontSize * 0.88f * aspectRatio).coerceAtMost(maxInlineWidth)
+            } else {
+                (baseFontSize * 0.95f * aspectRatio).coerceAtMost(maxInlineWidth)
+            }
+            val horizontalPaddingSp = (baseFontSize * 0.10f).coerceIn(1.5f, 3.5f)
             val placeholderWidth = (rawWValue + horizontalPaddingSp * 2).sp
 
             item.id to InlineTextContent(
@@ -439,10 +448,30 @@ fun rememberInlineContentMap(
             ) {
                 val paddingDp = with(LocalDensity.current) { horizontalPaddingSp.sp.toDp() }
                 if (bmp != null) {
+                    val isDarkTheme = androidx.compose.material3.MaterialTheme.colorScheme.surface.luminance() < 0.5f
+                    val filter = when (imageFilterMode) {
+                        io.github.tasmirz.lumina.model.ImageFilterMode.ORIGINAL -> {
+                            if (isDarkTheme) {
+                                // High-contrast invert for dark math glyphs on transparent/dark backgrounds
+                                androidx.compose.ui.graphics.ColorFilter.colorMatrix(
+                                    androidx.compose.ui.graphics.ColorMatrix(
+                                        floatArrayOf(
+                                            -1f,  0f,  0f, 0f, 255f,
+                                             0f, -1f,  0f, 0f, 255f,
+                                             0f,  0f, -1f, 0f, 255f,
+                                             0f,  0f,  0f, 1f,   0f
+                                        )
+                                    )
+                                )
+                            } else null
+                        }
+                        else -> io.github.tasmirz.lumina.ui.components.getColorFilterForMode(imageFilterMode)
+                    }
                     Image(
                         bitmap = bmp.asImageBitmap(),
                         contentDescription = "Math",
                         contentScale = ContentScale.Fit,
+                        colorFilter = filter,
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(horizontal = paddingDp)

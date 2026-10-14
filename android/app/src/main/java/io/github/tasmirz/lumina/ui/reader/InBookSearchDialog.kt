@@ -190,7 +190,58 @@ fun InBookSearchDialog(
                         semanticResults.add(item.match)
                     }
                 }
-                semanticResults
+
+                // Expand AI search to characters list and lore
+                val allCharacters = repository?.getCharactersForBook(book.id) ?: emptyList()
+                val characterMatches = mutableListOf<SceneMatch>()
+                for (char in allCharacters) {
+                    val combinedText = "${char.name} ${char.role} ${char.summary} ${char.keyEvents} ${char.aliases.joinToString(" ")}"
+                    val combinedLower = combinedText.lowercase()
+                    val matchesAny = searchTokens.any { combinedLower.contains(it) }
+                    if (matchesAny) {
+                        val chapIdx = if (char.firstAppearanceChapter.isNotBlank()) {
+                            book.chapters.indexOfFirst {
+                                it.title.equals(char.firstAppearanceChapter, ignoreCase = true) ||
+                                it.title.contains(char.firstAppearanceChapter, ignoreCase = true)
+                            }.coerceAtLeast(0)
+                        } else 0
+                        val chapTitle = book.chapters.getOrNull(chapIdx)?.title ?: "Character Guide"
+                        val snippet = "Character: ${char.name} (${char.role}) — ${char.summary}"
+                        val key = "char-${char.name.lowercase().trim()}"
+                        if (seenKeys.add(key)) {
+                            characterMatches.add(SceneMatch(book.id, chapIdx, "Character: ${char.name} • $chapTitle", 0, snippet))
+                        }
+                    }
+                }
+
+                val allLore = repository?.getLoreForBook(book.id) ?: emptyList()
+                val loreMatches = mutableListOf<SceneMatch>()
+                for (loreItem in allLore) {
+                    val combinedText = "${loreItem.title} ${loreItem.category} ${loreItem.description} ${loreItem.keyFacts}"
+                    val combinedLower = combinedText.lowercase()
+                    val matchesAny = searchTokens.any { combinedLower.contains(it) }
+                    if (matchesAny) {
+                        val chapIdx = if (loreItem.firstAppearanceChapter.isNotBlank()) {
+                            book.chapters.indexOfFirst {
+                                it.title.equals(loreItem.firstAppearanceChapter, ignoreCase = true) ||
+                                it.title.contains(loreItem.firstAppearanceChapter, ignoreCase = true)
+                            }.coerceAtLeast(0)
+                        } else 0
+                        val chapTitle = book.chapters.getOrNull(chapIdx)?.title ?: "Book Lore"
+                        val snippet = "Lore [${loreItem.category}]: ${loreItem.title} — ${loreItem.description}"
+                        val key = "lore-${loreItem.title.lowercase().trim()}"
+                        if (seenKeys.add(key)) {
+                            loreMatches.add(SceneMatch(book.id, chapIdx, "Lore: ${loreItem.title} • $chapTitle", 0, snippet))
+                        }
+                    }
+                }
+
+                // Place Character & Lore cards at the top of semantic search results for direct discovery
+                val combinedResults = ArrayList<SceneMatch>(characterMatches.size + loreMatches.size + semanticResults.size)
+                combinedResults.addAll(characterMatches)
+                combinedResults.addAll(loreMatches)
+                combinedResults.addAll(semanticResults)
+                combinedResults
             } else {
                 val list = mutableListOf<SceneMatch>()
                 for ((cIdx, chap) in book.chapters.withIndex()) {
@@ -226,7 +277,12 @@ fun InBookSearchDialog(
     val topSafeInset = maxOf(topCutout, topStatusBar, 36.dp) + 6.dp
     val startCutout = cutoutInsets.calculateStartPadding(layoutDirection)
     val endCutout = cutoutInsets.calculateEndPadding(layoutDirection)
-    val horizontalSafeInset = maxOf(startCutout, endCutout, 10.dp)
+    val navBarInsets = WindowInsets.navigationBars.asPaddingValues()
+    val navStart = navBarInsets.calculateStartPadding(layoutDirection)
+    val navEnd = navBarInsets.calculateEndPadding(layoutDirection)
+    val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    val horizontalSafeStart = maxOf(startCutout, navStart, if (isLandscape) 24.dp else 10.dp)
+    val horizontalSafeEnd = maxOf(endCutout, navEnd, if (isLandscape) 44.dp else 10.dp)
     val imeBottom = WindowInsets.ime.asPaddingValues().calculateBottomPadding()
 
     AnimatedVisibility(
@@ -236,8 +292,8 @@ fun InBookSearchDialog(
         modifier = modifier
             .padding(
                 top = topSafeInset,
-                start = horizontalSafeInset,
-                end = horizontalSafeInset,
+                start = horizontalSafeStart,
+                end = horizontalSafeEnd,
                 bottom = 6.dp
             )
             .fillMaxWidth()
@@ -495,8 +551,9 @@ fun InBookSearchDialog(
                             .padding(horizontal = 12.dp, vertical = 8.dp)
                     ) {
                         if (inBookSearchQuery.trim().length >= 2 && !isSearchingInBook) {
+                            val count = inBookSearchResults.size
                             Text(
-                                text = "${inBookSearchResults.size} scenes found",
+                                text = if (count == 1) "1 result found" else "$count results found",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Normal,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
